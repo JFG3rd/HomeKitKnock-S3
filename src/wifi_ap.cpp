@@ -68,6 +68,24 @@ String generateWiFiSetupPage() {
                   alert("Error saving WiFi credentials: " + error);
               });
         }
+
+        function saveTr064() {
+            let user = document.getElementById("tr_user").value;
+            let pass = document.getElementById("tr_pass").value;
+            let number = document.getElementById("tr_number").value;
+
+            fetch("/saveTR064", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ "user": user, "pass": pass, "number": number })
+            }).then(response => response.text())
+              .then(text => {
+                  alert(text);
+              })
+              .catch(error => {
+                  alert("Error saving TR-064 settings: " + error);
+              });
+        }
     </script>
 </head>
 <body>
@@ -100,6 +118,20 @@ String generateWiFiSetupPage() {
         <input type="password" id="password" placeholder="Enter Wi-Fi Password">
         
         <button onclick="connectWiFi()">💾 Save & Connect</button>
+
+        <hr>
+
+        <h3>FRITZ!Box TR-064</h3>
+        <label><strong>Username:</strong></label>
+        <input type="text" id="tr_user" placeholder="TR-064 username">
+
+        <label><strong>Password:</strong></label>
+        <input type="password" id="tr_pass" placeholder="TR-064 password">
+
+        <label><strong>Internal Ring Number:</strong></label>
+        <input type="text" id="tr_number" placeholder="e.g., **9 or **610">
+
+        <button onclick="saveTr064()">💾 Save TR-064 Settings</button>
         
         <footer>
             <p class="disclaimer">ESP32-S3 HomeKit Doorbell</p>
@@ -191,6 +223,46 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
             
             delay(1000);
             ESP.restart();
+        }
+    );
+
+    // Save TR-064 credentials
+    server.on("/saveTR064", HTTP_POST,
+        [](AsyncWebServerRequest *request) {},
+        NULL,
+        [&prefs](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            String receivedData = String((char *)data).substring(0, len);
+            Serial.println("📥 Received TR-064 Config: " + receivedData);
+
+            JsonDocument doc;
+            DeserializationError error = deserializeJson(doc, receivedData);
+
+            if (error) {
+                Serial.println("❌ Failed to parse JSON");
+                request->send(400, "text/plain", "Invalid JSON");
+                return;
+            }
+
+            String user = doc["user"].as<String>();
+            String pass = doc["pass"].as<String>();
+            String number = doc["number"].as<String>();
+
+            prefs.begin("tr064", false);
+            if (number.isEmpty() && user.isEmpty() && pass.isEmpty()) {
+                prefs.remove("user");
+                prefs.remove("pass");
+                prefs.remove("number");
+                prefs.end();
+                request->send(200, "text/plain", "TR-064 settings cleared");
+                return;
+            }
+
+            prefs.putString("user", user);
+            prefs.putString("pass", pass);
+            prefs.putString("number", number);
+            prefs.end();
+
+            request->send(200, "text/plain", "TR-064 settings saved");
         }
     );
 

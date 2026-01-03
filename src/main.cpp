@@ -5,6 +5,8 @@
 #include <Preferences.h>
 #include <LittleFS.h>
 #include "wifi_ap.h"
+#include "config.h"
+#include "tr064_client.h"
 
 // Global objects
 AsyncWebServer server(80);
@@ -12,6 +14,10 @@ DNSServer dnsServer;
 Preferences preferences;
 
 String wifiSSID, wifiPassword;
+Tr064Config tr064Config;
+
+bool lastButtonPressed = false;
+unsigned long lastButtonChangeMs = 0;
 
 bool initFileSystem(AsyncWebServer &server) {
   if (!LittleFS.begin(true)) {
@@ -30,6 +36,10 @@ void setup() {
   Serial.println("====================================");
 
   initFileSystem(server);
+
+  loadTr064Config(tr064Config);
+
+  pinMode(DOORBELL_BUTTON_PIN, DOORBELL_BUTTON_ACTIVE_LOW ? INPUT_PULLUP : INPUT);
 
   // Load WiFi credentials from preferences
   preferences.begin("wifi", true);
@@ -97,12 +107,43 @@ void setup() {
   Serial.println("Setup complete!\n");
 }
 
+bool isDoorbellPressed() {
+  int state = digitalRead(DOORBELL_BUTTON_PIN);
+  if (DOORBELL_BUTTON_ACTIVE_LOW) {
+    return state == LOW;
+  }
+  return state == HIGH;
+}
+
+void handleDoorbellPress() {
+  if (triggerTr064Ring(tr064Config)) {
+    Serial.println("📞 FRITZ!DECT ring triggered");
+  } else {
+    Serial.println("⚠️ FRITZ!DECT ring not triggered");
+  }
+}
+
 void loop() {
   // Handle DNS requests in AP mode
   if (isAPModeActive()) {
     dnsServer.processNextRequest();
   }
   
-  // Add your doorbell logic here
+  bool pressed = isDoorbellPressed();
+  unsigned long nowMs = millis();
+  if (pressed != lastButtonPressed) {
+    lastButtonChangeMs = nowMs;
+    lastButtonPressed = pressed;
+  }
+
+  if (pressed && (nowMs - lastButtonChangeMs) > DOORBELL_DEBOUNCE_MS) {
+    handleDoorbellPress();
+    while (isDoorbellPressed()) {
+      delay(10);
+    }
+    lastButtonPressed = false;
+    lastButtonChangeMs = millis();
+  }
+
   delay(10);
 }

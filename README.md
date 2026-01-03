@@ -65,6 +65,11 @@ If none are found or the connection fails, it starts a configuration AP:
 - `GET /` - Device status page
 - `GET /forget` - Clears WiFi credentials and restarts
 
+### TR-064 Settings
+The setup page lets you configure FRITZ!Box TR-064 credentials and the internal
+ring number (e.g., `**9` or a group extension). These settings are stored in NVS.
+The router IP is derived from the WiFi gateway after the device connects.
+
 ### UI Assets
 The UI stylesheet is served from LittleFS. After editing `data/style.css`, run:
 `pio run -t uploadfs`
