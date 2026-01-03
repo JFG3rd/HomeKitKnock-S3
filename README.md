@@ -65,6 +65,10 @@ If none are found or the connection fails, it starts a configuration AP:
 - `GET /` - Device status page
 - `GET /forget` - Clears WiFi credentials and restarts
 
+### UI Assets
+The UI stylesheet is served from LittleFS. After editing `data/style.css`, run:
+`pio run -t uploadfs`
+
 ---
 
 ## ⚙️ PlatformIO Configuration

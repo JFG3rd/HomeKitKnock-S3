@@ -132,61 +132,6 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
     Serial.printf("    SSID: %s\n", AP_SSID);
     Serial.printf("    IP: %s\n", WiFi.softAPIP().toString().c_str());
 
-    // Serve CSS file
-    server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(200, "text/css", R"rawliteral(
-/* Inline CSS - In production, serve from SPIFFS */
-:root {
-    --primary-color: #007bff;
-    --primary-hover: #0056b3;
-    --danger-color: #dc3545;
-    --light-bg: #F9F7C9;
-}
-body {
-    font-family: Arial, sans-serif;
-    text-align: center;
-    background: var(--light-bg);
-    margin: 0;
-    padding: 20px;
-}
-h1 {
-    color: #001F4D;
-    text-shadow: 0 0 10px #FF4500;
-}
-.wifi-setup-container {
-    max-width: 500px;
-    margin: 50px auto;
-    padding: 30px;
-    background: white;
-    border-radius: 10px;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-}
-select, input, button {
-    width: 100%;
-    padding: 12px;
-    margin: 10px 0;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    box-sizing: border-box;
-}
-button {
-    background: var(--primary-color);
-    color: white;
-    border: none;
-    cursor: pointer;
-    font-size: 16px;
-}
-button:hover {
-    background: var(--primary-hover);
-}
-.disclaimer {
-    margin-top: 20px;
-    font-size: 0.85em;
-    color: #666;
-}
-)rawliteral");
-    });
-
     // Root redirects to WiFi setup
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->redirect("/wifiSetup");
