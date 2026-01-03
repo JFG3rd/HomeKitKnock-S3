@@ -1,5 +1,7 @@
 # ESP32-S3 Doorbell Firmware (PlatformIO)
 
+![License](https://img.shields.io/github/license/JFG3rd/HomeKitKnock-S3)
+
 Bootstrap README for the ESP32-S3 firmware in this folder.
 
 ## Prerequisites
@@ -37,3 +39,9 @@ Key flags for the ESP32-S3 Sense:
 ## Notes
 - If uploads fail, select the correct serial port in PlatformIO.
 - Keep `platformio.ini` aligned with the board memory configuration (PSRAM and flash mode).
+
+## Contributing
+See `CONTRIBUTING.md`.
+
+## License
+Apache-2.0. See `LICENSE`.
