@@ -1,0 +1,344 @@
+/* ESP32-S3 Doorbell Web Interface Styles */
+/* Based on JFG Gesture Controller styling */
+
+:root {
+    --max-log-entries: 30;
+    --log-line-height: 24px;
+    --primary-color: #007bff;
+    --primary-hover: #0056b3;
+    --danger-color: #dc3545;
+    --danger-hover: #c82333;
+    --dark-bg: #222;
+    --dark-text: #eee;
+    --light-bg: #F9F7C9;
+    --light-text: #001F4D;
+}
+
+body {
+    font-family: "Arial Unicode MS", "Noto Sans", "Segoe UI Emoji", Arial, sans-serif;
+    text-align: center;
+    background-color: var(--light-bg);
+    margin: 0;
+    padding: 20px;
+}
+
+h1 {
+    font-size: 2.2em;
+    text-align: center;
+    color: var(--light-text);
+    text-shadow: 0 0 12px #FF4500, 0 0 20px #B22222, 0 0 30px #660000;
+}
+
+h3 {
+    color: var(--light-text);
+}
+
+/* Container Styles */
+.container {
+    max-width: 400px;
+    margin: auto;
+    padding: 20px;
+    background: white;
+    border-radius: 10px;
+}
+
+/* System Logs Container */
+.log-container {
+    width: calc(100% - 40px);
+    max-width: 100%;
+    margin: 20px auto;
+    background: #001F4D;
+    padding: 10px;
+    border-radius: 5px;
+    overflow-y: auto;
+    text-align: left;
+    white-space: nowrap;
+    font-size: 12px;
+    font-family: monospace;
+    color: white;
+    max-height: calc(var(--log-line-height) * var(--max-log-entries));
+    margin-bottom: 50px;
+}
+
+/* Responsive log height */
+@media screen and (max-height: 800px) {
+    .log-container {
+        max-height: calc(50vh);
+    }
+}
+
+/* Scrollbar Styling */
+.log-container::-webkit-scrollbar {
+    width: 10px;
+}
+
+.log-container::-webkit-scrollbar-track {
+    background: #333;
+}
+
+.log-container::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 5px;
+}
+
+/* Log Entry Styling */
+.log-entry {
+    padding: 5px;
+    border: none;
+}
+
+.log-entry:nth-child(odd) {
+    background: black;
+    color: white;
+}
+
+.log-entry:nth-child(even) {
+    background: #001F4D;
+    color: white;
+}
+
+/* Button Styles */
+button, .button {
+    background-color: var(--primary-color);
+    color: white;
+    padding: 12px 20px;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    border-radius: 4px;
+    transition: background 0.3s;
+    margin: 5px;
+}
+
+button:hover, .button:hover {
+    background-color: var(--primary-hover);
+}
+
+/* Danger/Warning Button */
+.danger-btn, .wifi-btn {
+    background-color: var(--danger-color);
+}
+
+.danger-btn:hover, .wifi-btn:hover {
+    background-color: var(--danger-hover);
+}
+
+/* Config Button */
+.config-btn {
+    background-color: #28a745;
+}
+
+.config-btn:hover {
+    background-color: #218838;
+}
+
+/* Form Elements */
+select, input, textarea {
+    width: 100%;
+    padding: 10px;
+    margin: 10px 0;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
+
+input[type="password"] {
+    font-family: monospace;
+}
+
+/* Status Display */
+.status-text {
+    font-size: 1.7em;
+    font-weight: bold;
+    color: #FF3131;
+}
+
+/* Dark Mode Toggle */
+.dark-mode-toggle {
+    position: absolute;
+    top: 10px;
+    right: 15px;
+    font-size: 0.9em;
+}
+
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 34px;
+    height: 20px;
+}
+
+.switch input {
+    display: none;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #bbb;
+    transition: .4s;
+    border-radius: 10px;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+    box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.5);
+}
+
+input:checked + .slider {
+    background-color: var(--primary-color);
+    box-shadow: 0px 0px 10px rgba(0, 123, 255, 0.8);
+}
+
+input:checked + .slider:before {
+    transform: translateX(18px);
+}
+
+/* Footer */
+footer {
+    position: relative;
+    bottom: 0;
+    width: 100%;
+    text-align: center;
+    font-size: 0.9em;
+    color: gray;
+    margin-top: 20px;
+}
+
+.disclaimer {
+    font-size: 0.85em;
+    color: #666;
+}
+
+/* Flash Stats Display */
+.flash-stats {
+    padding: 10px;
+    margin: 10px 0;
+    background: #f0f0f0;
+    border-radius: 5px;
+    font-family: monospace;
+    font-size: 0.9em;
+}
+
+/* Dark Mode Styles */
+.dark-mode {
+    background-color: var(--dark-bg);
+    color: var(--dark-text);
+}
+
+.dark-mode h1 {
+    color: #5AB1FF;
+    text-shadow: 0 0 12px #FF4500, 0 0 24px #B22222, 0 0 36px #660000;
+}
+
+.dark-mode .log-container {
+    background: #001F4D !important;
+    color: white;
+}
+
+.dark-mode .log-entry {
+    border-bottom: 1px solid #666;
+}
+
+.dark-mode button {
+    background-color: #008cff;
+    color: white;
+    border: 1px solid #ffffff;
+}
+
+.dark-mode button:hover {
+    background-color: #0066cc;
+}
+
+.dark-mode .log-container::-webkit-scrollbar-track {
+    background: #222;
+}
+
+.dark-mode .log-container::-webkit-scrollbar-thumb {
+    background: #888;
+}
+
+.dark-mode .container {
+    background: #333;
+    color: var(--dark-text);
+}
+
+.dark-mode select,
+.dark-mode input,
+.dark-mode textarea {
+    background: #444;
+    color: white;
+    border-color: #666;
+}
+
+.dark-mode .flash-stats {
+    background: #333;
+    color: var(--dark-text);
+}
+
+/* WiFi Setup Specific Styles */
+.wifi-setup-container {
+    max-width: 500px;
+    margin: 50px auto;
+    padding: 30px;
+    background: white;
+    border-radius: 10px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.network-list {
+    max-height: 300px;
+    overflow-y: auto;
+    margin: 15px 0;
+}
+
+.network-item {
+    padding: 10px;
+    margin: 5px 0;
+    background: #f5f5f5;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.network-item:hover {
+    background: #e0e0e0;
+}
+
+.network-item.selected {
+    background: var(--primary-color);
+    color: white;
+}
+
+/* Responsive Design */
+@media screen and (max-width: 600px) {
+    body {
+        padding: 10px;
+    }
+
+    h1 {
+        font-size: 1.5em;
+    }
+
+    .container,
+    .wifi-setup-container {
+        padding: 15px;
+    }
+
+    button {
+        padding: 10px 15px;
+        font-size: 14px;
+    }
+}
