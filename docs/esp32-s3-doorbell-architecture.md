@@ -14,6 +14,7 @@ Build a DIY Audio/Video doorbell using:
 Objectives:
 	•	Stream video (Phase 1) and later audio (Phase 2) from ESP32-S3 to Scrypted
 	•	Trigger doorbell rings using a physical button → GPIO → HTTP webhook
+	•	Trigger FRITZ!Box TR-064 internal ring for a DECT phone group
 	•	Let Apple’s Home app handle:
 	•	Doorbell notifications
 	•	Live stream view with audio
@@ -29,6 +30,8 @@ Per-door device (Front Door / Gate)
 
 Component                       Role
 ESP32-S3 Sense                  Camera + button input + HTTP webhook
+FRITZ!Box (TR-064)              Internal call trigger to DECT phones
+FRITZ!DECT phones               Audible ring with custom ringtone
 Scrypted Camera Device          Receives video stream
 Scrypted Doorbell Group         Combines camera + button
 HomeKit Doorbell                Exposed via Scrypted HomeKit plugin
@@ -38,8 +41,9 @@ Doorbell event flow:
 	1.	Physical button press
 	2.	ESP32 detects GPIO edge
 	3.	ESP32 performs HTTP GET to Scrypted doorbell endpoint
-	4.	Scrypted fires HomeKit doorbell event
-	5.	Apple devices display doorbell notification + live video
+	4.	ESP32 triggers FRITZ!Box TR-064 internal ring (DECT group)
+	5.	Scrypted fires HomeKit doorbell event
+	6.	Apple devices display doorbell notification + live video
 
 ⸻
 
@@ -94,6 +98,8 @@ Components:
 	•	HTTP GET on button press to:
 
     http://SCRYPTED_IP:11080/endpoint/<doorbell-id>/public/
+	•	TR-064 internal call to FRITZ!Box using gateway IP
+	•	TR-064 credentials + internal ring number stored in NVS
 
     	•	Scrypted:
 	•	Add ESP32 as camera device
@@ -152,6 +158,7 @@ Current focus:
 Responsibility                                 Owner
 Camera streaming                                 ESP32-S3
 Doorbell trigger                                 ESP32-S3 HTTP webhook
+DECT ring trigger                                 ESP32-S3 TR-064 call
 AV transport                                 Scrypted
 NVR storage                                 Scrypted
 HomeKit bridge                                 Scrypted HomeKit plugin
@@ -179,6 +186,7 @@ After MVP works:
 	•	Select final doorbell button sensing scheme:
 	•	AC detector vs dry contact + relay
 	•	Confirm final GPIO pin mapping
+	•	Confirm DECT group number and FRITZ!Box TR-064 permissions
 	•	Decide target RTSP audio codec (AAC vs G.711)
 	•	Evaluate latency + HomeKit experience
 	•	Consider adding:

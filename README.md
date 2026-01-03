@@ -11,6 +11,7 @@ Firmware for the **ESP32-S3 Sense–based DIY video doorbell**, built with **Pla
 - Stream camera video from **XIAO ESP32-S3 Sense** to Scrypted
 - Detect a physical doorbell button press
 - Trigger a Scrypted **doorbell endpoint**
+- Trigger a FRITZ!Box **TR-064 internal ring** for a phone group
 - Let Scrypted expose the device as a **HomeKit Secure Video doorbell**
 
 Audio streaming is planned for a later phase.
@@ -59,7 +60,7 @@ If none are found or the connection fails, it starts a configuration AP:
 - `GET /wifiSetup` - WiFi setup UI
 - `POST /saveWiFi` - Save credentials (JSON: `{ "ssid": "...", "password": "..." }`)
 - `GET /wifiStatus` - JSON status
-- `GET /style.css` - UI styles (served inline)
+- `GET /style.css` - UI styles (served from LittleFS)
 
 ### Normal Mode Endpoints
 - `GET /` - Device status page
@@ -69,6 +70,7 @@ If none are found or the connection fails, it starts a configuration AP:
 The setup page lets you configure FRITZ!Box TR-064 credentials and the internal
 ring number (e.g., `**9` or a group extension). These settings are stored in NVS.
 The router IP is derived from the WiFi gateway after the device connects.
+Assign a custom ringtone on the handset for that internal number.
 
 ### UI Assets
 The UI stylesheet is served from LittleFS. After editing `data/style.css`, run:
