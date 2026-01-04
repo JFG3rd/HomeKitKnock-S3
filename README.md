@@ -91,6 +91,13 @@ Assign a custom ringtone on the handset for that internal number.
 3. In AP setup (`/wifiSetup`), enter the TR-064 username, password, and group number.
 4. On each handset, assign a custom ringtone to that internal number.
 
+### Troubleshooting
+- If the stream does not load, confirm `http://<device-ip>:81/stream` is reachable and that port 81 is not blocked.
+- If snapshots fail, try `http://<device-ip>/capture` first and check serial logs for camera init errors.
+- If the camera fails to initialize, confirm the XIAO ESP32-S3 Sense pin map in `include/camera_pins.h`.
+- If TR-064 calls fail, verify TR-064 is enabled and the user has permissions, then re-save credentials in `/wifiSetup`.
+- If DECT phones do not ring, confirm the internal group number and assign a ringtone for that number on the handsets.
+
 ### UI Assets
 The UI stylesheet is served from LittleFS. After editing `data/style.css`, run:
 `pio run -t uploadfs`
