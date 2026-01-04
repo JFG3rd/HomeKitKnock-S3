@@ -18,5 +18,6 @@ actionable so new tasks start with the right context.
 - Ask if any GPIO pin mapping or Scrypted endpoint details are undecided.
 
 ## Output Expectations
+- Prefer verbose comments in code to explain intent and flow.
 - Use concise, actionable steps.
 - For code changes, cite exact file paths and keep diffs minimal.

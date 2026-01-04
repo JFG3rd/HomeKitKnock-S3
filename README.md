@@ -72,6 +72,25 @@ ring number (e.g., `**9` or a group extension). These settings are stored in NVS
 The router IP is derived from the WiFi gateway after the device connects.
 Assign a custom ringtone on the handset for that internal number.
 
+### Camera Stream
+- Stream URL: `http://<device-ip>:81/stream`
+- Snapshot: `http://<device-ip>/capture`
+- Status JSON: `http://<device-ip>/status`
+- Control: `http://<device-ip>/control?var=<name>&val=<value>`
+
+### Scrypted Setup (Camera + Doorbell)
+1. In Scrypted, add a new Camera device (or ONVIF/MJPEG camera).
+2. Set the stream URL to `http://<device-ip>:81/stream`.
+3. Set the snapshot URL to `http://<device-ip>/capture`.
+4. Create or update a Doorbell Group and link this camera.
+5. Expose the doorbell to HomeKit via the Scrypted HomeKit plugin.
+
+### FRITZ!Box TR-064 Setup (DECT Ring)
+1. Enable TR-064 on the FRITZ!Box and create a dedicated user.
+2. Configure an internal group number for the handsets you want to ring.
+3. In AP setup (`/wifiSetup`), enter the TR-064 username, password, and group number.
+4. On each handset, assign a custom ringtone to that internal number.
+
 ### UI Assets
 The UI stylesheet is served from LittleFS. After editing `data/style.css`, run:
 `pio run -t uploadfs`

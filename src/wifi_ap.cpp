@@ -1,13 +1,16 @@
 #include "wifi_ap.h"
 #include <ArduinoJson.h>
 
+// Tracks whether the device is currently running in AP provisioning mode.
 static bool apMode = false;
 
 bool isAPModeActive() {
+    // Expose AP mode state to the main loop.
     return apMode;
 }
 
 void stopAPMode() {
+    // Cleanly tear down AP mode and switch back to STA-only.
     Serial.println("🛑 Stopping AP Mode...");
     WiFi.softAPdisconnect(true);
     delay(100);
@@ -17,7 +20,7 @@ void stopAPMode() {
 }
 
 String generateWiFiSetupPage() {
-    // Scan for WiFi networks
+    // Scan for WiFi networks to populate the dropdown.
     Serial.println("📡 Scanning Wi-Fi networks...");
     std::vector<String> uniqueSSIDs;
     
@@ -37,7 +40,7 @@ String generateWiFiSetupPage() {
         }
     }
 
-    // Build HTML page
+    // Build HTML page with WiFi and TR-064 settings.
     String page = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -47,6 +50,7 @@ String generateWiFiSetupPage() {
     <link rel="stylesheet" href="/style.css">
     <script>
         function connectWiFi() {
+            // Save WiFi credentials to NVS and reboot.
             let ssid = document.getElementById("ssid").value;
             let password = document.getElementById("password").value;
 
@@ -70,6 +74,7 @@ String generateWiFiSetupPage() {
         }
 
         function saveTr064() {
+            // Save TR-064 credentials and ring number for FRITZ!Box.
             let user = document.getElementById("tr_user").value;
             let pass = document.getElementById("tr_pass").value;
             let number = document.getElementById("tr_number").value;
@@ -98,7 +103,7 @@ String generateWiFiSetupPage() {
             <option value="">-- Select WiFi Network --</option>
 )rawliteral";
 
-    // Add WiFi networks to dropdown
+    // Add WiFi networks to dropdown.
     for (size_t i = 0; i < uniqueSSIDs.size(); i++) {
         page += "            <option value='" + uniqueSSIDs[i] + "'>" + uniqueSSIDs[i] + "</option>\n";
     }
@@ -145,6 +150,7 @@ String generateWiFiSetupPage() {
 }
 
 void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& prefs) {
+    // Start captive portal AP for provisioning.
     Serial.println("🚨 Starting AP Mode...");
     WiFi.disconnect(true, true);
     delay(100);
@@ -164,17 +170,17 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
     Serial.printf("    SSID: %s\n", AP_SSID);
     Serial.printf("    IP: %s\n", WiFi.softAPIP().toString().c_str());
 
-    // Root redirects to WiFi setup
+    // Root redirects to the setup page for a simple captive UX.
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->redirect("/wifiSetup");
     });
 
-    // WiFi setup page
+    // WiFi + TR-064 setup page.
     server.on("/wifiSetup", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(200, "text/html", generateWiFiSetupPage());
     });
 
-    // WiFi status endpoint
+    // WiFi status endpoint for troubleshooting/UX.
     server.on("/wifiStatus", HTTP_GET, [](AsyncWebServerRequest *request) {
         JsonDocument doc;
         doc["ssid"] = WiFi.SSID();
@@ -188,7 +194,7 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
         request->send(200, "application/json", jsonResponse);
     });
 
-    // Save WiFi credentials
+    // Save WiFi credentials to NVS.
     server.on("/saveWiFi", HTTP_POST, 
         [](AsyncWebServerRequest *request) {}, 
         NULL,
@@ -226,7 +232,7 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
         }
     );
 
-    // Save TR-064 credentials
+    // Save TR-064 credentials and ring number to NVS.
     server.on("/saveTR064", HTTP_POST,
         [](AsyncWebServerRequest *request) {},
         NULL,
@@ -271,6 +277,7 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
 }
 
 void attemptWiFiConnection(const String& ssid, const String& password) {
+    // Best-effort STA connection with a bounded retry window.
     Serial.println("🔄 Attempting to connect to Wi-Fi...");
     
     WiFi.disconnect(true, true);

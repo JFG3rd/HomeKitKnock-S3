@@ -7,19 +7,23 @@
 #include "wifi_ap.h"
 #include "config.h"
 #include "tr064_client.h"
+#include "cameraAPI.h"
+#include "cameraStream.h"
 
-// Global objects
+// Global objects shared across setup/loop.
 AsyncWebServer server(80);
 DNSServer dnsServer;
 Preferences preferences;
 
 String wifiSSID, wifiPassword;
 Tr064Config tr064Config;
+bool cameraReady = false;
 
 bool lastButtonPressed = false;
 unsigned long lastButtonChangeMs = 0;
 
 bool initFileSystem(AsyncWebServer &server) {
+  // Mount LittleFS and expose static assets for the UI.
   if (!LittleFS.begin(true)) {
     Serial.println("❌ LittleFS mount failed");
     return false;
@@ -35,11 +39,22 @@ void setup() {
   Serial.println("\n\n🔔 ESP32-S3 Doorbell Starting...");
   Serial.println("====================================");
 
+  // Mount filesystem early so both AP and normal mode can serve CSS.
   initFileSystem(server);
 
+  // Load TR-064 config once at boot; UI can update it later.
   loadTr064Config(tr064Config);
 
+  // Configure doorbell GPIO based on active-low setting.
   pinMode(DOORBELL_BUTTON_PIN, DOORBELL_BUTTON_ACTIVE_LOW ? INPUT_PULLUP : INPUT);
+
+  #ifdef CAMERA
+  // Initialize camera and register endpoints if hardware is present.
+  cameraReady = initCamera();
+  if (cameraReady) {
+    registerCameraEndpoints(server);
+  }
+  #endif
 
   // Load WiFi credentials from preferences
   preferences.begin("wifi", true);
@@ -48,6 +63,7 @@ void setup() {
   preferences.end();
 
   if (wifiSSID.isEmpty()) {
+    // No saved WiFi; force AP provisioning mode.
     Serial.println("🚨 No WiFi credentials found. Starting AP mode...");
     startAPMode(server, dnsServer, preferences);
   } else {
@@ -85,6 +101,7 @@ void setup() {
       });
 
       server.on("/forget", HTTP_GET, [](AsyncWebServerRequest *request) {
+        // Clear WiFi credentials and reboot into provisioning mode.
         preferences.begin("wifi", false);
         preferences.remove("ssid");
         preferences.remove("password");
@@ -103,11 +120,19 @@ void setup() {
     }
   }
 
+  #ifdef CAMERA
+  // Start MJPEG streaming server on port 81.
+  if (cameraReady) {
+    startCameraStreamServer();
+  }
+  #endif
+
   Serial.println("====================================");
   Serial.println("Setup complete!\n");
 }
 
 bool isDoorbellPressed() {
+  // Normalize GPIO to a logical pressed state.
   int state = digitalRead(DOORBELL_BUTTON_PIN);
   if (DOORBELL_BUTTON_ACTIVE_LOW) {
     return state == LOW;
@@ -116,6 +141,7 @@ bool isDoorbellPressed() {
 }
 
 void handleDoorbellPress() {
+  // Trigger TR-064 ring alongside any future doorbell actions.
   if (triggerTr064Ring(tr064Config)) {
     Serial.println("📞 FRITZ!DECT ring triggered");
   } else {
@@ -129,6 +155,7 @@ void loop() {
     dnsServer.processNextRequest();
   }
   
+  // Simple debounce: detect stable press, then wait for release.
   bool pressed = isDoorbellPressed();
   unsigned long nowMs = millis();
   if (pressed != lastButtonPressed) {
