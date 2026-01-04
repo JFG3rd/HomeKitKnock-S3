@@ -61,16 +61,25 @@ If none are found or the connection fails, it starts a configuration AP:
 - `POST /saveWiFi` - Save credentials (JSON: `{ "ssid": "...", "password": "..." }`)
 - `GET /wifiStatus` - JSON status
 - `GET /style.css` - UI styles (served from LittleFS)
+- `GET /scanWifi` - Trigger an async WiFi rescan for the setup UI
 
 ### Normal Mode Endpoints
 - `GET /` - Device status page
 - `GET /forget` - Clears WiFi credentials and restarts
+- `GET /deviceStatus` - JSON status (RSSI + uptime)
+- `GET /ring` - Trigger a TR-064 test ring
+- `GET /tr064` - TR-064 setup page
+- `GET /tr064Debug` - TR-064 debug JSON
 
 ### TR-064 Settings
 The setup page lets you configure FRITZ!Box TR-064 credentials and the internal
 ring number (e.g., `**9` or a group extension). These settings are stored in NVS.
 The router IP is derived from the WiFi gateway after the device connects.
 Assign a custom ringtone on the handset for that internal number.
+
+TR-064 is configurable from:
+- AP setup page: `http://192.168.4.1/wifiSetup`
+- Normal mode page: `http://<device-ip>/tr064`
 
 ### Camera Stream
 - Stream URL: `http://<device-ip>:81/stream`
@@ -84,6 +93,14 @@ Assign a custom ringtone on the handset for that internal number.
 3. Set the snapshot URL to `http://<device-ip>/capture`.
 4. Create or update a Doorbell Group and link this camera.
 5. Expose the doorbell to HomeKit via the Scrypted HomeKit plugin.
+
+### Workflow Summary
+1. Flash firmware: `pio run -t upload`
+2. Upload UI assets: `pio run -t uploadfs`
+3. Connect to `ESP32_Doorbell_Setup` and open `http://192.168.4.1/wifiSetup`
+4. Save WiFi and TR-064 credentials
+5. After reboot, open `http://<device-ip>/` for the main UI
+6. Verify camera and stream URLs, then add to Scrypted
 
 ### FRITZ!Box TR-064 Setup (DECT Ring)
 1. Enable TR-064 on the FRITZ!Box and create a dedicated user.
