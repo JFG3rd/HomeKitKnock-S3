@@ -24,9 +24,22 @@ body {
 
 h1 {
     font-size: 2.2em;
-    text-align: center;
     color: var(--light-text);
     text-shadow: 0 0 12px #FF4500, 0 0 20px #B22222, 0 0 30px #660000;
+    margin: 20px 0;
+}
+
+/* Header container with title aligned left */
+.header-container {
+    text-align: left;
+    max-width: 1400px;
+    margin: 0 auto 20px auto;
+    padding: 0 20px;
+}
+
+.main-title {
+    font-size: 2.5em;
+    margin: 10px 0;
 }
 
 h3 {
@@ -35,11 +48,79 @@ h3 {
 
 /* Container Styles */
 .container {
-    max-width: 400px;
+    max-width: 420px;
     margin: auto;
     padding: 20px;
     background: white;
     border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    min-height: 500px;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Three-column dashboard layout */
+.dashboard {
+    display: flex;
+    gap: 20px;
+    align-items: stretch;
+    justify-content: center;
+    flex-wrap: wrap;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 20px;
+}
+
+.card {
+    flex: 1 1 300px;
+    min-width: 300px;
+    max-width: 420px;
+    min-height: 550px;
+}
+
+/* Info grid for system information */
+.info-grid {
+    display: grid;
+    gap: 12px;
+    margin: 15px 0;
+}
+
+.info-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px;
+    background: #f8f9fa;
+    border-radius: 5px;
+}
+
+.info-label {
+    font-weight: bold;
+    color: #495057;
+}
+
+.info-value {
+    color: #212529;
+    font-family: monospace;
+}
+
+.status-online {
+    color: #28a745;
+    font-weight: bold;
+}
+
+/* Button row layout */
+.button-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 10px 0;
+}
+
+.button-row .button,
+.button-row button {
+    flex: 1 1 auto;
+    min-width: 140px;
 }
 
 /* System Logs Container */
@@ -87,6 +168,18 @@ h3 {
     border: none;
 }
 
+.log-entry.info {
+    color: #198754;
+}
+
+.log-entry.warn {
+    color: #b58900;
+}
+
+.log-entry.error {
+    color: #dc3545;
+}
+
 .log-entry:nth-child(odd) {
     background: black;
     color: white;
@@ -97,39 +190,69 @@ h3 {
     color: white;
 }
 
-/* Button Styles */
+/* Button Styles - Modern card-style buttons */
 button, .button {
-    background-color: var(--primary-color);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
     color: white;
-    padding: 12px 20px;
-    border: none;
+    padding: 14px 20px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
     cursor: pointer;
-    font-size: 16px;
-    border-radius: 4px;
-    transition: background 0.3s;
+    font-size: 15px;
+    font-weight: 600;
+    border-radius: 8px;
+    transition: all 0.2s ease;
     margin: 5px;
+    box-shadow: 0 3px 12px rgba(74, 144, 226, 0.35);
+    text-decoration: none;
+    min-height: 48px;
+    width: 100%;
+    max-width: 100%;
+    line-height: 1.2;
+    box-sizing: border-box;
 }
 
 button:hover, .button:hover {
-    background-color: var(--primary-hover);
+    background: linear-gradient(135deg, #357abd 0%, #2a5f94 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 5px 16px rgba(74, 144, 226, 0.45);
+    border-color: rgba(255, 255, 255, 0.4);
 }
 
-/* Danger/Warning Button */
+button:active, .button:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(74, 144, 226, 0.3);
+}
+
+/* Danger/Warning Button - Red gradient */
 .danger-btn, .wifi-btn {
-    background-color: var(--danger-color);
+    background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+    box-shadow: 0 3px 12px rgba(231, 76, 60, 0.35);
+    border-color: rgba(255, 255, 255, 0.3);
 }
 
 .danger-btn:hover, .wifi-btn:hover {
-    background-color: var(--danger-hover);
+    background: linear-gradient(135deg, #c0392b 0%, #a93226 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 5px 16px rgba(231, 76, 60, 0.45);
+    border-color: rgba(255, 255, 255, 0.4);
 }
 
-/* Config Button */
+/* Config/Success Button - Green gradient */
 .config-btn {
-    background-color: #28a745;
+    background: linear-gradient(135deg, #52c41a 0%, #3a9b15 100%);
+    box-shadow: 0 3px 12px rgba(82, 196, 26, 0.35);
+    border-color: rgba(255, 255, 255, 0.3);
 }
 
 .config-btn:hover {
-    background-color: #218838;
+    background: linear-gradient(135deg, #3a9b15 0%, #2d7a11 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 5px 16px rgba(82, 196, 26, 0.45);
+    border-color: rgba(255, 255, 255, 0.4);
 }
 
 /* Form Elements */
@@ -238,9 +361,15 @@ footer {
     color: var(--dark-text);
 }
 
-.dark-mode h1 {
+.dark-mode h1,
+.dark-mode .main-title {
     color: #5AB1FF;
     text-shadow: 0 0 12px #FF4500, 0 0 24px #B22222, 0 0 36px #660000;
+}
+
+.dark-mode h3 {
+    color: #5AB1FF;
+    text-shadow: 0 0 8px rgba(90, 177, 255, 0.6);
 }
 
 .dark-mode .log-container {
@@ -252,14 +381,38 @@ footer {
     border-bottom: 1px solid #666;
 }
 
-.dark-mode button {
-    background-color: #008cff;
-    color: white;
-    border: 1px solid #ffffff;
+.dark-mode button,
+.dark-mode .button {
+    background: linear-gradient(135deg, #1e5a8e 0%, #14405e 100%);
+    border-color: rgba(255, 255, 255, 0.15);
+    box-shadow: 0 4px 15px rgba(30, 90, 142, 0.4);
 }
 
-.dark-mode button:hover {
-    background-color: #0066cc;
+.dark-mode button:hover,
+.dark-mode .button:hover {
+    background: linear-gradient(135deg, #14405e 0%, #0f3047 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(30, 90, 142, 0.5);
+}
+
+.dark-mode .danger-btn,
+.dark-mode .wifi-btn {
+    background: linear-gradient(135deg, #c0392b 0%, #a93226 100%);
+    box-shadow: 0 4px 15px rgba(192, 57, 43, 0.4);
+}
+
+.dark-mode .danger-btn:hover,
+.dark-mode .wifi-btn:hover {
+    background: linear-gradient(135deg, #a93226 0%, #8e2a20 100%);
+}
+
+.dark-mode .config-btn {
+    background: linear-gradient(135deg, #3a9b15 0%, #2d7a11 100%);
+    box-shadow: 0 4px 15px rgba(58, 155, 21, 0.4);
+}
+
+.dark-mode .config-btn:hover {
+    background: linear-gradient(135deg, #2d7a11 0%, #23600d 100%);
 }
 
 .dark-mode .log-container::-webkit-scrollbar-track {
@@ -284,8 +437,107 @@ footer {
 }
 
 .dark-mode .flash-stats {
-    background: #333;
+    background: #444;
     color: var(--dark-text);
+    border: 1px solid #555;
+}
+
+.dark-mode .info-item {
+    background: #2a2a2a;
+}
+
+.dark-mode .info-label {
+    color: #adb5bd;
+}
+
+.dark-mode .info-value {
+    color: #e9ecefportant;
+    color: white;
+}
+
+.dark-mode .log-entry {
+    border-bottom: 1px solid #666;
+}
+
+.dark-mode button {
+    background-color: #008cff;
+    color: white;
+    border: 1px solid #ffffff;
+}
+
+.dark-mode button:hover {
+    background-color: #0066cc;
+}
+
+.dark-mode .log-container::-webkit-scrollbar-track {
+    background: #222;
+}
+
+.dark-mode .log-container::-we1000px) {
+    .dashboard {
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .card {
+        width: 100%;
+        max-width: 600px;
+    }
+
+    .header-container {
+        text-align: center;
+    }
+
+    .main-title {
+        font-size: 2em;
+    }
+}
+
+@media screen and (max-width: 600px) {
+    body {
+        padding: 10px;
+    }
+
+    h1,
+    .main-title {
+        font-size: 1.5em;
+    }
+
+    .container,
+    .wifi-setup-container {
+        padding: 15px;
+    }
+
+    .card {
+        width: 100%;
+        min-width: unset;
+    }
+
+    button,
+    .button {
+        padding: 10px 15px;
+        font-size: 14px;
+    }
+
+    .button-row {
+        flex-direction: column;
+    }
+
+    .button-row .button,
+    .button-row button {
+        width: 100%;
+    }
+}
+
+@media screen and (min-width: 1001px) {
+    .dashboard {
+        flex-wrap: nowrap;
+    }
+
+    .card {
+        flex: 1 1 0;
+        max-width: none;
+    }
 }
 
 /* WiFi Setup Specific Styles */
@@ -320,25 +572,4 @@ footer {
 .network-item.selected {
     background: var(--primary-color);
     color: white;
-}
-
-/* Responsive Design */
-@media screen and (max-width: 600px) {
-    body {
-        padding: 10px;
-    }
-
-    h1 {
-        font-size: 1.5em;
-    }
-
-    .container,
-    .wifi-setup-container {
-        padding: 15px;
-    }
-
-    button {
-        padding: 10px 15px;
-        font-size: 14px;
-    }
 }

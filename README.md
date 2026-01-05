@@ -103,10 +103,14 @@ TR-064 is configurable from:
 6. Verify camera and stream URLs, then add to Scrypted
 
 ### FRITZ!Box TR-064 Setup (DECT Ring)
-1. Enable TR-064 on the FRITZ!Box and create a dedicated user.
-2. Configure an internal group number for the handsets you want to ring.
-3. In AP setup (`/wifiSetup`), enter the TR-064 username, password, and group number.
-4. On each handset, assign a custom ringtone to that internal number.
+1. Enable TR-064 access: FRITZ!Box UI → Heimnetz → Heimnetzübersicht → Netzwerkeinstellungen → enable „Zugriff für Anwendungen zulassen“.
+2. TR-064 endpoints are available at `http://fritz.box:49000` and `https://fritz.box:49443`.
+3. Create a dedicated user: System → FRITZ!Box-Benutzer.
+4. Grant permissions: FRITZ!Box Einstellungen, Telefonie, Smart Home (if needed).
+5. Configure an internal group number for the handsets you want to ring (e.g., `**9` or `**610`).
+6. In AP setup (`/wifiSetup`) or normal mode (`/tr064`), enter the TR-064 username, password, and group number.
+7. On each handset, assign a custom ringtone to that internal number.
+8. If rings still fail, enable “Wählhilfe / Click-to-dial” for the device in FRITZ!Box and retry.
 
 ### Troubleshooting
 - If the stream does not load, confirm `http://<device-ip>:81/stream` is reachable and that port 81 is not blocked.

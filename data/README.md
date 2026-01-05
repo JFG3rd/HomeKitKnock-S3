@@ -13,6 +13,9 @@ Main stylesheet for the web interface. Includes:
 - Button and form styling
 - Adapted from the JFG Gesture Controller project
 
+### favicon.ico
+Favicon for the web UI. Stored in LittleFS and served at `/favicon.ico`.
+
 ## Usage
 
 ### LittleFS (Current)

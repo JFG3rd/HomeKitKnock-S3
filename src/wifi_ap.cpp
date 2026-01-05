@@ -3,6 +3,59 @@
 
 // Tracks whether the device is currently running in AP provisioning mode.
 static bool apMode = false;
+// Cache of the most recent WiFi scan results to avoid blocking in request handlers.
+static std::vector<String> cachedSSIDs;
+static unsigned long lastScanMs = 0;
+static bool scanInProgress = false;
+
+// Kick off or complete an async scan and refresh cached results when ready.
+static void refreshWiFiScanCache() {
+    // If a scan is already running, poll for completion.
+    int scanStatus = WiFi.scanComplete();
+    if (scanStatus == WIFI_SCAN_RUNNING) {
+        scanInProgress = true;
+        return;
+    }
+
+    // If a scan finished, collect results and clear the scan buffer.
+    if (scanStatus >= 0) {
+        cachedSSIDs.clear();
+        for (int i = 0; i < scanStatus; i++) {
+            String ssid = WiFi.SSID(i);
+            if (!ssid.isEmpty()) {
+                bool found = false;
+                for (const auto &existing : cachedSSIDs) {
+                    if (existing == ssid) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    cachedSSIDs.push_back(ssid);
+                }
+            }
+        }
+        WiFi.scanDelete();
+        scanInProgress = false;
+        lastScanMs = millis();
+        return;
+    }
+
+    // If no scan has run recently, start a new async scan.
+    unsigned long nowMs = millis();
+    if (!scanInProgress && (nowMs - lastScanMs > 15000)) {
+        WiFi.scanNetworks(true);
+        scanInProgress = true;
+    }
+}
+
+// Force a new async scan on demand.
+static void triggerWiFiRescan() {
+    WiFi.scanDelete();
+    WiFi.scanNetworks(true);
+    scanInProgress = true;
+    lastScanMs = 0;
+}
 
 bool isAPModeActive() {
     // Expose AP mode state to the main loop.
@@ -20,25 +73,8 @@ void stopAPMode() {
 }
 
 String generateWiFiSetupPage() {
-    // Scan for WiFi networks to populate the dropdown.
-    Serial.println("📡 Scanning Wi-Fi networks...");
-    std::vector<String> uniqueSSIDs;
-    
-    int n = WiFi.scanNetworks();
-    for (int i = 0; i < n; i++) {
-        String ssid = WiFi.SSID(i);
-        // Check for duplicates
-        bool found = false;
-        for (const auto &existingSSID : uniqueSSIDs) {
-            if (existingSSID == ssid) {
-                found = true;
-                break;
-            }
-        }
-        if (!found && !ssid.isEmpty()) {
-            uniqueSSIDs.push_back(ssid);
-        }
-    }
+    // Update the cached scan list without blocking the web request.
+    refreshWiFiScanCache();
 
     // Build HTML page with WiFi and TR-064 settings.
     String page = R"rawliteral(
@@ -46,6 +82,7 @@ String generateWiFiSetupPage() {
 <html>
 <head>
     <title>ESP32 Doorbell Setup</title>
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="/style.css">
     <script>
@@ -91,6 +128,16 @@ String generateWiFiSetupPage() {
                   alert("Error saving TR-064 settings: " + error);
               });
         }
+        function rescanWiFi() {
+            fetch("/scanWifi")
+                .then(response => response.text())
+                .then(text => {
+                    alert(text + "\nRefresh the page in a few seconds.");
+                })
+                .catch(error => {
+                    alert("Error starting WiFi scan: " + error);
+                });
+        }
     </script>
 </head>
 <body>
@@ -103,9 +150,13 @@ String generateWiFiSetupPage() {
             <option value="">-- Select WiFi Network --</option>
 )rawliteral";
 
-    // Add WiFi networks to dropdown.
-    for (size_t i = 0; i < uniqueSSIDs.size(); i++) {
-        page += "            <option value='" + uniqueSSIDs[i] + "'>" + uniqueSSIDs[i] + "</option>\n";
+    // Add cached WiFi networks to dropdown.
+    for (size_t i = 0; i < cachedSSIDs.size(); i++) {
+        page += "            <option value='" + cachedSSIDs[i] + "'>" + cachedSSIDs[i] + "</option>\n";
+    }
+
+    if (cachedSSIDs.empty()) {
+        page += "            <option value=\"\" disabled>(scanning...) refresh in a few seconds</option>\n";
     }
 
     page += R"rawliteral(
@@ -123,6 +174,7 @@ String generateWiFiSetupPage() {
         <input type="password" id="password" placeholder="Enter Wi-Fi Password">
         
         <button onclick="connectWiFi()">💾 Save & Connect</button>
+        <button onclick="rescanWiFi()">🔄 Rescan WiFi</button>
 
         <hr>
 
@@ -271,6 +323,12 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
             request->send(200, "text/plain", "TR-064 settings saved");
         }
     );
+
+    // Trigger an async WiFi scan for the setup UI.
+    server.on("/scanWifi", HTTP_GET, [](AsyncWebServerRequest *request) {
+        triggerWiFiRescan();
+        request->send(200, "text/plain", "WiFi scan started");
+    });
 
     server.begin();
     Serial.println("✅ AP Mode web server started");

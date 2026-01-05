@@ -76,6 +76,8 @@ static esp_err_t stream_handler(httpd_req_t *req)
         {
             break;
         }
+        // Yield to avoid starving async TCP tasks and triggering the watchdog.
+        vTaskDelay(1);
         // int64_t fr_end = esp_timer_get_time();
 
 /*
@@ -131,7 +133,8 @@ static void stream_server_task(void* pvParameters)
     
     // Configure for better stability.
     config.stack_size = 8192;
-    config.core_id = 0;  // Run on core 0 (AsyncWebServer is likely on core 1)
+    // Run on the opposite core from AsyncTCP to reduce contention.
+    config.core_id = 1;
     
     Serial.printf("Starting stream server on port: %d\n", config.server_port);
     
