@@ -112,14 +112,22 @@ String generateWiFiSetupPage() {
 
         function saveTr064() {
             // Save TR-064 credentials and ring number for FRITZ!Box.
-            let user = document.getElementById("tr_user").value;
-            let pass = document.getElementById("tr_pass").value;
+            let http_user = document.getElementById("http_user").value;
+            let http_pass = document.getElementById("http_pass").value;
+            let tr064_user = document.getElementById("tr064_user").value;
+            let tr064_pass = document.getElementById("tr064_pass").value;
             let number = document.getElementById("tr_number").value;
 
             fetch("/saveTR064", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ "user": user, "pass": pass, "number": number })
+                body: JSON.stringify({ 
+                    "http_user": http_user, 
+                    "http_pass": http_pass, 
+                    "tr064_user": tr064_user, 
+                    "tr064_pass": tr064_pass, 
+                    "number": number 
+                })
             }).then(response => response.text())
               .then(text => {
                   alert(text);
@@ -179,11 +187,17 @@ String generateWiFiSetupPage() {
         <hr>
 
         <h3>FRITZ!Box TR-064</h3>
-        <label><strong>Username:</strong></label>
-        <input type="text" id="tr_user" placeholder="TR-064 username">
+        <label><strong>Web UI Username:</strong></label>
+        <input type="text" id="http_user" placeholder="HTTP click-to-dial username">
 
-        <label><strong>Password:</strong></label>
-        <input type="password" id="tr_pass" placeholder="TR-064 password">
+        <label><strong>Web UI Password:</strong></label>
+        <input type="password" id="http_pass" placeholder="HTTP click-to-dial password">
+
+        <label><strong>TR-064 Username:</strong></label>
+        <input type="text" id="tr064_user" placeholder="TR-064 username">
+
+        <label><strong>TR-064 Password:</strong></label>
+        <input type="password" id="tr064_pass" placeholder="TR-064 password">
 
         <label><strong>Internal Ring Number:</strong></label>
         <input type="text" id="tr_number" placeholder="e.g., **9 or **610">
@@ -301,22 +315,28 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
                 return;
             }
 
-            String user = doc["user"].as<String>();
-            String pass = doc["pass"].as<String>();
+            String http_user = doc["http_user"].as<String>();
+            String http_pass = doc["http_pass"].as<String>();
+            String tr064_user = doc["tr064_user"].as<String>();
+            String tr064_pass = doc["tr064_pass"].as<String>();
             String number = doc["number"].as<String>();
 
             prefs.begin("tr064", false);
-            if (number.isEmpty() && user.isEmpty() && pass.isEmpty()) {
-                prefs.remove("user");
-                prefs.remove("pass");
+            if (number.isEmpty() && http_pass.isEmpty() && tr064_pass.isEmpty()) {
+                prefs.remove("http_user");
+                prefs.remove("http_pass");
+                prefs.remove("tr064_user");
+                prefs.remove("tr064_pass");
                 prefs.remove("number");
                 prefs.end();
                 request->send(200, "text/plain", "TR-064 settings cleared");
                 return;
             }
 
-            prefs.putString("user", user);
-            prefs.putString("pass", pass);
+            prefs.putString("http_user", http_user);
+            prefs.putString("http_pass", http_pass);
+            prefs.putString("tr064_user", tr064_user);
+            prefs.putString("tr064_pass", tr064_pass);
             prefs.putString("number", number);
             prefs.end();
 

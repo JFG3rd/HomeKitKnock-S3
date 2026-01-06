@@ -67,9 +67,14 @@ If none are found or the connection fails, it starts a configuration AP:
 - `GET /` - Device status page
 - `GET /forget` - Clears WiFi credentials and restarts
 - `GET /deviceStatus` - JSON status (RSSI + uptime)
-- `GET /ring` - Trigger a TR-064 test ring
-- `GET /tr064` - TR-064 setup page
+- `GET /ring` - Trigger ring (tries HTTP then TR-064)
+- `GET /ring/http` - Trigger FRITZ!Box HTTP click-to-dial ring
+- `GET /ring/tr064` - Trigger FRITZ!Box TR-064 ring
+- `GET /ring/sip` - Trigger FRITZ!Box SIP ring
+- `GET /tr064` - TR-064/HTTP ring setup page
 - `GET /tr064Debug` - TR-064 debug JSON
+- `GET /sip` - SIP setup page
+- `GET /sipDebug` - SIP debug JSON
 
 ### TR-064 Settings
 The setup page lets you configure FRITZ!Box TR-064 credentials and the internal
@@ -86,13 +91,21 @@ TR-064 is configurable from:
 - Snapshot: `http://<device-ip>/capture`
 - Status JSON: `http://<device-ip>/status`
 - Control: `http://<device-ip>/control?var=<name>&val=<value>`
+- RTSP URL: `rtsp://<device-ip>:8554/mjpeg/1`
 
 ### Scrypted Setup (Camera + Doorbell)
 1. In Scrypted, add a new Camera device (or ONVIF/MJPEG camera).
-2. Set the stream URL to `http://<device-ip>:81/stream`.
+2. Set the stream URL to `rtsp://<device-ip>:8554/mjpeg/1` (preferred) or `http://<device-ip>:81/stream` (MJPEG).
 3. Set the snapshot URL to `http://<device-ip>/capture`.
 4. Create or update a Doorbell Group and link this camera.
 5. Expose the doorbell to HomeKit via the Scrypted HomeKit plugin.
+
+### SIP Setup (FRITZ!Box IP Phone)
+1. FRITZ!Box UI → Telefonie → Telefoniegeräte → “Neues Gerät einrichten”.
+2. Select “Telefon (mit und ohne Anrufbeantworter)” → “LAN/WLAN (IP-Telefon)”.
+3. Assign a username/password (e.g., 620) and name it “ESP32-Doorbell”.
+4. Enter SIP username/password and target number in `http://<device-ip>/sip`.
+5. Use `**610` to ring all DECT phones or a specific extension (e.g., `**611`).
 
 ### Workflow Summary
 1. Flash firmware: `pio run -t upload`
