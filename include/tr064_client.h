@@ -1,3 +1,9 @@
+/*
+ * Project: HomeKitKnock-S3
+ * File: include/tr064_client.h
+ * Author: Jesse Greene
+ */
+
 #ifndef TR064_CLIENT_H
 #define TR064_CLIENT_H
 

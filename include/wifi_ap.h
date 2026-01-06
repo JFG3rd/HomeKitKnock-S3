@@ -1,3 +1,9 @@
+/*
+ * Project: HomeKitKnock-S3
+ * File: include/wifi_ap.h
+ * Author: Jesse Greene
+ */
+
 #ifndef WIFI_AP_H
 #define WIFI_AP_H
 

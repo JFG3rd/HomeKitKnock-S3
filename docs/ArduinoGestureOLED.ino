@@ -1,3 +1,9 @@
+/*
+ * Project: HomeKitKnock-S3
+ * File: docs/ArduinoGestureOLED.ino
+ * Author: Jesse Greene
+ */
+
 // Netbios name: esp32c6-CCB950
 
 

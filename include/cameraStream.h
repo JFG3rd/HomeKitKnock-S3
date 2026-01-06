@@ -1,3 +1,9 @@
+/*
+ * Project: HomeKitKnock-S3
+ * File: include/cameraStream.h
+ * Author: Jesse Greene
+ */
+
 #ifndef CAMERA_STREAM_H
 #define CAMERA_STREAM_H
 

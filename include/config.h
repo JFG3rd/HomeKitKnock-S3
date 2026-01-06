@@ -1,3 +1,9 @@
+/*
+ * Project: HomeKitKnock-S3
+ * File: include/config.h
+ * Author: Jesse Greene
+ */
+
 #ifndef CONFIG_H
 #define CONFIG_H
 

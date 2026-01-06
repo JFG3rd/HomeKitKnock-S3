@@ -1,3 +1,9 @@
+<!--
+ Project: HomeKitKnock-S3
+ File: CONTRIBUTING.md
+ Author: Jesse Greene
+ -->
+
 # Contributing
 
 Thanks for your interest in contributing to HomeKitKnock-S3.

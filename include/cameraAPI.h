@@ -1,3 +1,9 @@
+/*
+ * Project: HomeKitKnock-S3
+ * File: include/cameraAPI.h
+ * Author: Jesse Greene
+ */
+
 #ifndef CAMERA_API_H
 #define CAMERA_API_H
 

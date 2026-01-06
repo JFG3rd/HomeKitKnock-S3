@@ -1,3 +1,9 @@
+/*
+ * Project: HomeKitKnock-S3
+ * File: include/camera_pins.h
+ * Author: Jesse Greene
+ */
+
 
 // Select camera model for pin mapping.
 // Only one CAMERA_MODEL_* should be enabled at a time.

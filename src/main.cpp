@@ -1,3 +1,9 @@
+/*
+ * Project: HomeKitKnock-S3
+ * File: src/main.cpp
+ * Author: Jesse Greene
+ */
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
@@ -5,11 +11,14 @@
 #include <Preferences.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
+#include <HTTPClient.h>
 #include "wifi_ap.h"
 #include "config.h"
 #include "tr064_client.h"
+#include "sip_client.h"
 #include "cameraAPI.h"
 #include "cameraStream.h"
+#include "rtsp_server.h"
 
 // Global objects shared across setup/loop.
 AsyncWebServer server(80);
@@ -18,6 +27,7 @@ Preferences preferences;
 
 String wifiSSID, wifiPassword;
 Tr064Config tr064Config;
+SipConfig sipConfig;
 bool cameraReady = false;
 
 bool lastButtonPressed = false;
@@ -46,6 +56,9 @@ void setup() {
 
   // Load TR-064 config once at boot; UI can update it later.
   loadTr064Config(tr064Config);
+  
+  // Load SIP config once at boot; UI can update it later.
+  loadSipConfig(sipConfig);
 
   // Configure doorbell GPIO based on active-low setting.
   pinMode(DOORBELL_BUTTON_PIN, DOORBELL_BUTTON_ACTIVE_LOW ? INPUT_PULLUP : INPUT);
@@ -74,6 +87,11 @@ void setup() {
     
     if (WiFi.status() == WL_CONNECTED) {
       Serial.println("✅ Connected to WiFi successfully!");
+      
+      // Initialize SIP client and send initial REGISTER
+      if (initSipClient()) {
+        sendSipRegister(sipConfig);
+      }
       
       // Start web server for normal operation
       server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -158,21 +176,28 @@ void setup() {
                 <a class="button" href="http://)rawliteral" + WiFi.localIP().toString() + R"rawliteral(:81/stream" target="_blank">🎥 Live Stream</a>
             </div>
             <button class="button" onclick="applySettings()">Apply Settings</button>
+            <hr>
+            <div class="flash-stats">
+                <strong>📡 RTSP Stream (for Scrypted):</strong>
+                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;">
+                    rtsp://)rawliteral" + WiFi.localIP().toString() + R"rawliteral(:8554/mjpeg/1
+                </p>
+            </div>
         </div>
 
-        <!-- TR-064 Card -->
+        <!-- SIP/TR-064 Card -->
         <div class="container card">
-            <h3>☎️ TR-064</h3>
-            <p>FRITZ!Box TR-064 integration for doorbell notifications.</p>
+            <h3>☎️ SIP/TR-064</h3>
+            <p>FRITZ!Box SIP/TR-064 integration for doorbell notifications.</p>
             <div class="flash-stats" id="tr064Status">
                 <strong>Status:</strong> loading...
             </div>
             <hr>
             <div class="button-row">
-                <button class="button" onclick="testRingHttp()">🔔 Test Ring</button>
-                <a class="button config-btn" href="/tr064">⚙️ Setup</a>
+                <button class="button" onclick="testRingSip()">🔔 Test Ring (SIP)</button>
+                <a class="button config-btn" href="/sip">⚙️ Setup</a>
             </div>
-            <a class="button" href="/tr064Debug" target="_blank">🐛 Debug JSON</a>
+            <a class="button" href="/sipDebug" target="_blank">🐛 Debug JSON</a>
         </div>
     </div>
 
@@ -269,22 +294,22 @@ void setup() {
                 });
         }
 
-        function testRingHttp() {
-            fetch("/ring/http")
+        function testRingSip() {
+            fetch("/ring/sip")
                 .then(async (r) => {
                     const text = await r.text();
                     if (!r.ok) {
-                        addLog(text || "HTTP Ring failed", "error");
-                        return fetch("/tr064Debug")
+                        addLog(text || "SIP Ring failed", "error");
+                        return fetch("/sipDebug")
                             .then(d => d.json())
                             .then(info => {
-                                addLog(`HTTP debug: gateway=${info.gateway} http_user=${info.http_user} number=${info.number} has_http_config=${info.has_http_config}`, "warn");
+                                addLog(`SIP debug: user=${info.sip_user} target=${info.sip_target} has_sip_config=${info.has_sip_config}`, "warn");
                             })
-                            .catch(() => addLog("HTTP debug unavailable", "warn"));
+                            .catch(() => addLog("SIP debug unavailable", "warn"));
                     }
-                    addLog(text || "HTTP Ring triggered", "info");
+                    addLog(text || "SIP Ring triggered", "info");
                 })
-                .catch(() => addLog("Failed to trigger HTTP ring", "error"));
+                .catch(() => addLog("Failed to trigger SIP ring", "error"));
         }
 
         function applySettings() {
@@ -303,25 +328,24 @@ void setup() {
             qualityValueEl.textContent = e.target.value;
         });
 
-        function fetchTr064Status() {
-            fetch("/tr064Debug")
+        function fetchSipStatus() {
+            fetch("/sipDebug")
                 .then(r => r.json())
                 .then(data => {
-                    const httpCfg = data.has_http_config ? "✓" : "✗";
-                    const tr064Cfg = data.has_tr064_config ? "✓" : "✗";
-                    trStatusEl.innerHTML = `<strong>Status:</strong> HTTP ${httpCfg} | TR-064 ${tr064Cfg} | number=${data.number || "-"}`;
+                    const sipCfg = data.has_sip_config ? "✓" : "✗";
+                    trStatusEl.innerHTML = `<strong>Status:</strong> SIP ${sipCfg} | user=${data.sip_user || "-"} | target=${data.sip_target || "-"}`;
                 })
                 .catch(() => {
                     trStatusEl.innerHTML = "<strong>Status:</strong> unavailable";
-                    addLog("TR-064 status unavailable", "warn");
+                    addLog("SIP status unavailable", "warn");
                 });
         }
 
         fetchStatus();
         fetchDeviceStatus();
-        fetchTr064Status();
+        fetchSipStatus();
         setInterval(fetchDeviceStatus, 5000);
-        setInterval(fetchTr064Status, 10000);
+        setInterval(fetchSipStatus, 10000);
         addLog("UI loaded", "info");
     </script>
 </body>
@@ -464,6 +488,199 @@ void setup() {
         request->send(200, "text/html", page);
       });
 
+      server.on("/sip", HTTP_GET, [](AsyncWebServerRequest *request) {
+        Preferences prefs;
+        prefs.begin("sip", true);
+        String sip_user = prefs.getString("sip_user", "");
+        String sip_password = prefs.getString("sip_password", "");
+        String sip_displayname = prefs.getString("sip_displayname", "Doorbell");
+        String sip_target = prefs.getString("sip_target", "**610");
+        String scrypted_webhook = prefs.getString("scrypted_webhook", "");
+        prefs.end();
+
+        String page = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SIP Setup</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="dark-mode-toggle">
+        <label class="switch">
+            <input type="checkbox" id="darkModeToggle">
+            <span class="slider"></span>
+        </label>
+        <span>Dark Mode</span>
+    </div>
+
+    <div class="container">
+        <h1>☎️ SIP Setup</h1>
+        <p>Configure FRITZ!Box SIP credentials to ring internal phones.</p>
+        <div class="flash-stats">
+            <strong>FRITZ!Box SIP Setup Instructions</strong>
+            <p><strong>1) Create an IP Phone in FRITZ!Box</strong></p>
+            <ul>
+                <li>FRITZ!Box UI → Telefonie → Telefoniegeräte</li>
+                <li>Click "Neues Gerät einrichten"</li>
+                <li>Select "Telefon (mit und ohne Anrufbeantworter)"</li>
+                <li>Select "LAN/WLAN (IP-Telefon)"</li>
+                <li>Enter username (e.g., 620) and password</li>
+                <li>Give it a name like "ESP32-Doorbell"</li>
+            </ul>
+            <p><strong>2) Note the credentials</strong></p>
+            <ul>
+                <li>Username (Benutzername): This is your SIP username</li>
+                <li>Password (Kennwort): This is your SIP password</li>
+            </ul>
+            <p><strong>3) Configure target number</strong></p>
+            <ul>
+                <li>Use **610 to ring all DECT phones</li>
+                <li>Use **9 plus extension to ring a specific phone</li>
+            </ul>
+        <p><strong>FRITZ!Box address:</strong> )rawliteral" + WiFi.gatewayIP().toString() + R"rawliteral(</p>
+        </div>
+
+        <h3>📡 SIP Credentials</h3>
+        <label><strong>SIP Username:</strong></label>
+        <input type="text" id="sip_user" value=")rawliteral" + sip_user + R"rawliteral(" placeholder="e.g., 620">
+
+        <label><strong>SIP Password:</strong></label>
+        <input type="password" id="sip_password" value=")rawliteral" + sip_password + R"rawliteral(" placeholder="IP phone password">
+
+        <label><strong>Display Name:</strong></label>
+        <input type="text" id="sip_displayname" value=")rawliteral" + sip_displayname + R"rawliteral(" placeholder="Doorbell">
+
+        <h3>📞 Ring Configuration</h3>
+        <label><strong>Target Number:</strong></label>
+        <input type="text" id="sip_target" value=")rawliteral" + sip_target + R"rawliteral(" placeholder="e.g., **610">
+
+        <h3>🏠 Scrypted Integration (HomeKit)</h3>
+        <label><strong>Doorbell Webhook URL:</strong></label>
+        <input type="text" id="scrypted_webhook" value=")rawliteral" + scrypted_webhook + R"rawliteral(" placeholder="http://scrypted-ip:11080/endpoint/your-id/public/">
+        <p style="font-size: 0.9em; color: #666;">Get this from Scrypted doorbell device settings. Leave empty if not using Scrypted.</p>
+
+        <div>
+            <button class="button" onclick="saveSip()">💾 Save</button>
+            <button class="button" onclick="testRingSip()">🔔 Test SIP Ring</button>
+            <a class="button danger-btn" href="/">Back</a>
+        </div>
+    </div>
+
+    <script>
+        // Dark mode handling
+        const darkToggle = document.getElementById("darkModeToggle");
+        function setDarkMode(enabled) {
+            document.body.classList.toggle("dark-mode", enabled);
+            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        }
+        const savedDarkMode = localStorage.getItem("darkMode");
+        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
+        darkToggle.checked = darkModeEnabled;
+        setDarkMode(darkModeEnabled);
+        darkToggle.addEventListener("change", () => {
+            setDarkMode(darkToggle.checked);
+        });
+
+        function saveSip() {
+            let sip_user = document.getElementById("sip_user").value;
+            let sip_password = document.getElementById("sip_password").value;
+            let sip_displayname = document.getElementById("sip_displayname").value;
+            let sip_target = document.getElementById("sip_target").value;
+            let scrypted_webhook = document.getElementById("scrypted_webhook").value;
+
+            fetch("/saveSIP", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ 
+                    "sip_user": sip_user, 
+                    "sip_password": sip_password, 
+                    "sip_displayname": sip_displayname, 
+                    "sip_target": sip_target,
+                    "scrypted_webhook": scrypted_webhook
+                })
+            }).then(r => r.text())
+              .then(t => alert(t))
+              .catch(e => alert("Save failed: " + e));
+        }
+
+        function testRingSip() {
+            fetch("/ring/sip")
+                .then(r => r.text())
+                .then(t => alert(t))
+                .catch(e => alert("SIP Ring failed: " + e));
+        }
+    </script>
+</body>
+</html>
+)rawliteral";
+        request->send(200, "text/html", page);
+      });
+
+      server.on("/sipDebug", HTTP_GET, [](AsyncWebServerRequest *request) {
+        Preferences prefs;
+        prefs.begin("sip", true);
+        String sip_user = prefs.getString("sip_user", "");
+        String sip_target = prefs.getString("sip_target", "");
+        prefs.end();
+
+        String json = "{";
+        json += "\"sip_user\":\"" + sip_user + "\",";
+        json += "\"sip_target\":\"" + sip_target + "\",";
+        json += "\"has_sip_config\":" + String(hasSipConfig(sipConfig) ? "true" : "false");
+        json += "}";
+        request->send(200, "application/json", json);
+      });
+
+      server.on("/saveSIP", HTTP_POST,
+        [](AsyncWebServerRequest *request) {},
+        NULL,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+          String receivedData = String((char *)data).substring(0, len);
+          Serial.println("📥 Received SIP Config: " + receivedData);
+
+          JsonDocument doc;
+          DeserializationError error = deserializeJson(doc, receivedData);
+          if (error) {
+            request->send(400, "text/plain", "Invalid JSON");
+            return;
+          }
+
+          String sip_user = doc["sip_user"].as<String>();
+          String sip_password = doc["sip_password"].as<String>();
+          String sip_displayname = doc["sip_displayname"].as<String>();
+          String sip_target = doc["sip_target"].as<String>();
+          String scrypted_webhook = doc["scrypted_webhook"].as<String>();
+
+          Preferences prefs;
+          prefs.begin("sip", false);
+          if (sip_user.isEmpty() && sip_password.isEmpty()) {
+            prefs.remove("sip_user");
+            prefs.remove("sip_password");
+            prefs.remove("sip_displayname");
+            prefs.remove("sip_target");
+            prefs.remove("scrypted_webhook");
+            prefs.end();
+            request->send(200, "text/plain", "SIP settings cleared");
+            return;
+          }
+
+          prefs.putString("sip_user", sip_user);
+          prefs.putString("sip_password", sip_password);
+          prefs.putString("sip_displayname", sip_displayname);
+          prefs.putString("sip_target", sip_target);
+          prefs.putString("scrypted_webhook", scrypted_webhook);
+          prefs.end();
+
+          // Reload config into global sipConfig
+          loadSipConfig(sipConfig);
+
+          request->send(200, "text/plain", "SIP settings saved");
+        }
+      );
+
       server.on("/tr064Debug", HTTP_GET, [](AsyncWebServerRequest *request) {
         Preferences prefs;
         prefs.begin("tr064", true);
@@ -563,6 +780,14 @@ void setup() {
         }
       });
 
+      server.on("/ring/sip", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (triggerSipRing(sipConfig)) {
+          request->send(200, "text/plain", "SIP ring triggered");
+        } else {
+          request->send(500, "text/plain", "SIP ring failed - check configuration");
+        }
+      });
+
       server.on("/forget", HTTP_GET, [](AsyncWebServerRequest *request) {
         // Clear WiFi credentials and reboot into provisioning mode.
         preferences.begin("wifi", false);
@@ -587,6 +812,8 @@ void setup() {
   // Start MJPEG streaming server on port 81.
   if (cameraReady) {
     startCameraStreamServer();
+    // Start RTSP server for Scrypted camera integration
+    startRtspServer();
   }
   #endif
 
@@ -604,19 +831,26 @@ bool isDoorbellPressed() {
 }
 
 void handleDoorbellPress() {
-  // Try HTTP click-to-dial first, fall back to TR-064
-  bool ringTriggered = false;
-  
-  if (triggerHttpRing(tr064Config)) {
-    Serial.println("📞 FRITZ!DECT ring triggered via HTTP");
-    ringTriggered = true;
-  } else if (triggerTr064Ring(tr064Config)) {
-    Serial.println("📞 FRITZ!DECT ring triggered via TR-064");
-    ringTriggered = true;
+  // Trigger Scrypted doorbell event (HomeKit notification)
+  if (!sipConfig.scrypted_webhook.isEmpty()) {
+    HTTPClient http;
+    http.begin(sipConfig.scrypted_webhook);
+    http.setTimeout(2000); // 2 second timeout
+    int httpCode = http.GET();
+    http.end();
+    
+    if (httpCode > 0) {
+      Serial.println("🔔 Scrypted webhook triggered (HomeKit notification)");
+    } else {
+      Serial.println("⚠️ Scrypted webhook failed");
+    }
   }
   
-  if (!ringTriggered) {
-    Serial.println("⚠️ FRITZ!DECT ring not triggered (both methods failed)");
+  // Ring FRITZ!Box internal phones
+  if (triggerSipRing(sipConfig)) {
+    Serial.println("📞 FRITZ!Box ring triggered via SIP");
+  } else {
+    Serial.println("⚠️ SIP ring failed - check SIP configuration");
   }
 }
 
@@ -625,6 +859,15 @@ void loop() {
   if (isAPModeActive()) {
     dnsServer.processNextRequest();
   }
+  
+  // Handle RTSP client connections for Scrypted (non-blocking)
+  handleRtspClient();
+  
+  // Send periodic SIP REGISTER to maintain registration with FRITZ!Box
+  sendRegisterIfNeeded(sipConfig);
+  
+  // Handle any incoming SIP responses
+  handleSipIncoming();
   
   // Simple debounce: detect stable press, then wait for release.
   bool pressed = isDoorbellPressed();

@@ -1,3 +1,9 @@
+<!--
+ Project: HomeKitKnock-S3
+ File: AGENTS.md
+ Author: Jesse Greene
+ -->
+
 # AGENTS.md
 
 This file defines how Codex should help with this repo. Keep it short and

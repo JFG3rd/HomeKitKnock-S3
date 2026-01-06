@@ -1,3 +1,9 @@
+<!--
+ Project: HomeKitKnock-S3
+ File: docs/UPDATING_WEB_INTERFACE.md
+ Author: Jesse Greene
+ -->
+
 # Updating the Web Interface
 
 ## Important: Uploading Changes
@@ -36,8 +42,8 @@ Or from VS Code:
 ## CSS Layout Notes
 
 ### Three-Card Layout
-- Cards display side-by-side on screens ≥1001px wide
-- Cards stack vertically on screens <1001px wide
+- Cards display side-by-side on screens ≥980px wide
+- Cards stack vertically on screens <980px wide
 - Each card has `flex: 1 1 0` to ensure equal width
 
 ### Button Styles

@@ -1,3 +1,9 @@
+/*
+ * Project: HomeKitKnock-S3
+ * File: src/wifi_ap.cpp
+ * Author: Jesse Greene
+ */
+
 #include "wifi_ap.h"
 #include <ArduinoJson.h>
 

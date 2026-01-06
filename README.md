@@ -1,3 +1,9 @@
+<!--
+ Project: HomeKitKnock-S3
+ File: README.md
+ Author: Jesse Greene
+ -->
+
 # ESP32-S3 Sense Doorbell Firmware (PlatformIO)
 
 ![License](https://img.shields.io/github/license/JFG3rd/HomeKitKnock-S3)

@@ -1,4 +1,7 @@
 ---
+# Project: HomeKitKnock-S3
+# File: .github/ISSUE_TEMPLATE/bug_report.md
+# Author: Jesse Greene
 name: Bug report
 about: Report a problem or regression
 title: "[Bug] "

@@ -1,3 +1,9 @@
+<!--
+ Project: HomeKitKnock-S3
+ File: data/README.md
+ Author: Jesse Greene
+ -->
+
 # Data Directory
 
 This directory contains static files that can be served by the ESP32-S3 web server.

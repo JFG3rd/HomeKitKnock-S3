@@ -1,3 +1,9 @@
+<!--
+ Project: HomeKitKnock-S3
+ File: docs/TR064_DEBUGGING.md
+ Author: Jesse Greene
+ -->
+
 # TR-064 FRITZ!Box Ring Issue - Debugging Guide
 
 ## Problem
@@ -25,6 +31,11 @@ connection.action("urn:dslforum-org:service:X_VoIP:1", ...)
 - Added serial output for each step
 - Shows router IP, port, and number being dialed
 - Indicates which attempt (primary/fallback) succeeded or failed
+
+### HTTP Click-to-Dial Fallback
+If TR-064 fails, the firmware can ring via FRITZ!Box HTTP click-to-dial:
+- Endpoint: `http://<DEVICE_IP>/ring/http`
+- Requires Web UI credentials in `/tr064`
 
 ## Upload Instructions
 
