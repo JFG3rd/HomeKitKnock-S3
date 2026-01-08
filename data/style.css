@@ -65,6 +65,11 @@ h3 {
     flex-direction: column;
 }
 
+/* Full-width container for setup pages */
+.container.full-width {
+    max-width: 900px;
+}
+
 /* Three-column dashboard layout */
 .dashboard {
     display: flex;
@@ -186,14 +191,16 @@ h3 {
     color: #dc3545;
 }
 
+.log-entry.debug {
+    color: #6c757d;
+}
+
 .log-entry:nth-child(odd) {
     background: black;
-    color: white;
 }
 
 .log-entry:nth-child(even) {
     background: #001F4D;
-    color: white;
 }
 
 /* Button Styles - Modern card-style buttons */
@@ -457,7 +464,7 @@ footer {
 }
 
 .dark-mode .info-value {
-    color: #e9ecefportant;
+    color: #e9ecef !important;
     color: white;
 }
 
@@ -479,7 +486,7 @@ footer {
     background: #222;
 }
 
-.dark-mode .log-container::-we1000px) {
+@media (max-width: 1000px) {
     .dashboard {
         flex-direction: column;
         align-items: center;

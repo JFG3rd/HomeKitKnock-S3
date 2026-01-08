@@ -19,6 +19,7 @@
 #include "cameraAPI.h"
 #include "cameraStream.h"
 #include "rtsp_server.h"
+#include "logger.h"
 
 // Global objects shared across setup/loop.
 AsyncWebServer server(80);
@@ -30,13 +31,19 @@ Tr064Config tr064Config;
 SipConfig sipConfig;
 bool cameraReady = false;
 
+// Feature toggles (loaded once at boot, updated on save)
+bool sipEnabled = true;
+bool tr064Enabled = true;
+bool httpCamEnabled = true;
+bool rtspEnabled = true;
+
 bool lastButtonPressed = false;
 unsigned long lastButtonChangeMs = 0;
 
 bool initFileSystem(AsyncWebServer &server) {
   // Mount LittleFS and expose static assets for the UI.
   if (!LittleFS.begin(true)) {
-    Serial.println("❌ LittleFS mount failed");
+    logEvent(LOG_ERROR, "❌ LittleFS mount failed");
     return false;
   }
   server.serveStatic("/style.css", LittleFS, "/style.css");
@@ -47,9 +54,10 @@ bool initFileSystem(AsyncWebServer &server) {
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  
-  Serial.println("\n\n🔔 ESP32-S3 Doorbell Starting...");
-  Serial.println("====================================");
+
+  initEventLog();
+  logEvent(LOG_INFO, "\n\n🔔 ESP32-S3 Doorbell Starting...");
+  logEvent(LOG_INFO, "====================================");
 
   // Mount filesystem early so both AP and normal mode can serve CSS.
   initFileSystem(server);
@@ -59,6 +67,26 @@ void setup() {
   
   // Load SIP config once at boot; UI can update it later.
   loadSipConfig(sipConfig);
+
+  // Initialize feature toggles with defaults if not already set
+  Preferences featPrefs;
+  if (!featPrefs.begin("features", false)) {
+    logEvent(LOG_WARN, "⚠️ Failed to open features namespace, creating...");
+  }
+  if (!featPrefs.isKey("sip_enabled")) {
+    featPrefs.putBool("sip_enabled", true);
+    featPrefs.putBool("tr064_enabled", true);
+    featPrefs.putBool("http_cam_enabled", true);
+    featPrefs.putBool("rtsp_enabled", true);
+    logEvent(LOG_INFO, "✅ Feature toggles initialized with defaults (all enabled)");
+  }
+  // Load feature flags into global variables
+  sipEnabled = featPrefs.getBool("sip_enabled", true);
+  tr064Enabled = featPrefs.getBool("tr064_enabled", true);
+  httpCamEnabled = featPrefs.getBool("http_cam_enabled", true);
+  rtspEnabled = featPrefs.getBool("rtsp_enabled", true);
+  featPrefs.end();
+  logEvent(LOG_INFO, "📋 Features loaded: SIP=" + String(sipEnabled) + " TR-064=" + String(tr064Enabled) + " HTTP=" + String(httpCamEnabled) + " RTSP=" + String(rtspEnabled));
 
   // Configure doorbell GPIO based on active-low setting.
   pinMode(DOORBELL_BUTTON_PIN, DOORBELL_BUTTON_ACTIVE_LOW ? INPUT_PULLUP : INPUT);
@@ -79,14 +107,14 @@ void setup() {
 
   if (wifiSSID.isEmpty()) {
     // No saved WiFi; force AP provisioning mode.
-    Serial.println("🚨 No WiFi credentials found. Starting AP mode...");
+    logEvent(LOG_WARN, "🚨 No WiFi credentials found. Starting AP mode...");
     startAPMode(server, dnsServer, preferences);
   } else {
-    Serial.printf("🔍 Found saved WiFi: %s\n", wifiSSID.c_str());
+    logEvent(LOG_INFO, "🔍 Found saved WiFi: " + wifiSSID);
     attemptWiFiConnection(wifiSSID, wifiPassword);
     
     if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("✅ Connected to WiFi successfully!");
+      logEvent(LOG_INFO, "✅ Connected to WiFi successfully!");
       
       // Initialize SIP client and send initial REGISTER
       if (initSipClient()) {
@@ -149,6 +177,10 @@ void setup() {
             </div>
             <hr>
             <button class="danger-btn" onclick="location.href='/forget';">Forget WiFi</button>
+            <div class="button-row" style="margin-top: 12px;">
+                <a class="button" href="/setup">⚙️ Feature Setup</a>
+                <button class="button danger-btn" onclick="location.href='/restart';">🔄 Restart</button>
+            </div>
         </div>
 
         <!-- Camera Settings Card -->
@@ -182,6 +214,9 @@ void setup() {
                 <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;">
                     rtsp://)rawliteral" + WiFi.localIP().toString() + R"rawliteral(:8554/mjpeg/1
                 </p>
+                <p style="font-size: 0.85em; color: #666;">
+                    Use the RTSP Camera plugin or prefix with <code>-i</code> if using FFmpeg Camera.
+                </p>
             </div>
         </div>
 
@@ -213,6 +248,7 @@ void setup() {
         const wifiConnectedEl = document.getElementById("wifiConnected");
         const qualityValueEl = document.getElementById("qualityValue");
         const wifiConnectTime = Date.now();
+        let lastEventId = 0;
 
         function addLog(message, level = "info") {
             const entry = document.createElement("div");
@@ -248,6 +284,21 @@ void setup() {
                     statusEl.innerHTML = "<strong>Camera:</strong> unavailable";
                     addLog("Camera status unavailable", "warn");
                 });
+        }
+
+        function fetchEventLog() {
+            fetch(`/eventLog?since=${lastEventId}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.entries) return;
+                    data.entries.forEach(entry => {
+                        addLog(entry.message, entry.level || "info");
+                        if (entry.id > lastEventId) {
+                            lastEventId = entry.id;
+                        }
+                    });
+                })
+                .catch(() => addLog("Event log fetch failed", "warn"));
         }
 
         function formatUptime(seconds) {
@@ -344,8 +395,10 @@ void setup() {
         fetchStatus();
         fetchDeviceStatus();
         fetchSipStatus();
+        fetchEventLog();
         setInterval(fetchDeviceStatus, 5000);
         setInterval(fetchSipStatus, 10000);
+        setInterval(fetchEventLog, 2000);
         addLog("UI loaded", "info");
     </script>
 </body>
@@ -353,11 +406,133 @@ void setup() {
 )rawliteral");
       });
 
+      server.on("/setup", HTTP_GET, [](AsyncWebServerRequest *request) {
+        Preferences prefs;
+        prefs.begin("features", false);
+        bool sip_enabled = prefs.getBool("sip_enabled", true);
+        bool tr064_enabled = prefs.getBool("tr064_enabled", true);
+        bool http_cam_enabled = prefs.getBool("http_cam_enabled", true);
+        bool rtsp_enabled = prefs.getBool("rtsp_enabled", true);
+        prefs.end();
+
+        String page = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Feature Setup</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="dark-mode-toggle">
+        <label class="switch">
+            <input type="checkbox" id="darkModeToggle">
+            <span class="slider"></span>
+        </label>
+        <span>Dark Mode</span>
+    </div>
+
+    <div class="container full-width">
+        <h1>⚙️ Feature Setup</h1>
+        <p>Enable or disable individual features for your doorbell.</p>
+        
+        <div class="info-grid">
+            <div class="info-item">
+                <span><strong>☎️ SIP Phone Ringing</strong></span>
+                <label class="switch">
+                    <input type="checkbox" id="sip_enabled" )rawliteral" + String(sip_enabled ? "checked" : "") + R"rawliteral(>
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                Ring FRITZ!Box phones when doorbell is pressed via SIP protocol.
+            </div>
+
+            <div class="info-item">
+                <span><strong>📡 TR-064 Integration</strong></span>
+                <label class="switch">
+                    <input type="checkbox" id="tr064_enabled" )rawliteral" + String(tr064_enabled ? "checked" : "") + R"rawliteral(>
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                Enable TR-064 SOAP protocol for advanced FRITZ!Box control.
+            </div>
+
+            <div class="info-item">
+                <span><strong>📹 HTTP Camera Streaming</strong></span>
+                <label class="switch">
+                    <input type="checkbox" id="http_cam_enabled" )rawliteral" + String(http_cam_enabled ? "checked" : "") + R"rawliteral(>
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                MJPEG stream at http://ESP32-IP:81/stream and snapshot endpoint.
+            </div>
+
+            <div class="info-item">
+                <span><strong>🎥 RTSP Camera Streaming</strong></span>
+                <label class="switch">
+                    <input type="checkbox" id="rtsp_enabled" )rawliteral" + String(rtsp_enabled ? "checked" : "") + R"rawliteral(>
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                RTSP stream at rtsp://ESP32-IP:8554/mjpeg/1 (experimental, use HTTP for Scrypted).
+            </div>
+        </div>
+
+        <div style="margin-top: 30px;">
+            <button class="button" onclick="saveFeatures()">💾 Save Features</button>
+            <button class="button danger-btn" onclick="location.href='/restart';">🔄 Restart</button>
+            <a class="button danger-btn" href="/">Back</a>
+        </div>
+    </div>
+
+    <script>
+        const darkToggle = document.getElementById("darkModeToggle");
+        function setDarkMode(enabled) {
+            document.body.classList.toggle("dark-mode", enabled);
+            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        }
+        const savedDarkMode = localStorage.getItem("darkMode");
+        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
+        darkToggle.checked = darkModeEnabled;
+        setDarkMode(darkModeEnabled);
+        darkToggle.addEventListener("change", () => {
+            setDarkMode(darkToggle.checked);
+        });
+
+        function saveFeatures() {
+            const features = {
+                sip_enabled: document.getElementById("sip_enabled").checked,
+                tr064_enabled: document.getElementById("tr064_enabled").checked,
+                http_cam_enabled: document.getElementById("http_cam_enabled").checked,
+                rtsp_enabled: document.getElementById("rtsp_enabled").checked
+            };
+
+            fetch("/saveFeatures", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(features)
+            }).then(r => r.text())
+              .then(t => {
+                  alert(t);
+                  setTimeout(() => window.location.reload(), 1000);
+              })
+              .catch(e => alert("Save failed: " + e));
+        }
+    </script>
+</body>
+</html>
+)rawliteral";
+        request->send(200, "text/html", page);
+      });
+
       server.on("/tr064", HTTP_GET, [](AsyncWebServerRequest *request) {
         Preferences prefs;
         prefs.begin("tr064", true);
-        String http_user = prefs.getString("http_user", "");
-        String http_pass = prefs.getString("http_pass", "");
         String tr064_user = prefs.getString("tr064_user", "");
         String tr064_pass = prefs.getString("tr064_pass", "");
         String number = prefs.getString("number", "");
@@ -400,15 +575,8 @@ void setup() {
             </ul>
         <p><strong>TR-064 uses HTTP Digest Auth</strong></p>
         <p><strong>FRITZ!Box address:</strong> )rawliteral" + WiFi.gatewayIP().toString() + R"rawliteral(</p>
-        <p>Enter credentials for both HTTP (web UI) and TR-064 (SOAP) access below.</p>
+        <p>Enter TR-064 credentials below.</p>
         </div>
-
-        <h3>🌐 HTTP Click-to-Dial (Web UI)</h3>
-        <label><strong>Web UI Username:</strong></label>
-        <input type="text" id="http_user" value=")rawliteral" + http_user + R"rawliteral(" placeholder="Leave empty or enter admin username">
-
-        <label><strong>Web UI Password:</strong></label>
-        <input type="password" id="http_pass" value=")rawliteral" + http_pass + R"rawliteral(" placeholder="FRITZ!Box admin password">
 
         <h3>📡 TR-064 SOAP</h3>
         <label><strong>TR-064 Username:</strong></label>
@@ -423,7 +591,6 @@ void setup() {
 
         <div>
             <button class="button" onclick="saveTr064()">💾 Save</button>
-            <button class="button" onclick="testRingHttp()">🔔 Test HTTP Ring</button>
             <button class="button" onclick="testRingTr064()">🔔 Test TR-064 Ring</button>
             <a class="button danger-btn" href="/">Back</a>
         </div>
@@ -447,8 +614,6 @@ void setup() {
 
         // Ensure emoji text renders correctly under UTF-8.
         function saveTr064() {
-            let http_user = document.getElementById("http_user").value;
-            let http_pass = document.getElementById("http_pass").value;
             let tr064_user = document.getElementById("tr064_user").value;
             let tr064_pass = document.getElementById("tr064_pass").value;
             let number = document.getElementById("tr_number").value;
@@ -457,8 +622,6 @@ void setup() {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ 
-                    "http_user": http_user, 
-                    "http_pass": http_pass, 
                     "tr064_user": tr064_user, 
                     "tr064_pass": tr064_pass, 
                     "number": number 
@@ -466,13 +629,6 @@ void setup() {
             }).then(r => r.text())
               .then(t => alert(t))
               .catch(e => alert("Save failed: " + e));
-        }
-
-        function testRingHttp() {
-            fetch("/ring/http")
-                .then(r => r.text())
-                .then(t => alert(t))
-                .catch(e => alert("HTTP Ring failed: " + e));
         }
 
         function testRingTr064() {
@@ -516,7 +672,7 @@ void setup() {
         <span>Dark Mode</span>
     </div>
 
-    <div class="container">
+    <div class="container full-width">
         <h1>☎️ SIP Setup</h1>
         <p>Configure FRITZ!Box SIP credentials to ring internal phones.</p>
         <div class="flash-stats">
@@ -634,12 +790,53 @@ void setup() {
         request->send(200, "application/json", json);
       });
 
+      server.on("/saveFeatures", HTTP_POST,
+        [](AsyncWebServerRequest *request) {},
+        NULL,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+          String receivedData = String((char *)data).substring(0, len);
+          logEvent(LOG_INFO, "📥 Received Feature Toggles: " + receivedData);
+
+          JsonDocument doc;
+          DeserializationError error = deserializeJson(doc, receivedData);
+          if (error) {
+            request->send(400, "text/plain", "Invalid JSON");
+            return;
+          }
+
+          bool sip_enabled = doc["sip_enabled"].as<bool>();
+          bool tr064_enabled = doc["tr064_enabled"].as<bool>();
+          bool http_cam_enabled = doc["http_cam_enabled"].as<bool>();
+          bool rtsp_enabled = doc["rtsp_enabled"].as<bool>();
+
+          Preferences prefs;
+          prefs.begin("features", false);
+          prefs.putBool("sip_enabled", sip_enabled);
+          prefs.putBool("tr064_enabled", tr064_enabled);
+          prefs.putBool("http_cam_enabled", http_cam_enabled);
+          prefs.putBool("rtsp_enabled", rtsp_enabled);
+          prefs.end();
+
+          // Update global variables
+          sipEnabled = sip_enabled;
+          tr064Enabled = tr064_enabled;
+          httpCamEnabled = http_cam_enabled;
+          rtspEnabled = rtsp_enabled;
+
+          request->send(200, "text/plain", "Feature settings saved! Restarting ESP32...");
+          
+          // Restart ESP32 to apply changes
+          delay(1000);
+          ESP.restart();
+        }
+      );
+
       server.on("/saveSIP", HTTP_POST,
         [](AsyncWebServerRequest *request) {},
         NULL,
         [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
           String receivedData = String((char *)data).substring(0, len);
-          Serial.println("📥 Received SIP Config: " + receivedData);
+          logEvent(LOG_INFO, "📥 Received SIP Config: " + receivedData);
 
           JsonDocument doc;
           DeserializationError error = deserializeJson(doc, receivedData);
@@ -684,7 +881,6 @@ void setup() {
       server.on("/tr064Debug", HTTP_GET, [](AsyncWebServerRequest *request) {
         Preferences prefs;
         prefs.begin("tr064", true);
-        String http_user = prefs.getString("http_user", "");
         String tr064_user = prefs.getString("tr064_user", "");
         String number = prefs.getString("number", "");
         prefs.end();
@@ -692,10 +888,8 @@ void setup() {
 
         String json = "{";
         json += "\"gateway\":\"" + gateway + "\",";
-        json += "\"http_user\":\"" + http_user + "\",";
         json += "\"tr064_user\":\"" + tr064_user + "\",";
         json += "\"number\":\"" + number + "\",";
-        json += "\"has_http_config\":" + String(hasHttpConfig(tr064Config) ? "true" : "false") + ",";
         json += "\"has_tr064_config\":" + String(hasTr064Config(tr064Config) ? "true" : "false");
         json += "}";
         request->send(200, "application/json", json);
@@ -706,7 +900,7 @@ void setup() {
         NULL,
         [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
           String receivedData = String((char *)data).substring(0, len);
-          Serial.println("📥 Received TR-064 Config: " + receivedData);
+          logEvent(LOG_INFO, "📥 Received TR-064 Config: " + receivedData);
 
           JsonDocument doc;
           DeserializationError error = deserializeJson(doc, receivedData);
@@ -715,17 +909,13 @@ void setup() {
             return;
           }
 
-          String http_user = doc["http_user"].as<String>();
-          String http_pass = doc["http_pass"].as<String>();
           String tr064_user = doc["tr064_user"].as<String>();
           String tr064_pass = doc["tr064_pass"].as<String>();
           String number = doc["number"].as<String>();
 
           Preferences prefs;
           prefs.begin("tr064", false);
-          if (number.isEmpty() && http_pass.isEmpty() && tr064_pass.isEmpty()) {
-            prefs.remove("http_user");
-            prefs.remove("http_pass");
+          if (number.isEmpty() && tr064_pass.isEmpty()) {
             prefs.remove("tr064_user");
             prefs.remove("tr064_pass");
             prefs.remove("number");
@@ -734,8 +924,6 @@ void setup() {
             return;
           }
 
-          prefs.putString("http_user", http_user);
-          prefs.putString("http_pass", http_pass);
           prefs.putString("tr064_user", tr064_user);
           prefs.putString("tr064_pass", tr064_pass);
           prefs.putString("number", number);
@@ -752,27 +940,36 @@ void setup() {
         String json = "{\"rssi\":" + String(WiFi.RSSI()) + ",\"uptimeSeconds\":" + String(millis() / 1000) + "}";
         request->send(200, "application/json", json);
       });
-
-      server.on("/ring", HTTP_GET, [](AsyncWebServerRequest *request) {
-        // Try HTTP click-to-dial first (works on all FRITZ!Box models)
-        if (triggerHttpRing(tr064Config)) {
-          request->send(200, "text/plain", "Ring triggered via HTTP");
-        } else if (triggerTr064Ring(tr064Config)) {
-          request->send(200, "text/plain", "Ring triggered via TR-064");
-        } else {
-          request->send(500, "text/plain", "Ring failed (both HTTP and TR-064 failed)");
+      server.on("/eventLog", HTTP_GET, [](AsyncWebServerRequest *request) {
+        uint32_t sinceId = 0;
+        if (request->hasParam("since")) {
+          sinceId = request->getParam("since")->value().toInt();
         }
+        String json = getEventLogJson(sinceId);
+        request->send(200, "application/json", json);
       });
 
-      server.on("/ring/http", HTTP_GET, [](AsyncWebServerRequest *request) {
-        if (triggerHttpRing(tr064Config)) {
-          request->send(200, "text/plain", "HTTP ring triggered");
+      server.on("/ring", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (sipEnabled && triggerSipRing(sipConfig)) {
+          request->send(200, "text/plain", "Ring triggered via SIP");
+          return;
+        }
+        if (!tr064Enabled) {
+          request->send(503, "text/plain", "Ring failed (TR-064 disabled)");
+          return;
+        }
+        if (triggerTr064Ring(tr064Config)) {
+          request->send(200, "text/plain", "Ring triggered via TR-064");
         } else {
-          request->send(500, "text/plain", "HTTP ring failed");
+          request->send(500, "text/plain", "Ring failed (TR-064 failed)");
         }
       });
 
       server.on("/ring/tr064", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!tr064Enabled) {
+          request->send(503, "text/plain", "TR-064 ring disabled");
+          return;
+        }
         if (triggerTr064Ring(tr064Config)) {
           request->send(200, "text/plain", "TR-064 ring triggered");
         } else {
@@ -800,10 +997,16 @@ void setup() {
         ESP.restart();
       });
 
+      server.on("/restart", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send(200, "text/plain", "Restarting...");
+        delay(1000);
+        ESP.restart();
+      });
+
       server.begin();
-      Serial.println("✅ Web server started");
+      logEvent(LOG_INFO, "✅ Web server started");
     } else {
-      Serial.println("❌ WiFi connection failed. Starting AP mode...");
+      logEvent(LOG_ERROR, "❌ WiFi connection failed. Starting AP mode...");
       startAPMode(server, dnsServer, preferences);
     }
   }
@@ -811,14 +1014,24 @@ void setup() {
   #ifdef CAMERA
   // Start MJPEG streaming server on port 81.
   if (cameraReady) {
-    startCameraStreamServer();
-    // Start RTSP server for Scrypted camera integration
-    startRtspServer();
+    if (httpCamEnabled) {
+      startCameraStreamServer();
+      logEvent(LOG_INFO, "✅ HTTP camera streaming enabled");
+    } else {
+      logEvent(LOG_INFO, "ℹ️ HTTP camera streaming disabled");
+    }
+    
+    if (rtspEnabled) {
+      startRtspServer();
+      logEvent(LOG_INFO, "✅ RTSP streaming enabled");
+    } else {
+      logEvent(LOG_INFO, "ℹ️ RTSP streaming disabled");
+    }
   }
   #endif
 
-  Serial.println("====================================");
-  Serial.println("Setup complete!\n");
+  logEvent(LOG_INFO, "====================================");
+  logEvent(LOG_INFO, "Setup complete!");
 }
 
 bool isDoorbellPressed() {
@@ -840,17 +1053,21 @@ void handleDoorbellPress() {
     http.end();
     
     if (httpCode > 0) {
-      Serial.println("🔔 Scrypted webhook triggered (HomeKit notification)");
+      logEvent(LOG_INFO, "🔔 Scrypted webhook triggered (HomeKit notification)");
     } else {
-      Serial.println("⚠️ Scrypted webhook failed");
+      logEvent(LOG_WARN, "⚠️ Scrypted webhook failed");
     }
   }
   
-  // Ring FRITZ!Box internal phones
-  if (triggerSipRing(sipConfig)) {
-    Serial.println("📞 FRITZ!Box ring triggered via SIP");
+  // Ring FRITZ!Box internal phones (only if SIP enabled)
+  if (sipEnabled) {
+    if (triggerSipRing(sipConfig)) {
+      logEvent(LOG_INFO, "📞 FRITZ!Box ring triggered via SIP");
+    } else {
+      logEvent(LOG_WARN, "⚠️ SIP ring failed - check SIP configuration");
+    }
   } else {
-    Serial.println("⚠️ SIP ring failed - check SIP configuration");
+    logEvent(LOG_INFO, "ℹ️ SIP disabled - skipping phone ring");
   }
 }
 
@@ -863,11 +1080,12 @@ void loop() {
   // Handle RTSP client connections for Scrypted (non-blocking)
   handleRtspClient();
   
-  // Send periodic SIP REGISTER to maintain registration with FRITZ!Box
-  sendRegisterIfNeeded(sipConfig);
-  
-  // Handle any incoming SIP responses
-  handleSipIncoming();
+  // Send periodic SIP REGISTER to maintain registration with FRITZ!Box (only if enabled)
+  if (sipEnabled) {
+    sendRegisterIfNeeded(sipConfig);
+    // Handle any incoming SIP responses
+    handleSipIncoming();
+  }
   
   // Simple debounce: detect stable press, then wait for release.
   bool pressed = isDoorbellPressed();

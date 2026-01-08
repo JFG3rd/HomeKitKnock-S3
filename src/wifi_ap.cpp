@@ -118,8 +118,6 @@ String generateWiFiSetupPage() {
 
         function saveTr064() {
             // Save TR-064 credentials and ring number for FRITZ!Box.
-            let http_user = document.getElementById("http_user").value;
-            let http_pass = document.getElementById("http_pass").value;
             let tr064_user = document.getElementById("tr064_user").value;
             let tr064_pass = document.getElementById("tr064_pass").value;
             let number = document.getElementById("tr_number").value;
@@ -128,8 +126,6 @@ String generateWiFiSetupPage() {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ 
-                    "http_user": http_user, 
-                    "http_pass": http_pass, 
                     "tr064_user": tr064_user, 
                     "tr064_pass": tr064_pass, 
                     "number": number 
@@ -193,12 +189,6 @@ String generateWiFiSetupPage() {
         <hr>
 
         <h3>FRITZ!Box TR-064</h3>
-        <label><strong>Web UI Username:</strong></label>
-        <input type="text" id="http_user" placeholder="HTTP click-to-dial username">
-
-        <label><strong>Web UI Password:</strong></label>
-        <input type="password" id="http_pass" placeholder="HTTP click-to-dial password">
-
         <label><strong>TR-064 Username:</strong></label>
         <input type="text" id="tr064_user" placeholder="TR-064 username">
 
@@ -321,16 +311,12 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
                 return;
             }
 
-            String http_user = doc["http_user"].as<String>();
-            String http_pass = doc["http_pass"].as<String>();
             String tr064_user = doc["tr064_user"].as<String>();
             String tr064_pass = doc["tr064_pass"].as<String>();
             String number = doc["number"].as<String>();
 
             prefs.begin("tr064", false);
-            if (number.isEmpty() && http_pass.isEmpty() && tr064_pass.isEmpty()) {
-                prefs.remove("http_user");
-                prefs.remove("http_pass");
+            if (number.isEmpty() && tr064_pass.isEmpty()) {
                 prefs.remove("tr064_user");
                 prefs.remove("tr064_pass");
                 prefs.remove("number");
@@ -339,8 +325,6 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
                 return;
             }
 
-            prefs.putString("http_user", http_user);
-            prefs.putString("http_pass", http_pass);
             prefs.putString("tr064_user", tr064_user);
             prefs.putString("tr064_pass", tr064_pass);
             prefs.putString("number", number);

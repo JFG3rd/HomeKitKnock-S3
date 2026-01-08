@@ -73,11 +73,10 @@ If none are found or the connection fails, it starts a configuration AP:
 - `GET /` - Device status page
 - `GET /forget` - Clears WiFi credentials and restarts
 - `GET /deviceStatus` - JSON status (RSSI + uptime)
-- `GET /ring` - Trigger ring (tries HTTP then TR-064)
-- `GET /ring/http` - Trigger FRITZ!Box HTTP click-to-dial ring
+- `GET /ring` - Trigger ring (tries SIP then TR-064)
 - `GET /ring/tr064` - Trigger FRITZ!Box TR-064 ring
 - `GET /ring/sip` - Trigger FRITZ!Box SIP ring
-- `GET /tr064` - TR-064/HTTP ring setup page
+- `GET /tr064` - TR-064 ring setup page
 - `GET /tr064Debug` - TR-064 debug JSON
 - `GET /sip` - SIP setup page
 - `GET /sipDebug` - SIP debug JSON
@@ -105,6 +104,8 @@ TR-064 is configurable from:
 3. Set the snapshot URL to `http://<device-ip>/capture`.
 4. Create or update a Doorbell Group and link this camera.
 5. Expose the doorbell to HomeKit via the Scrypted HomeKit plugin.
+
+If Scrypted shows an ffmpeg error about “Unable to choose an output format for rtsp://…”, ensure the URL is provided as an **input** (RTSP Camera plugin) or prefixed with `-i` in an FFmpeg Camera plugin.
 
 ### SIP Setup (FRITZ!Box IP Phone)
 1. FRITZ!Box UI → Telefonie → Telefoniegeräte → “Neues Gerät einrichten”.

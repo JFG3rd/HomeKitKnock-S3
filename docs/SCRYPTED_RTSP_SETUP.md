@@ -137,6 +137,23 @@ telnet 192.168.178.188 8554
 - Serial monitor shows: `🔌 RTSP client connected from <IP>`
 - If you see disconnection immediately, check RTSP URL format
 
+### Scrypted Rebroadcast Error (Missing -i)
+If Scrypted logs show:
+```
+Unable to choose an output format for 'rtsp://...'
+```
+then ffmpeg is treating the camera URL as an output because `-i` is missing.
+
+Fix:
+1. Use the **RTSP Camera** plugin and set **RTSP URL** to `rtsp://<ESP32-IP>:8554/mjpeg/1`.
+2. If using **FFmpeg Camera**, ensure your input starts with `-i`:
+   ```
+   -i rtsp://<ESP32-IP>:8554/mjpeg/1
+   ```
+3. As a fallback, use MJPEG:
+   - Stream: `http://<ESP32-IP>:81/stream`
+   - Snapshot: `http://<ESP32-IP>/capture`
+
 ### High Latency or Lag
 
 **Reduce JPEG Quality:**

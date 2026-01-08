@@ -33,9 +33,7 @@ connection.action("urn:dslforum-org:service:X_VoIP:1", ...)
 - Indicates which attempt (primary/fallback) succeeded or failed
 
 ### HTTP Click-to-Dial Fallback
-If TR-064 fails, the firmware can ring via FRITZ!Box HTTP click-to-dial:
-- Endpoint: `http://<DEVICE_IP>/ring/http`
-- Requires Web UI credentials in `/tr064`
+This fallback has been removed. Use SIP or TR-064 endpoints instead.
 
 ## Upload Instructions
 
