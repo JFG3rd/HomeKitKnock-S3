@@ -25,6 +25,9 @@ void logEvent(LogLevel level, const String &message);
 // Return a JSON payload of log entries newer than sinceId.
 String getEventLogJson(uint32_t sinceId);
 
+// Clear all in-memory log entries and reset counters.
+void clearEventLog();
+
 // Convert a LogLevel to a CSS-friendly string label.
 const char* logLevelToString(LogLevel level);
 

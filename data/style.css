@@ -28,6 +28,10 @@ body {
     padding: 20px;
 }
 
+.full-width-page {
+    padding: 0;
+}
+
 h1 {
     font-size: 2.2em;
     color: var(--light-text);
@@ -67,7 +71,14 @@ h3 {
 
 /* Full-width container for setup pages */
 .container.full-width {
-    max-width: 900px;
+    max-width: none;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.full-width-page .container.full-width {
+    margin: 0;
+    border-radius: 0;
 }
 
 /* Three-column dashboard layout */
@@ -150,6 +161,12 @@ h3 {
     color: white;
     max-height: calc(var(--log-line-height) * var(--max-log-entries));
     margin-bottom: 50px;
+}
+
+.log-actions {
+    width: calc(100% - 40px);
+    max-width: 100%;
+    margin: 0 auto 20px auto;
 }
 
 /* Responsive log height */

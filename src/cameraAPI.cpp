@@ -8,7 +8,12 @@
 #ifdef CAMERA
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <esp_camera.h>
+
+static const char *kCameraPrefsNamespace = "camera";
+static const char *kCameraFramesizeKey = "framesize";
+static const char *kCameraQualityKey = "quality";
 
 // Apply a single sensor parameter update based on URL args.
 static void setControl(String variable, int value) {
@@ -127,8 +132,9 @@ static void handleSnap(AsyncWebServerRequest *request) {
     return;
   }
 
-  AsyncWebServerResponse *response = request->beginResponse_P(200, "image/jpeg", fb->buf, fb->len);
+  AsyncResponseStream *response = request->beginResponseStream("image/jpeg");
   response->addHeader("Content-Disposition", "inline; filename=capture.jpg");
+  response->write(fb->buf, fb->len);
   request->send(response);
 
   esp_camera_fb_return(fb);
@@ -138,8 +144,21 @@ static void handleSnap(AsyncWebServerRequest *request) {
 static void handleControl(AsyncWebServerRequest *request) {
   String variable = request->arg("var");
   String value = request->arg("val");
+  int intValue = atoi(value.c_str());
 
-  setControl(variable, atoi(value.c_str()));
+  setControl(variable, intValue);
+  if (variable.startsWith("framesize") || variable.startsWith("quality")) {
+    // Persist key camera settings so they survive reboots.
+    Preferences prefs;
+    if (prefs.begin(kCameraPrefsNamespace, false)) {
+      if (variable.startsWith("framesize")) {
+        prefs.putInt(kCameraFramesizeKey, intValue);
+      } else {
+        prefs.putInt(kCameraQualityKey, intValue);
+      }
+      prefs.end();
+    }
+  }
   request->send(200, "text/plain", "Set " + variable + " to " + value);
 }
 
@@ -215,8 +234,18 @@ bool initCamera() {
   s->set_vflip(s, 1);
   s->set_hmirror(s, 1);
 #endif
-  // Default to a reasonable streaming resolution.
-  s->set_framesize(s, FRAMESIZE_HVGA);
+  int defaultFramesize = psramFound() ? FRAMESIZE_VGA : FRAMESIZE_QVGA;
+  int defaultQuality = psramFound() ? 10 : 12;
+  int storedFramesize = -1;
+  int storedQuality = -1;
+  Preferences prefs;
+  if (prefs.begin(kCameraPrefsNamespace, true)) {
+    storedFramesize = prefs.getInt(kCameraFramesizeKey, -1);
+    storedQuality = prefs.getInt(kCameraQualityKey, -1);
+    prefs.end();
+  }
+  s->set_framesize(s, (framesize_t)(storedFramesize >= 0 ? storedFramesize : defaultFramesize));
+  s->set_quality(s, storedQuality >= 0 ? storedQuality : defaultQuality);
 
   return true;
 }

@@ -10,7 +10,7 @@ This file defines how Codex should help with this repo. Keep it short and
 actionable so new tasks start with the right context.
 
 ## Project Context
-- Purpose: ESP32-S3 (Seeed XIAO ESP32-S3 Sense) firmware for a HomeKit doorbell via Scrypted.
+- Purpose: ESP32-S3 (Seeed XIAO ESP32-S3 Sense) firmware for a HomeKit doorbell via Scrypted and IP Doorbell via Fritz!Box
 - Primary docs: `docs/esp32-s3-doorbell-architecture.md`.
 - Build system: PlatformIO (Arduino framework).
 

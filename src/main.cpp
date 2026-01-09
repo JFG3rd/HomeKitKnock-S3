@@ -36,6 +36,7 @@ bool sipEnabled = true;
 bool tr064Enabled = true;
 bool httpCamEnabled = true;
 bool rtspEnabled = true;
+uint8_t httpCamMaxClients = 2;
 
 bool lastButtonPressed = false;
 unsigned long lastButtonChangeMs = 0;
@@ -78,6 +79,7 @@ void setup() {
     featPrefs.putBool("tr064_enabled", true);
     featPrefs.putBool("http_cam_enabled", true);
     featPrefs.putBool("rtsp_enabled", true);
+    featPrefs.putUChar("http_cam_max_clients", 2);
     logEvent(LOG_INFO, "✅ Feature toggles initialized with defaults (all enabled)");
   }
   // Load feature flags into global variables
@@ -85,8 +87,13 @@ void setup() {
   tr064Enabled = featPrefs.getBool("tr064_enabled", true);
   httpCamEnabled = featPrefs.getBool("http_cam_enabled", true);
   rtspEnabled = featPrefs.getBool("rtsp_enabled", true);
+  httpCamMaxClients = featPrefs.getUChar("http_cam_max_clients", 2);
   featPrefs.end();
   logEvent(LOG_INFO, "📋 Features loaded: SIP=" + String(sipEnabled) + " TR-064=" + String(tr064Enabled) + " HTTP=" + String(httpCamEnabled) + " RTSP=" + String(rtspEnabled));
+
+  #ifdef CAMERA
+  setCameraStreamMaxClients(httpCamMaxClients);
+  #endif
 
   // Configure doorbell GPIO based on active-low setting.
   pinMode(DOORBELL_BUTTON_PIN, DOORBELL_BUTTON_ACTIVE_LOW ? INPUT_PULLUP : INPUT);
@@ -123,7 +130,39 @@ void setup() {
       
       // Start web server for normal operation
       server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(200, "text/html", R"rawliteral(
+        String streamInfo;
+        if (httpCamEnabled) {
+          streamInfo += "<div class=\\\"flash-stats\\\">"
+                        "<strong>📹 HTTP Stream:</strong>"
+                        "<p style=\\\"font-family: monospace; font-size: 0.9em; word-break: break-all;\\\">"
+                        "http://" + WiFi.localIP().toString() + ":81/stream"
+                        "</p>"
+                        "<p style=\\\"font-size: 0.85em; color: #666;\\\">"
+                        "Use this URL for MJPEG clients (Scrypted HTTP camera, FRITZ!Box)."
+                        "</p>"
+                        "</div>";
+        } else {
+          streamInfo += "<div class=\\\"flash-stats\\\">"
+                        "<strong>📹 HTTP Stream:</strong> disabled"
+                        "</div>";
+        }
+        if (rtspEnabled) {
+          streamInfo += "<div class=\\\"flash-stats\\\">"
+                        "<strong>📡 RTSP Stream (for Scrypted):</strong>"
+                        "<p style=\\\"font-family: monospace; font-size: 0.9em; word-break: break-all;\\\">"
+                        "rtsp://" + WiFi.localIP().toString() + ":8554/mjpeg/1"
+                        "</p>"
+                        "<p style=\\\"font-size: 0.85em; color: #666;\\\">"
+                        "Use the RTSP Camera plugin or prefix with <code>-i</code> if using FFmpeg Camera."
+                        "</p>"
+                        "</div>";
+        } else {
+          streamInfo += "<div class=\\\"flash-stats\\\">"
+                        "<strong>📡 RTSP Stream:</strong> disabled"
+                        "</div>";
+        }
+
+        String page = R"rawliteral(
 <!DOCTYPE html>
 <html>
 <head>
@@ -132,7 +171,7 @@ void setup() {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="/style.css">
 </head>
-<body>
+<body class="full-width-page">
     <div class="dark-mode-toggle">
         <label class="switch">
             <input type="checkbox" id="darkModeToggle">
@@ -189,35 +228,17 @@ void setup() {
             <div class="flash-stats" id="cameraStatus">
                 <strong>Camera:</strong> loading...
             </div>
+            <div class="flash-stats" id="streamStatus">
+                <strong>Stream:</strong> loading...
+            </div>
             
-            <label><strong>Frame Size</strong></label>
-            <select id="framesize">
-                <option value="5">QVGA (320x240)</option>
-                <option value="6">CIF (400x296)</option>
-                <option value="7" selected>HVGA (480x320)</option>
-                <option value="8">VGA (640x480)</option>
-            </select>
-
-            <label><strong>JPEG Quality</strong></label>
-            <input type="range" id="quality" min="4" max="63" value="10">
-            <span id="qualityValue">10</span>
-
             <hr>
             <div class="button-row">
                 <a class="button config-btn" href="/capture" target="_blank">📸 Snapshot</a>
                 <a class="button" href="http://)rawliteral" + WiFi.localIP().toString() + R"rawliteral(:81/stream" target="_blank">🎥 Live Stream</a>
             </div>
-            <button class="button" onclick="applySettings()">Apply Settings</button>
             <hr>
-            <div class="flash-stats">
-                <strong>📡 RTSP Stream (for Scrypted):</strong>
-                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;">
-                    rtsp://)rawliteral" + WiFi.localIP().toString() + R"rawliteral(:8554/mjpeg/1
-                </p>
-                <p style="font-size: 0.85em; color: #666;">
-                    Use the RTSP Camera plugin or prefix with <code>-i</code> if using FFmpeg Camera.
-                </p>
-            </div>
+            )rawliteral" + streamInfo + R"rawliteral(
         </div>
 
         <!-- SIP/TR-064 Card -->
@@ -237,6 +258,10 @@ void setup() {
     </div>
 
     <div class="log-container" id="log"></div>
+    <div class="button-row log-actions">
+        <button class="button danger-btn" onclick="clearLog()">🧹 Clear Log</button>
+        <button class="button" onclick="copyLog()">📋 Copy Log to Clipboard</button>
+    </div>
 
     <script>
         const logEl = document.getElementById("log");
@@ -246,7 +271,7 @@ void setup() {
         const rssiEl = document.getElementById("rssi");
         const uptimeEl = document.getElementById("uptime");
         const wifiConnectedEl = document.getElementById("wifiConnected");
-        const qualityValueEl = document.getElementById("qualityValue");
+        const streamStatusEl = document.getElementById("streamStatus");
         const wifiConnectTime = Date.now();
         let lastEventId = 0;
 
@@ -256,6 +281,37 @@ void setup() {
             const ts = new Date().toLocaleTimeString();
             entry.textContent = `[${ts}] ${message}`;
             logEl.prepend(entry);
+        }
+
+        function clearLog() {
+            fetch("/clearLog", { method: "POST" })
+                .then(r => r.text())
+                .then(() => {
+                    // Reset both the UI list and the event log cursor so new entries show up again.
+                    logEl.innerHTML = "";
+                    lastEventId = 0;
+                })
+                .catch(() => addLog("Failed to clear log", "error"));
+        }
+
+        function copyLog() {
+            fetch("/eventLog?since=0")
+                .then(r => r.json())
+                .then(data => {
+                    const entries = (data.entries || []).map(entry => {
+                        const level = (entry.level || "info").toUpperCase();
+                        return `[${entry.id}] [${level}] ${entry.message}`;
+                    });
+                    const text = entries.join("\n");
+                    if (!text.length) {
+                        addLog("Log is empty, nothing to copy", "warn");
+                        return;
+                    }
+                    return navigator.clipboard.writeText(text)
+                        .then(() => addLog("Log copied to clipboard", "info"))
+                        .catch(() => addLog("Clipboard copy failed", "error"));
+                })
+                .catch(() => addLog("Log fetch failed for clipboard copy", "error"));
         }
 
         function setDarkMode(enabled) {
@@ -283,6 +339,40 @@ void setup() {
                 .catch(() => {
                     statusEl.innerHTML = "<strong>Camera:</strong> unavailable";
                     addLog("Camera status unavailable", "warn");
+                });
+        }
+
+        function formatMs(ms) {
+            if (!ms || ms < 0) return "0s";
+            const sec = Math.floor(ms / 1000);
+            if (sec < 60) return `${sec}s`;
+            const min = Math.floor(sec / 60);
+            const rem = sec % 60;
+            return `${min}m ${rem}s`;
+        }
+
+        function fetchStreamInfo() {
+            fetch("/cameraStreamInfo")
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.running) {
+                        streamStatusEl.innerHTML = "<strong>Stream:</strong> server stopped";
+                        return;
+                    }
+                    if (!data.active) {
+                        streamStatusEl.innerHTML = "<strong>Stream:</strong> no active clients";
+                        return;
+                    }
+                    const ip = data.client_ip || "unknown";
+                    const clients = data.clients || 0;
+                    const connectedFor = formatMs(data.connected_ms);
+                    const lastFrame = formatMs(data.last_frame_age_ms);
+                    const list = Array.isArray(data.clients_list) ? data.clients_list.join(", ") : "";
+                    const listText = list.length ? ` | ${list}` : "";
+                    streamStatusEl.innerHTML = `<strong>Stream:</strong> ${clients} client(s)${listText} | connected ${connectedFor} | last frame ${lastFrame} ago`;
+                })
+                .catch(() => {
+                    streamStatusEl.innerHTML = "<strong>Stream:</strong> unavailable";
                 });
         }
 
@@ -363,22 +453,6 @@ void setup() {
                 .catch(() => addLog("Failed to trigger SIP ring", "error"));
         }
 
-        function applySettings() {
-            const fs = document.getElementById("framesize").value;
-            const q = document.getElementById("quality").value;
-            Promise.all([
-                fetch(`/control?var=framesize&val=${fs}`),
-                fetch(`/control?var=quality&val=${q}`)
-            ]).then(() => {
-                addLog(`Applied camera settings: framesize=${fs}, quality=${q}`, "info");
-                fetchStatus();
-            }).catch(() => addLog("Failed to apply camera settings", "error"));
-        }
-
-        document.getElementById("quality").addEventListener("input", (e) => {
-            qualityValueEl.textContent = e.target.value;
-        });
-
         function fetchSipStatus() {
             fetch("/sipDebug")
                 .then(r => r.json())
@@ -393,17 +467,22 @@ void setup() {
         }
 
         fetchStatus();
+        fetchStreamInfo();
         fetchDeviceStatus();
         fetchSipStatus();
         fetchEventLog();
         setInterval(fetchDeviceStatus, 5000);
         setInterval(fetchSipStatus, 10000);
+        setInterval(fetchStreamInfo, 3000);
         setInterval(fetchEventLog, 2000);
         addLog("UI loaded", "info");
     </script>
 </body>
 </html>
-)rawliteral");
+)rawliteral";
+        AsyncWebServerResponse *response = request->beginResponse(200, "text/html", page);
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
       });
 
       server.on("/setup", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -470,6 +549,13 @@ void setup() {
             <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
                 MJPEG stream at http://ESP32-IP:81/stream and snapshot endpoint.
             </div>
+            <div class="info-item">
+                <span><strong>👥 Max MJPEG Clients</strong></span>
+                <input type="number" id="http_cam_max_clients" min="1" max="4" value=")rawliteral" + String(httpCamMaxClients) + R"rawliteral(" style="width: 80px;">
+            </div>
+            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                Limit simultaneous HTTP stream clients (e.g., Scrypted + FRITZ!Box).
+            </div>
 
             <div class="info-item">
                 <span><strong>🎥 RTSP Camera Streaming</strong></span>
@@ -480,6 +566,29 @@ void setup() {
             </div>
             <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
                 RTSP stream at rtsp://ESP32-IP:8554/mjpeg/1 (experimental, use HTTP for Scrypted).
+            </div>
+        </div>
+
+        <div class="container" style="margin-top: 20px;">
+            <h3>📷 Camera Quality</h3>
+            <div class="flash-stats" id="cameraSetupStatus">
+                <strong>Camera:</strong> loading...
+            </div>
+
+            <label><strong>Frame Size</strong></label>
+            <select id="framesize">
+                <option value="5">QVGA (320x240)</option>
+                <option value="6">CIF (400x296)</option>
+                <option value="7">HVGA (480x320)</option>
+                <option value="8">VGA (640x480)</option>
+            </select>
+
+            <label><strong>JPEG Quality</strong></label>
+            <input type="range" id="quality" min="4" max="63" value="10">
+            <span id="qualityValue">10</span>
+
+            <div style="margin-top: 12px;">
+                <button class="button" onclick="applyCameraSettings()">Apply Camera Settings</button>
             </div>
         </div>
 
@@ -509,7 +618,8 @@ void setup() {
                 sip_enabled: document.getElementById("sip_enabled").checked,
                 tr064_enabled: document.getElementById("tr064_enabled").checked,
                 http_cam_enabled: document.getElementById("http_cam_enabled").checked,
-                rtsp_enabled: document.getElementById("rtsp_enabled").checked
+                rtsp_enabled: document.getElementById("rtsp_enabled").checked,
+                http_cam_max_clients: parseInt(document.getElementById("http_cam_max_clients").value || "2", 10)
             };
 
             fetch("/saveFeatures", {
@@ -523,6 +633,45 @@ void setup() {
               })
               .catch(e => alert("Save failed: " + e));
         }
+
+        const cameraSetupStatusEl = document.getElementById("cameraSetupStatus");
+        const qualityValueEl = document.getElementById("qualityValue");
+
+        function fetchCameraSetupStatus() {
+            fetch("/status")
+                .then(r => r.json())
+                .then(data => {
+                    cameraSetupStatusEl.innerHTML = `<strong>Camera:</strong> ${data.PID || "Unknown"} | size=${data.framesize} | quality=${data.quality}`;
+                    if (data.framesize !== undefined) {
+                        document.getElementById("framesize").value = data.framesize;
+                    }
+                    if (data.quality !== undefined) {
+                        document.getElementById("quality").value = data.quality;
+                        qualityValueEl.textContent = data.quality;
+                    }
+                })
+                .catch(() => {
+                    cameraSetupStatusEl.innerHTML = "<strong>Camera:</strong> unavailable";
+                });
+        }
+
+        function applyCameraSettings() {
+            const fs = document.getElementById("framesize").value;
+            const q = document.getElementById("quality").value;
+            Promise.all([
+                fetch(`/control?var=framesize&val=${fs}`),
+                fetch(`/control?var=quality&val=${q}`)
+            ]).then(() => {
+                alert(`Applied camera settings: framesize=${fs}, quality=${q}`);
+                fetchCameraSetupStatus();
+            }).catch(() => alert("Failed to apply camera settings"));
+        }
+
+        document.getElementById("quality").addEventListener("input", (e) => {
+            qualityValueEl.textContent = e.target.value;
+        });
+
+        fetchCameraSetupStatus();
     </script>
 </body>
 </html>
@@ -808,6 +957,14 @@ void setup() {
           bool tr064_enabled = doc["tr064_enabled"].as<bool>();
           bool http_cam_enabled = doc["http_cam_enabled"].as<bool>();
           bool rtsp_enabled = doc["rtsp_enabled"].as<bool>();
+          uint8_t http_cam_max_clients = doc["http_cam_max_clients"].isNull()
+            ? httpCamMaxClients
+            : (uint8_t)doc["http_cam_max_clients"].as<int>();
+          if (http_cam_max_clients < 1) {
+            http_cam_max_clients = 1;
+          } else if (http_cam_max_clients > 4) {
+            http_cam_max_clients = 4;
+          }
 
           Preferences prefs;
           prefs.begin("features", false);
@@ -815,6 +972,7 @@ void setup() {
           prefs.putBool("tr064_enabled", tr064_enabled);
           prefs.putBool("http_cam_enabled", http_cam_enabled);
           prefs.putBool("rtsp_enabled", rtsp_enabled);
+          prefs.putUChar("http_cam_max_clients", http_cam_max_clients);
           prefs.end();
 
           // Update global variables
@@ -822,8 +980,19 @@ void setup() {
           tr064Enabled = tr064_enabled;
           httpCamEnabled = http_cam_enabled;
           rtspEnabled = rtsp_enabled;
+          httpCamMaxClients = http_cam_max_clients;
+          #ifdef CAMERA
+          setCameraStreamMaxClients(httpCamMaxClients);
+          #endif
 
-          request->send(200, "text/plain", "Feature settings saved! Restarting ESP32...");
+          String summary = "Feature settings saved: SIP=" + String(sip_enabled ? "on" : "off") +
+                           " TR-064=" + String(tr064_enabled ? "on" : "off") +
+                           " HTTP=" + String(http_cam_enabled ? "on" : "off") +
+                           " RTSP=" + String(rtsp_enabled ? "on" : "off") +
+                           " HTTP max clients=" + String(http_cam_max_clients) +
+                           ". Restarting ESP32...";
+          logEvent(LOG_INFO, "✅ " + summary);
+          request->send(200, "text/plain", summary);
           
           // Restart ESP32 to apply changes
           delay(1000);
@@ -940,6 +1109,28 @@ void setup() {
         String json = "{\"rssi\":" + String(WiFi.RSSI()) + ",\"uptimeSeconds\":" + String(millis() / 1000) + "}";
         request->send(200, "application/json", json);
       });
+      #ifdef CAMERA
+      server.on("/cameraStreamInfo", HTTP_GET, [](AsyncWebServerRequest *request) {
+        bool running = isCameraStreamServerRunning();
+        String clientIp = "";
+        uint32_t clients = 0;
+        uint32_t connectedMs = 0;
+        uint32_t lastFrameAgeMs = 0;
+        String clientsJson = "[]";
+        bool active = getCameraStreamClientInfo(clientIp, clients, connectedMs, lastFrameAgeMs, clientsJson);
+
+        String json = "{";
+        json += "\"running\":" + String(running ? "true" : "false") + ",";
+        json += "\"active\":" + String(active ? "true" : "false") + ",";
+        json += "\"clients\":" + String(clients) + ",";
+        json += "\"client_ip\":\"" + clientIp + "\",";
+        json += "\"connected_ms\":" + String(connectedMs) + ",";
+        json += "\"last_frame_age_ms\":" + String(lastFrameAgeMs) + ",";
+        json += "\"clients_list\":" + clientsJson;
+        json += "}";
+        request->send(200, "application/json", json);
+      });
+      #endif
       server.on("/eventLog", HTTP_GET, [](AsyncWebServerRequest *request) {
         uint32_t sinceId = 0;
         if (request->hasParam("since")) {
@@ -947,6 +1138,10 @@ void setup() {
         }
         String json = getEventLogJson(sinceId);
         request->send(200, "application/json", json);
+      });
+      server.on("/clearLog", HTTP_POST, [](AsyncWebServerRequest *request) {
+        clearEventLog();
+        request->send(200, "text/plain", "Log cleared");
       });
 
       server.on("/ring", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -1076,9 +1271,27 @@ void loop() {
   if (isAPModeActive()) {
     dnsServer.processNextRequest();
   }
+
+  #ifdef CAMERA
+  if (cameraReady) {
+    if (httpCamEnabled) {
+      if (!isCameraStreamServerRunning()) {
+        startCameraStreamServer();
+      }
+    } else if (isCameraStreamServerRunning()) {
+      stopCameraStreamServer();
+      logEvent(LOG_INFO, "ℹ️ HTTP camera streaming disabled");
+    }
+  }
+  #endif
   
   // Handle RTSP client connections for Scrypted (non-blocking)
-  handleRtspClient();
+  if (rtspEnabled) {
+    handleRtspClient();
+  } else if (isRtspServerRunning()) {
+    stopRtspServer();
+    logEvent(LOG_INFO, "ℹ️ RTSP disabled - server stopped");
+  }
   
   // Send periodic SIP REGISTER to maintain registration with FRITZ!Box (only if enabled)
   if (sipEnabled) {

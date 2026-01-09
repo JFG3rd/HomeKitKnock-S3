@@ -52,6 +52,11 @@ void initEventLog() {
   nextLogId = 1;
 }
 
+void clearEventLog() {
+  // Reset the ring buffer so the UI can start fresh after a clear request.
+  initEventLog();
+}
+
 void logEvent(LogLevel level, const String &message) {
   Serial.println(message);
 
