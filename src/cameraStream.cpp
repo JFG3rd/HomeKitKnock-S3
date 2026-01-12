@@ -12,6 +12,7 @@
 #include <esp_camera.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include "logger.h"
 
 #define PART_BOUNDARY "123456789000000000000987654321"
 static const char *kStreamContentType = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
@@ -144,6 +145,7 @@ static void stream_client_task(void *pvParameters) {
     }
 
     client->stop();
+    logEvent(LOG_INFO, "📴 MJPEG client disconnected: " + stream_clients[slot].ip);
     delete client;
 
     stream_clients[slot].active = false;

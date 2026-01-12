@@ -1217,8 +1217,13 @@ void setup() {
     }
     
     if (rtspEnabled) {
-      startRtspServer();
-      logEvent(LOG_INFO, "✅ RTSP streaming enabled");
+      logEvent(LOG_INFO, "📞 Calling startRtspServer()...");
+      bool rtspStarted = startRtspServer();
+      if (rtspStarted) {
+        logEvent(LOG_INFO, "✅ RTSP streaming enabled");
+      } else {
+        logEvent(LOG_ERROR, "❌ RTSP server failed to start");
+      }
     } else {
       logEvent(LOG_INFO, "ℹ️ RTSP streaming disabled");
     }
