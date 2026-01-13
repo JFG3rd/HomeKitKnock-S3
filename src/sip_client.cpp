@@ -18,6 +18,7 @@ static const uint16_t SIP_PORT = 5060;
 // Local SIP client settings
 static const uint16_t LOCAL_SIP_PORT = 5062;
 static WiFiUDP sipUdp;
+static bool sipUdpReady = false;
 static unsigned long lastRegisterTime = 0;
 static const unsigned long REGISTER_INTERVAL_MS = 60UL * 1000; // 60 seconds
 
@@ -47,6 +48,40 @@ struct PendingInvite {
 };
 
 static PendingInvite pendingInvite;
+static unsigned long lastSipNetWarnMs = 0;
+
+// Guard SIP traffic when Wi-Fi is down or the socket is not ready.
+// This prevents DNS/UDP failures from crashing the SIP task.
+static bool isSipNetworkReady() {
+  if (!sipUdpReady) {
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    if (millis() - lastSipNetWarnMs > 10000) {
+      logEvent(LOG_WARN, "⚠️ SIP paused: WiFi not connected");
+      lastSipNetWarnMs = millis();
+    }
+    return false;
+  }
+  IPAddress localIP = WiFi.localIP();
+  if (localIP == IPAddress(0, 0, 0, 0)) {
+    if (millis() - lastSipNetWarnMs > 10000) {
+      logEvent(LOG_WARN, "⚠️ SIP paused: invalid local IP");
+      lastSipNetWarnMs = millis();
+    }
+    return false;
+  }
+  return true;
+}
+
+// Resolve the FRITZ!Box SIP proxy with a gateway IP fallback.
+static bool resolveSipProxy(IPAddress &dest) {
+  if (WiFi.hostByName(SIP_PROXY, dest)) {
+    return true;
+  }
+  dest = WiFi.gatewayIP();
+  return dest != IPAddress(0, 0, 0, 0);
+}
 
 // Helper functions for generating unique SIP identifiers
 static String generateTag() {
@@ -260,6 +295,7 @@ bool initSipClient() {
     logEvent(LOG_ERROR, "❌ Failed to bind UDP port for SIP");
     return false;
   }
+  sipUdpReady = true;
   logEvent(LOG_INFO, "✅ SIP UDP bound to port " + String(LOCAL_SIP_PORT));
   return true;
 }
@@ -339,10 +375,33 @@ static String buildCancel(const SipConfig &config, const String& fromTag, const 
 }
 
 // Send SIP message to FRITZ!Box
-static void sipSend(const String& msg) {
-  sipUdp.beginPacket(SIP_PROXY, SIP_PORT);
-  sipUdp.write((const uint8_t*)msg.c_str(), msg.length());
-  sipUdp.endPacket();
+static bool sipSend(const String& msg) {
+  if (!isSipNetworkReady()) {
+    return false;
+  }
+
+  IPAddress dest;
+  if (!resolveSipProxy(dest)) {
+    logEvent(LOG_WARN, "⚠️ SIP send failed: cannot resolve proxy or gateway");
+    return false;
+  }
+
+  if (!sipUdp.beginPacket(dest, SIP_PORT)) {
+    logEvent(LOG_WARN, "⚠️ SIP send failed: UDP beginPacket() failed");
+    return false;
+  }
+
+  size_t written = sipUdp.write(reinterpret_cast<const uint8_t*>(msg.c_str()), msg.length());
+  if (written != msg.length()) {
+    logEvent(LOG_WARN, "⚠️ SIP send incomplete: " + String(written) + "/" + String(msg.length()));
+  }
+
+  if (!sipUdp.endPacket()) {
+    logEvent(LOG_WARN, "⚠️ SIP send failed: UDP endPacket() failed");
+    return false;
+  }
+
+  return true;
 }
 
 // Wait for and parse SIP response with timeout
@@ -428,6 +487,10 @@ static bool isProvisional(const String& response) {
 
 // Handle incoming SIP responses
 void handleSipIncoming() {
+  if (!isSipNetworkReady()) {
+    return;
+  }
+
   int packetSize = sipUdp.parsePacket();
   if (packetSize <= 0) return;
 
@@ -487,7 +550,9 @@ void sendSipRegister(const SipConfig &config) {
   String regMsg = buildRegister(config, tag, callID, branch, cseq, false);
   logEvent(LOG_DEBUG, "---- SIP REGISTER (attempt 1) ----");
   logEvent(LOG_DEBUG, regMsg);
-  sipSend(regMsg);
+  if (!sipSend(regMsg)) {
+    return;
+  }
   
   // Wait for response
   String response = waitForSipResponse(2000);
@@ -509,7 +574,9 @@ void sendSipRegister(const SipConfig &config) {
         String authRegMsg = buildRegister(config, tag, callID, branch, cseq, true);
         logEvent(LOG_DEBUG, "---- SIP REGISTER (attempt 2 - with auth) ----");
         logEvent(LOG_DEBUG, authRegMsg);
-        sipSend(authRegMsg);
+        if (!sipSend(authRegMsg)) {
+          return;
+        }
         
         // Wait for final response
         String authResponse = waitForSipResponse(2000);
@@ -540,6 +607,9 @@ void sendSipRegister(const SipConfig &config) {
 void sendRegisterIfNeeded(const SipConfig &config) {
   unsigned long now = millis();
   if (now - lastRegisterTime < REGISTER_INTERVAL_MS) return;
+  if (!isSipNetworkReady()) {
+    return;
+  }
   sendSipRegister(config);
 }
 
@@ -547,6 +617,10 @@ void sendRegisterIfNeeded(const SipConfig &config) {
 bool triggerSipRing(const SipConfig &config) {
   if (!hasSipConfig(config)) {
     logEvent(LOG_WARN, "⚠️ SIP config incomplete, cannot ring");
+    return false;
+  }
+  if (!isSipNetworkReady()) {
+    logEvent(LOG_WARN, "⚠️ SIP ring skipped: network not ready");
     return false;
   }
 
@@ -565,7 +639,10 @@ bool triggerSipRing(const SipConfig &config) {
   String invite = buildInvite(config, tag, callID, branch, cseq, false);
   logEvent(LOG_DEBUG, "---- SIP INVITE ----");
   logEvent(LOG_DEBUG, invite);
-  sipSend(invite);
+  if (!sipSend(invite)) {
+    pendingInvite.active = false;
+    return false;
+  }
 
   pendingInvite.active = true;
   pendingInvite.authSent = false;

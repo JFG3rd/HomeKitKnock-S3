@@ -152,41 +152,51 @@ void setup() {
   if (audioPrefsMigrated) {
     logEvent(LOG_INFO, "✅ Migrated legacy audio preference keys");
   }
-  if (!featPrefs.isKey("sip_enabled")) {
-    featPrefs.putBool("sip_enabled", true);
-    featPrefs.putBool("tr064_enabled", true);
-    featPrefs.putBool("http_cam_enabled", true);
-    featPrefs.putBool("rtsp_enabled", true);
-    featPrefs.putUChar("http_cam_max_clients", 2);
-    featPrefs.putString("scrypted_source", "http");
-    featPrefs.putBool("scrypted_low_latency", true);
-    featPrefs.putBool("scrypted_low_buffer", true);
-    featPrefs.putBool("scrypted_rtsp_udp", false);
-    featPrefs.putBool(kFeatMicEnabledKey, false);
-    featPrefs.putBool(kFeatMicMutedKey, false);
-    featPrefs.putUChar(kFeatMicSensitivityKey, DEFAULT_MIC_SENSITIVITY);
-    featPrefs.putBool(kFeatAudioOutEnabledKey, true);
-    featPrefs.putBool(kFeatAudioOutMutedKey, false);
-    featPrefs.putUChar(kFeatAudioOutVolumeKey, DEFAULT_AUDIO_OUT_VOLUME);
-    logEvent(LOG_INFO, "✅ Feature toggles initialized with defaults");
+  // Initialize missing feature keys individually so new keys don't reset existing values.
+  bool defaultsApplied = false;
+  auto ensureBoolPref = [&](const char *key, bool value) {
+    if (!featPrefs.isKey(key)) {
+      featPrefs.putBool(key, value);
+      defaultsApplied = true;
+    }
+  };
+  auto ensureUCharPref = [&](const char *key, uint8_t value) {
+    if (!featPrefs.isKey(key)) {
+      featPrefs.putUChar(key, value);
+      defaultsApplied = true;
+    }
+  };
+  auto ensureStringPref = [&](const char *key, const String &value) {
+    if (!featPrefs.isKey(key)) {
+      featPrefs.putString(key, value);
+      defaultsApplied = true;
+    }
+  };
+
+  ensureBoolPref("sip_enabled", true);
+  ensureBoolPref("tr064_enabled", true);
+  ensureBoolPref("http_cam_enabled", true);
+  ensureBoolPref("rtsp_enabled", true);
+  ensureUCharPref("http_cam_max_clients", 2);
+  ensureBoolPref("scrypted_low_latency", true);
+  ensureBoolPref("scrypted_low_buffer", true);
+  ensureBoolPref("scrypted_rtsp_udp", false);
+  ensureBoolPref(kFeatMicEnabledKey, false);
+  ensureBoolPref(kFeatMicMutedKey, false);
+  ensureUCharPref(kFeatMicSensitivityKey, DEFAULT_MIC_SENSITIVITY);
+  ensureBoolPref(kFeatAudioOutEnabledKey, true);
+  ensureBoolPref(kFeatAudioOutMutedKey, false);
+  ensureUCharPref(kFeatAudioOutVolumeKey, DEFAULT_AUDIO_OUT_VOLUME);
+
+  bool httpEnabledPref = featPrefs.getBool("http_cam_enabled", true);
+  bool rtspEnabledPref = featPrefs.getBool("rtsp_enabled", true);
+  if (!featPrefs.isKey("scrypted_source")) {
+    String defaultSource = httpEnabledPref ? "http" : (rtspEnabledPref ? "rtsp" : "http");
+    ensureStringPref("scrypted_source", defaultSource);
   }
-  if (!featPrefs.isKey(kFeatMicEnabledKey)) {
-    featPrefs.putBool(kFeatMicEnabledKey, false);
-  }
-  if (!featPrefs.isKey(kFeatMicMutedKey)) {
-    featPrefs.putBool(kFeatMicMutedKey, false);
-  }
-  if (!featPrefs.isKey(kFeatMicSensitivityKey)) {
-    featPrefs.putUChar(kFeatMicSensitivityKey, DEFAULT_MIC_SENSITIVITY);
-  }
-  if (!featPrefs.isKey(kFeatAudioOutEnabledKey)) {
-    featPrefs.putBool(kFeatAudioOutEnabledKey, true);
-  }
-  if (!featPrefs.isKey(kFeatAudioOutMutedKey)) {
-    featPrefs.putBool(kFeatAudioOutMutedKey, false);
-  }
-  if (!featPrefs.isKey(kFeatAudioOutVolumeKey)) {
-    featPrefs.putUChar(kFeatAudioOutVolumeKey, DEFAULT_AUDIO_OUT_VOLUME);
+
+  if (defaultsApplied) {
+    logEvent(LOG_INFO, "✅ Feature defaults applied for missing keys");
   }
   // Load feature flags into global variables
   sipEnabled = featPrefs.getBool("sip_enabled", true);
@@ -205,7 +215,11 @@ void setup() {
   audioOutMuted = featPrefs.getBool(kFeatAudioOutMutedKey, false);
   audioOutVolume = featPrefs.getUChar(kFeatAudioOutVolumeKey, DEFAULT_AUDIO_OUT_VOLUME);
   featPrefs.end();
-  logEvent(LOG_INFO, "📋 Features loaded: SIP=" + String(sipEnabled) + " TR-064=" + String(tr064Enabled) + " HTTP=" + String(httpCamEnabled) + " RTSP=" + String(rtspEnabled));
+  logEvent(LOG_INFO, "📋 Features loaded: SIP=" + String(sipEnabled) +
+                     " TR-064=" + String(tr064Enabled) +
+                     " HTTP=" + String(httpCamEnabled) +
+                     " RTSP=" + String(rtspEnabled) +
+                     " HTTP max clients=" + String(httpCamMaxClients));
 
   #ifdef CAMERA
   setCameraStreamMaxClients(httpCamMaxClients);
@@ -242,9 +256,13 @@ void setup() {
     if (WiFi.status() == WL_CONNECTED) {
       logEvent(LOG_INFO, "✅ Connected to WiFi successfully!");
       
-      // Initialize SIP client and send initial REGISTER
-      if (initSipClient()) {
-        sendSipRegister(sipConfig);
+      // Initialize SIP client and send initial REGISTER only when enabled.
+      if (sipEnabled) {
+        if (initSipClient()) {
+          sendSipRegister(sipConfig);
+        }
+      } else {
+        logEvent(LOG_INFO, "ℹ️ SIP disabled - skipping SIP client init");
       }
       
       // Start web server for normal operation (dashboard + JSON endpoints).
@@ -1794,6 +1812,10 @@ void setup() {
       });
 
       server.on("/ring/sip", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!sipEnabled) {
+          request->send(503, "text/plain", "SIP ring disabled");
+          return;
+        }
         if (triggerSipRing(sipConfig)) {
           request->send(200, "text/plain", "SIP ring triggered");
         } else {
