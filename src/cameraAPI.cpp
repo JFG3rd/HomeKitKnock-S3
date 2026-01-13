@@ -14,6 +14,9 @@
 static const char *kCameraPrefsNamespace = "camera";
 static const char *kCameraFramesizeKey = "framesize";
 static const char *kCameraQualityKey = "quality";
+static const char *kCameraBrightnessKey = "brightness";
+static const char *kCameraContrastKey = "contrast";
+static const int kCameraUnsetValue = -99;
 
 // Apply a single sensor parameter update based on URL args.
 static void setControl(String variable, int value) {
@@ -147,14 +150,19 @@ static void handleControl(AsyncWebServerRequest *request) {
   int intValue = atoi(value.c_str());
 
   setControl(variable, intValue);
-  if (variable.startsWith("framesize") || variable.startsWith("quality")) {
+  if (variable.startsWith("framesize") || variable.startsWith("quality") ||
+      variable.startsWith("brightness") || variable.startsWith("contrast")) {
     // Persist key camera settings so they survive reboots.
     Preferences prefs;
     if (prefs.begin(kCameraPrefsNamespace, false)) {
       if (variable.startsWith("framesize")) {
         prefs.putInt(kCameraFramesizeKey, intValue);
-      } else {
+      } else if (variable.startsWith("quality")) {
         prefs.putInt(kCameraQualityKey, intValue);
+      } else if (variable.startsWith("brightness")) {
+        prefs.putInt(kCameraBrightnessKey, intValue);
+      } else if (variable.startsWith("contrast")) {
+        prefs.putInt(kCameraContrastKey, intValue);
       }
       prefs.end();
     }
@@ -238,14 +246,24 @@ bool initCamera() {
   int defaultQuality = psramFound() ? 10 : 12;
   int storedFramesize = -1;
   int storedQuality = -1;
+  int storedBrightness = kCameraUnsetValue;
+  int storedContrast = kCameraUnsetValue;
   Preferences prefs;
   if (prefs.begin(kCameraPrefsNamespace, true)) {
     storedFramesize = prefs.getInt(kCameraFramesizeKey, -1);
     storedQuality = prefs.getInt(kCameraQualityKey, -1);
+    storedBrightness = prefs.getInt(kCameraBrightnessKey, kCameraUnsetValue);
+    storedContrast = prefs.getInt(kCameraContrastKey, kCameraUnsetValue);
     prefs.end();
   }
   s->set_framesize(s, (framesize_t)(storedFramesize >= 0 ? storedFramesize : defaultFramesize));
   s->set_quality(s, storedQuality >= 0 ? storedQuality : defaultQuality);
+  if (storedBrightness != kCameraUnsetValue) {
+    s->set_brightness(s, storedBrightness);
+  }
+  if (storedContrast != kCameraUnsetValue) {
+    s->set_contrast(s, storedContrast);
+  }
 
   return true;
 }

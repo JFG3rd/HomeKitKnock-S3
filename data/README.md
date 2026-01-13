@@ -22,6 +22,12 @@ Main stylesheet for the web interface. Includes:
 ### favicon.ico
 Favicon for the web UI. Stored in LittleFS and served at `/favicon.ico`.
 
+### gong.pcm
+Short PCM clip for local gong playback (16-bit mono, 16 kHz). Played via MAX98357A.
+
+Convert a custom clip with:
+- `python3 tools/convert_wav_to_pcm.py gong.wav data/gong.pcm`
+
 ## Usage
 
 ### LittleFS (Current)

@@ -65,7 +65,7 @@ When the doorbell endpoint is triggered:
 	•	Apple TV:
 	•	Picture-in-picture popup option
 
-HomeKit Secure Video analysis (person/package/etc.)
+HomeKit Secure Video analysis and recording (person/package/etc.)
 is handled by the Home hub (Apple TV / HomePod), not by ESP32 or Scrypted.
 
 ⸻
@@ -95,7 +95,7 @@ Used with:
 🧱 Phase 1 — MVP Implementation ✅ COMPLETE
 
 Focus:
-	•	✅ Video stream to Scrypted via RTSP
+	•	✅ Video stream including audio using Onboard digital microphone (XIAO ESP32-S3 Sense) to Scrypted via RTSP
 	•	✅ Doorbell button → HomeKit ring
 	•	✅ FRITZ!Box internal phone ring via SIP
 
@@ -116,7 +116,7 @@ Components:
 
 Expected result:
 	•	✅ Doorbell notification appears on Apple devices
-	•	✅ Live video stream plays in Home app (via RTSP)
+	•	✅ Live audio/video stream plays in Home app (via RTSP and Scrypted)
 	•	✅ FRITZ!Box DECT phones ring when button pressed
 	•	✅ Event appears in HSV timeline (if enabled)
 
@@ -134,14 +134,52 @@ Approach:
 	•	Use RTSP example pipeline
 	•	Capture:
 	•	Camera frames
-	•	I2S digital mic audio
+	•	I2S digital mic audio (XIAO ESP32-S3 Sense onboard mic)
 	•	Stream:
 	•	H.264 + AAC / G.711 over RTSP
+	•	Output:
+	•	MAX98357A I2S DAC amp + speaker for local audio
 
 Scrypted consumes RTSP
 → HomeKit receives audio-enabled live stream.
 
 Two-way audio is out-of-scope initially.
+
+⸻
+
+🔉 Planned Audio Hardware
+
+Planned additions:
+	•	Onboard digital microphone (XIAO ESP32-S3 Sense)
+	•	MAX98357A I2S DAC amp
+	•	Small speaker (doorbell chime + local monitoring)
+
+Notes:
+	•	Audio path will be I2S in/out (mic in, DAC out)
+	•	Onboard PDM mic: GPIO42 = CLK, GPIO41 = DATA (I2S0 RX)
+	•	MAX98357A I2S DAC: GPIO7 = BCLK, GPIO8 = LRCLK/WS, GPIO9 = DIN (I2S1 TX)
+	•	MAX98357A SD/EN: tie to 3V3 (always on) or use a spare GPIO (e.g., GPIO1/D0) for mute
+	•	GPIO7/8/9 are default SPI pins; avoid SPI on those pins or remap if needed
+	•	Feature setup exposes mic enable/mute + sensitivity and audio out enable/mute + volume
+	•	HTML test endpoint: http://ESP32-IP/audio.wav
+	•	Local gong playback uses `/gong.pcm` from LittleFS when present
+
+⸻
+
+🧠 Core & Task Strategy (Stability + Future Audio)
+
+Guiding principle:
+	•	Keep Wi-Fi/LwIP on core 0
+	•	Pin streaming + future audio tasks to core 1
+
+Current direction:
+	•	MJPEG stream server tasks pinned to core 1
+	•	RTSP handling runs on core 1 task
+	•	Main loop remains lightweight (SIP/TR-064, button debounce)
+
+Future audio plan:
+	•	I2S mic capture + DAC playback on core 1
+	•	Avoid heavy CPU work on Wi-Fi core to reduce jitter
 
 ⸻
 
@@ -197,6 +235,8 @@ After MVP works:
 	•	Confirm final GPIO pin mapping
 	•	Confirm DECT group number and FRITZ!Box SIP account settings
 	•	Decide target RTSP audio codec (AAC vs G.711)
+	•	Verify I2S pin mapping for mic + MAX98357A on hardware (GPIO42/41 + GPIO7/8/9)
+	•	Confirm speaker power + enclosure placement
 	•	Evaluate latency + HomeKit experience
 	•	Consider adding:
 	•	status page (/status)

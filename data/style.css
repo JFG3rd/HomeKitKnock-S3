@@ -100,6 +100,11 @@ h3 {
     min-height: 550px;
 }
 
+.setup-card {
+    height: 620px;
+    overflow-y: auto;
+}
+
 /* Info grid for system information */
 .info-grid {
     display: grid;
@@ -145,22 +150,51 @@ h3 {
     min-width: 140px;
 }
 
-/* System Logs Container */
-.log-container {
+/* Logs Grid - Split Camera and Doorbell Logs */
+.logs-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
     width: calc(100% - 40px);
     max-width: 100%;
     margin: 20px auto;
-    background: #001F4D;
+}
+
+/* Responsive: Stack logs vertically on small screens */
+@media screen and (max-width: 768px) {
+    .logs-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+}
+
+/* System Logs Container */
+.log-container {
+    width: 100%;
+    background: #0b2b5d;
     padding: 10px;
     border-radius: 5px;
     overflow-y: auto;
     text-align: left;
     white-space: nowrap;
-    font-size: 12px;
     font-family: monospace;
-    color: white;
+    color: #f2f6ff;
     max-height: calc(var(--log-line-height) * var(--max-log-entries));
-    margin-bottom: 50px;
+}
+
+.log-size-sm {
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+.log-size-md {
+    font-size: 14px;
+    line-height: 1.45;
+}
+
+.log-size-lg {
+    font-size: 16px;
+    line-height: 1.5;
 }
 
 .log-actions {
@@ -403,8 +437,8 @@ footer {
 }
 
 .dark-mode .log-container {
-    background: #001F4D !important;
-    color: white;
+    background: #0a2453 !important;
+    color: #f2f6ff;
 }
 
 .dark-mode .log-entry {
@@ -602,4 +636,15 @@ footer {
 .network-item.selected {
     background: var(--primary-color);
     color: white;
+}
+
+/* Keep toggles aligned to the right side of setup cards */
+.info-item .switch {
+    margin-left: auto;
+}
+
+.info-item input[type="checkbox"],
+.info-item input[type="radio"] {
+    width: auto;
+    margin-left: auto;
 }

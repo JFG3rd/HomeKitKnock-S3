@@ -41,29 +41,60 @@ You can find this URL in the web UI under **Camera Settings** → **RTSP Stream 
 
 ## Scrypted Setup Instructions
 
-### 1. Add Camera to Scrypted
+### 1. Install FFmpeg Camera Plugin
+
+The RTSP stream outputs **MJPEG (YUV 4:2:2)** which needs conversion to **H.264 (YUV 4:2:0)** for HomeKit compatibility.
 
 1. Open Scrypted web interface (typically `http://raspberry-pi:10443`)
-2. Click **"+ Add Device"**
-3. Select **"RTSP Camera"** from the plugin list
-4. Enter the following settings:
+2. Go to **Plugins** → **Install Plugin**
+3. Search for **"FFmpeg Camera"** and install it
+
+### 2. Add Camera to Scrypted
+
+1. Click **"+ Add Device"**
+2. Select **"FFmpeg Camera"** (NOT "RTSP Camera")
+3. Enter the following settings:
    - **Name**: `Front Door Camera` (or your preferred name)
    - **RTSP URL**: `rtsp://192.168.178.188:8554/mjpeg/1`
    - **Username**: (leave empty - no auth required)
    - **Password**: (leave empty)
+4. Click **"Save"**
+
+### 3. Configure FFmpeg Output Settings
+
+This is the **critical step** to convert MJPEG (4:2:2) to H.264 (4:2:0) for HomeKit:
+
+1. Open your newly created camera device in Scrypted
+2. Navigate to **"Streams"** section
+3. Find **"FFmpeg Output Prefix"** dropdown
+4. Select or enter the following preset:
+   ```
+   -c:v libx264 -pix_fmt yuvj420p -preset ultrafast -bf 0 -g 60 -r 15 -b:v 500000 -bufsize 1000000 -maxrate 500000
+   ```
 5. Click **"Save"**
 
-### 2. Create Doorbell Device
+**What this does:**
+- `-c:v libx264` - Uses H.264 encoder
+- `-pix_fmt yuvj420p` - **Converts YUV 4:2:2 to 4:2:0** (required for HomeKit)
+- `-preset ultrafast` - Fast encoding for low latency
+- `-bf 0` - No B-frames (reduces latency)
+- `-g 60` - Keyframe every 60 frames
+- `-r 15` - Output at 15 fps
+- `-b:v 500000` - 500 kbps bitrate
+- `-bufsize 1000000` - 1 MB buffer
+- `-maxrate 500000` - 500 kbps max rate
+
+### 4. Create Doorbell Device
 
 1. In Scrypted, click **"+ Add Device"** again
 2. Select **"Doorbell"** from the plugin list
 3. Configure:
    - **Name**: `Front Door Doorbell`
-   - **Camera**: Select the camera you just added
+   - **Camera**: Select the FFmpeg camera you just added
    - **Button URL**: `http://<ESP32-IP>/ring/sip` (optional - for testing)
 4. Click **"Save"**
 
-### 3. Configure HomeKit Integration
+### 5. Configure HomeKit Integration
 
 1. Find your doorbell device in Scrypted
 2. Click on it to open settings
@@ -73,18 +104,125 @@ You can find this URL in the web UI under **Camera Settings** → **RTSP Stream 
    - Scan the QR code from Scrypted
    - Your doorbell should appear as **"Front Door Doorbell"**
 
-### 4. Test the Stream
+### 6. Test the Stream
 
 **Test in VLC:**
 1. Open VLC Media Player
 2. File → Open Network Stream
 3. Enter: `rtsp://192.168.178.188:8554/mjpeg/1`
 4. Click **Play**
+5. You should see the camera feed (MJPEG format)
 
 **Test in Scrypted:**
-1. Open your camera device in Scrypted
+1. Open your FFmpeg camera device in Scrypted
 2. Click the video preview
-3. Stream should load within 1-2 seconds
+3. Stream should load and show H.264 video within 1-2 seconds
+
+**Verify H.264 Conversion:**
+Check Scrypted logs for confirmation:
+```
+Input #0, rtsp, from 'rtsp://192.168.178.188:8554/mjpeg/1':
+  Stream #0:0: Video: mjpeg (Baseline), yuvj422p, 480x320, 30 fps
+Stream mapping:
+  Stream #0:0 -> #0:0 (mjpeg (native) -> h264 (libx264))
+[libx264] profile Constrained Baseline, level 2.1, 4:2:0, 8-bit
+```
+
+## Expected Performance
+
+**RTSP Stream from ESP32:**
+- Format: MJPEG (Motion JPEG)
+- Resolution: 480x320
+- Frame Rate: 30 fps
+- Color Space: YUV 4:2:2
+- Bandwidth: ~300-500 KB/s
+
+**After FFmpeg Conversion:**
+- Format: H.264
+- Resolution: 480x320
+- Frame Rate: 15 fps (downsampled)
+- Color Space: YUV 4:2:0
+- Bandwidth: ~60-80 KB/s
+
+## Troubleshooting
+
+### "main profile doesn't support 4:2:2" Error
+
+**Problem:** ffmpeg fails with error about H.264 main profile not supporting 4:2:2 chroma.
+
+**Solution:** This is why we use the **FFmpeg Camera Plugin** with `-pix_fmt yuvj420p`. Make sure you configured Step 3 correctly.
+
+### "Receiver reported picture loss"
+
+**Problem:** Scrypted logs show "Adaptive Streaming: Receiver reported picture loss"
+
+**Solution:** This is **normal** and not an error. It happens when:
+- Network has minor packet loss
+- Client requests keyframes
+- Bitrate adjustments occur
+
+### Stream Not Loading
+
+**Problem:** Video preview in Scrypted doesn't load
+
+**Solutions:**
+1. Verify ESP32 is reachable: `ping 192.168.178.188`
+2. Test RTSP directly in VLC first
+3. Check Scrypted logs for ffmpeg errors
+4. Ensure FFmpeg Camera plugin is installed
+5. Verify FFmpeg Output Prefix is set correctly
+
+### Low Frame Rate
+
+**Problem:** Video appears choppy
+
+**Solutions:**
+1. Increase `-r 15` to `-r 20` or `-r 30` in FFmpeg Output Prefix
+2. Increase `-b:v 500000` to `-b:v 1000000` for higher bitrate
+3. Check network bandwidth between ESP32 and Scrypted
+
+## Alternative: HTTP MJPEG Stream
+
+If RTSP has issues, you can use the HTTP MJPEG stream instead:
+
+```
+http://192.168.178.188:81/stream
+```
+
+Configure in Scrypted:
+1. Use **"FFmpeg Camera"** plugin
+2. Set **URL**: `http://192.168.178.188:81/stream`
+3. Use same **FFmpeg Output Prefix** as above
+
+**Note:** HTTP MJPEG is simpler but less efficient than RTSP.
+
+## HomeKit + FFmpeg Output Preset (Recommended)
+
+### Recommended Settings
+
+```
+-c:v libx264 -pix_fmt yuvj420p -preset ultrafast -bf 0 -g 60 -r 15 -b:v 500000 -bufsize 1000000 -maxrate 500000
+```
+
+### Why This Preset Is Needed
+The ESP32 outputs **MJPEG** (JPEG frames). HomeKit and Scrypted’s prebuffering expect **H.264** with regular keyframes and a compatible pixel format. Without re-encoding, Scrypted can’t find sync frames and HomeKit streams may fail to start.
+
+This preset forces:
+- **H.264 encoding** (`-c:v libx264`) so HomeKit accepts the stream.
+- **YUV 4:2:0 pixel format** (`-pix_fmt yuvj420p`) which HomeKit requires.
+- **Low-latency encoding** (`-preset ultrafast`) to reduce CPU and delay.
+- **No B-frames** (`-bf 0`) to simplify decoding and improve compatibility.
+- **Regular keyframes every 2 seconds** (`-g 60` at 15 fps) so Scrypted can sync quickly.
+- **Stable 500 kbps bitrate** (`-b:v 500000 -maxrate 500000 -bufsize 1000000`) to limit bandwidth spikes.
+- **Fixed 15 fps** (`-r 15`) which is easier on the ESP32 and HomeKit pipeline.
+
+### Where to Set It
+In Scrypted:
+1. Open the **FFmpeg Camera** device.
+2. Paste the preset into **FFmpeg Output Prefix**.
+3. Keep the **Input** pointed at:
+   - MJPEG: `http://<ESP32-IP>:81/stream`
+   - Or RTSP: `rtsp://<ESP32-IP>:8554/mjpeg/1`
 
 ## Doorbell Event Integration
 

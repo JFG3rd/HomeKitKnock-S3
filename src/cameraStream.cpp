@@ -13,6 +13,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include "logger.h"
+#include "config.h"
 
 #define PART_BOUNDARY "123456789000000000000987654321"
 static const char *kStreamContentType = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
@@ -163,13 +164,14 @@ void startCameraStreamServer() {
 
     Serial.println("Setting up camera stream server...");
     stream_server_task_active = true;
-    if (xTaskCreate(
+    if (xTaskCreatePinnedToCore(
             stream_server_task,
             "stream_server",
             8192,
             NULL,
             1,
-            NULL) != pdPASS) {
+            NULL,
+            STREAM_TASK_CORE) != pdPASS) {
         stream_server_task_active = false;
         Serial.println("❌ Failed to create camera stream server task");
         return;
@@ -211,13 +213,14 @@ static void stream_server_task(void *pvParameters) {
                         } else {
                             args->client = client_ptr;
                             args->slot = static_cast<uint8_t>(slot);
-                            if (xTaskCreate(
+                            if (xTaskCreatePinnedToCore(
                                     stream_client_task,
                                     "stream_client",
                                     8192,
                                     args,
                                     1,
-                                    NULL) != pdPASS) {
+                                    NULL,
+                                    STREAM_TASK_CORE) != pdPASS) {
                                 client_ptr->stop();
                                 delete client_ptr;
                                 delete args;

@@ -19,6 +19,7 @@
 #include "cameraAPI.h"
 #include "cameraStream.h"
 #include "rtsp_server.h"
+#include "audio.h"
 #include "logger.h"
 
 // Global objects shared across setup/loop.
@@ -31,12 +32,29 @@ Tr064Config tr064Config;
 SipConfig sipConfig;
 bool cameraReady = false;
 
+static const char *kFeatMicEnabledKey = "mic_en";
+static const char *kFeatMicMutedKey = "mic_mute";
+static const char *kFeatMicSensitivityKey = "mic_sens";
+static const char *kFeatAudioOutEnabledKey = "aud_en";
+static const char *kFeatAudioOutMutedKey = "aud_mute";
+static const char *kFeatAudioOutVolumeKey = "aud_vol";
+
 // Feature toggles (loaded once at boot, updated on save)
 bool sipEnabled = true;
 bool tr064Enabled = true;
 bool httpCamEnabled = true;
 bool rtspEnabled = true;
 uint8_t httpCamMaxClients = 2;
+String scryptedSource = "http";
+bool scryptedLowLatency = true;
+bool scryptedLowBuffer = true;
+bool scryptedRtspUdp = false;
+bool micEnabled = false;
+bool micMuted = false;
+uint8_t micSensitivity = DEFAULT_MIC_SENSITIVITY;
+bool audioOutEnabled = true;
+bool audioOutMuted = false;
+uint8_t audioOutVolume = DEFAULT_AUDIO_OUT_VOLUME;
 
 bool lastButtonPressed = false;
 unsigned long lastButtonChangeMs = 0;
@@ -50,6 +68,32 @@ bool initFileSystem(AsyncWebServer &server) {
   server.serveStatic("/style.css", LittleFS, "/style.css");
   server.serveStatic("/favicon.ico", LittleFS, "/favicon.ico");
   return true;
+}
+
+static void writeWavHeader(AsyncResponseStream *response,
+                           uint32_t sampleRate,
+                           uint16_t bitsPerSample,
+                           uint16_t channels,
+                           uint32_t dataBytes) {
+  uint32_t byteRate = sampleRate * channels * bitsPerSample / 8;
+  uint16_t blockAlign = channels * bitsPerSample / 8;
+  uint32_t chunkSize = 36 + dataBytes;
+
+  response->write(reinterpret_cast<const uint8_t *>("RIFF"), 4);
+  response->write(reinterpret_cast<const uint8_t *>(&chunkSize), 4);
+  response->write(reinterpret_cast<const uint8_t *>("WAVE"), 4);
+  response->write(reinterpret_cast<const uint8_t *>("fmt "), 4);
+  uint32_t subchunk1Size = 16;
+  uint16_t audioFormat = 1;
+  response->write(reinterpret_cast<const uint8_t *>(&subchunk1Size), 4);
+  response->write(reinterpret_cast<const uint8_t *>(&audioFormat), 2);
+  response->write(reinterpret_cast<const uint8_t *>(&channels), 2);
+  response->write(reinterpret_cast<const uint8_t *>(&sampleRate), 4);
+  response->write(reinterpret_cast<const uint8_t *>(&byteRate), 4);
+  response->write(reinterpret_cast<const uint8_t *>(&blockAlign), 2);
+  response->write(reinterpret_cast<const uint8_t *>(&bitsPerSample), 2);
+  response->write(reinterpret_cast<const uint8_t *>("data"), 4);
+  response->write(reinterpret_cast<const uint8_t *>(&dataBytes), 4);
 }
 
 void setup() {
@@ -74,13 +118,75 @@ void setup() {
   if (!featPrefs.begin("features", false)) {
     logEvent(LOG_WARN, "⚠️ Failed to open features namespace, creating...");
   }
+  bool audioPrefsMigrated = false;
+  if (!featPrefs.isKey(kFeatMicEnabledKey) && featPrefs.isKey("mic_enabled")) {
+    featPrefs.putBool(kFeatMicEnabledKey, featPrefs.getBool("mic_enabled", false));
+    featPrefs.remove("mic_enabled");
+    audioPrefsMigrated = true;
+  }
+  if (!featPrefs.isKey(kFeatMicMutedKey) && featPrefs.isKey("mic_muted")) {
+    featPrefs.putBool(kFeatMicMutedKey, featPrefs.getBool("mic_muted", false));
+    featPrefs.remove("mic_muted");
+    audioPrefsMigrated = true;
+  }
+  if (!featPrefs.isKey(kFeatMicSensitivityKey) && featPrefs.isKey("mic_sensitivity")) {
+    featPrefs.putUChar(kFeatMicSensitivityKey, featPrefs.getUChar("mic_sensitivity", DEFAULT_MIC_SENSITIVITY));
+    featPrefs.remove("mic_sensitivity");
+    audioPrefsMigrated = true;
+  }
+  if (!featPrefs.isKey(kFeatAudioOutEnabledKey) && featPrefs.isKey("audio_out_enabled")) {
+    featPrefs.putBool(kFeatAudioOutEnabledKey, featPrefs.getBool("audio_out_enabled", true));
+    featPrefs.remove("audio_out_enabled");
+    audioPrefsMigrated = true;
+  }
+  if (!featPrefs.isKey(kFeatAudioOutMutedKey) && featPrefs.isKey("audio_out_muted")) {
+    featPrefs.putBool(kFeatAudioOutMutedKey, featPrefs.getBool("audio_out_muted", false));
+    featPrefs.remove("audio_out_muted");
+    audioPrefsMigrated = true;
+  }
+  if (!featPrefs.isKey(kFeatAudioOutVolumeKey) && featPrefs.isKey("audio_out_volume")) {
+    featPrefs.putUChar(kFeatAudioOutVolumeKey, featPrefs.getUChar("audio_out_volume", DEFAULT_AUDIO_OUT_VOLUME));
+    featPrefs.remove("audio_out_volume");
+    audioPrefsMigrated = true;
+  }
+  if (audioPrefsMigrated) {
+    logEvent(LOG_INFO, "✅ Migrated legacy audio preference keys");
+  }
   if (!featPrefs.isKey("sip_enabled")) {
     featPrefs.putBool("sip_enabled", true);
     featPrefs.putBool("tr064_enabled", true);
     featPrefs.putBool("http_cam_enabled", true);
     featPrefs.putBool("rtsp_enabled", true);
     featPrefs.putUChar("http_cam_max_clients", 2);
-    logEvent(LOG_INFO, "✅ Feature toggles initialized with defaults (all enabled)");
+    featPrefs.putString("scrypted_source", "http");
+    featPrefs.putBool("scrypted_low_latency", true);
+    featPrefs.putBool("scrypted_low_buffer", true);
+    featPrefs.putBool("scrypted_rtsp_udp", false);
+    featPrefs.putBool(kFeatMicEnabledKey, false);
+    featPrefs.putBool(kFeatMicMutedKey, false);
+    featPrefs.putUChar(kFeatMicSensitivityKey, DEFAULT_MIC_SENSITIVITY);
+    featPrefs.putBool(kFeatAudioOutEnabledKey, true);
+    featPrefs.putBool(kFeatAudioOutMutedKey, false);
+    featPrefs.putUChar(kFeatAudioOutVolumeKey, DEFAULT_AUDIO_OUT_VOLUME);
+    logEvent(LOG_INFO, "✅ Feature toggles initialized with defaults");
+  }
+  if (!featPrefs.isKey(kFeatMicEnabledKey)) {
+    featPrefs.putBool(kFeatMicEnabledKey, false);
+  }
+  if (!featPrefs.isKey(kFeatMicMutedKey)) {
+    featPrefs.putBool(kFeatMicMutedKey, false);
+  }
+  if (!featPrefs.isKey(kFeatMicSensitivityKey)) {
+    featPrefs.putUChar(kFeatMicSensitivityKey, DEFAULT_MIC_SENSITIVITY);
+  }
+  if (!featPrefs.isKey(kFeatAudioOutEnabledKey)) {
+    featPrefs.putBool(kFeatAudioOutEnabledKey, true);
+  }
+  if (!featPrefs.isKey(kFeatAudioOutMutedKey)) {
+    featPrefs.putBool(kFeatAudioOutMutedKey, false);
+  }
+  if (!featPrefs.isKey(kFeatAudioOutVolumeKey)) {
+    featPrefs.putUChar(kFeatAudioOutVolumeKey, DEFAULT_AUDIO_OUT_VOLUME);
   }
   // Load feature flags into global variables
   sipEnabled = featPrefs.getBool("sip_enabled", true);
@@ -88,12 +194,24 @@ void setup() {
   httpCamEnabled = featPrefs.getBool("http_cam_enabled", true);
   rtspEnabled = featPrefs.getBool("rtsp_enabled", true);
   httpCamMaxClients = featPrefs.getUChar("http_cam_max_clients", 2);
+  scryptedSource = featPrefs.getString("scrypted_source", httpCamEnabled ? "http" : "rtsp");
+  scryptedLowLatency = featPrefs.getBool("scrypted_low_latency", true);
+  scryptedLowBuffer = featPrefs.getBool("scrypted_low_buffer", true);
+  scryptedRtspUdp = featPrefs.getBool("scrypted_rtsp_udp", false);
+  micEnabled = featPrefs.getBool(kFeatMicEnabledKey, false);
+  micMuted = featPrefs.getBool(kFeatMicMutedKey, false);
+  micSensitivity = featPrefs.getUChar(kFeatMicSensitivityKey, DEFAULT_MIC_SENSITIVITY);
+  audioOutEnabled = featPrefs.getBool(kFeatAudioOutEnabledKey, true);
+  audioOutMuted = featPrefs.getBool(kFeatAudioOutMutedKey, false);
+  audioOutVolume = featPrefs.getUChar(kFeatAudioOutVolumeKey, DEFAULT_AUDIO_OUT_VOLUME);
   featPrefs.end();
   logEvent(LOG_INFO, "📋 Features loaded: SIP=" + String(sipEnabled) + " TR-064=" + String(tr064Enabled) + " HTTP=" + String(httpCamEnabled) + " RTSP=" + String(rtspEnabled));
 
   #ifdef CAMERA
   setCameraStreamMaxClients(httpCamMaxClients);
+  setRtspAllowUdp(scryptedRtspUdp);
   #endif
+  configureAudio(micEnabled, micMuted, micSensitivity, audioOutEnabled, audioOutMuted, audioOutVolume);
 
   // Configure doorbell GPIO based on active-low setting.
   pinMode(DOORBELL_BUTTON_PIN, DOORBELL_BUTTON_ACTIVE_LOW ? INPUT_PULLUP : INPUT);
@@ -239,6 +357,14 @@ void setup() {
             </div>
             <hr>
             )rawliteral" + streamInfo + R"rawliteral(
+            <details class="flash-stats">
+                <summary><strong>📺 Scrypted Setup (Quick Steps)</strong></summary>
+                <ol style="margin: 8px 0 0 16px; padding: 0; font-size: 0.9em;">
+                    <li>Add a camera in Scrypted.</li>
+                    <li>Use <strong>HTTP Camera</strong> with <code>http://ESP32-IP:81/stream</code>, or <strong>RTSP Camera</strong> with <code>rtsp://ESP32-IP:8554/mjpeg/1</code>.</li>
+                    <li>If using FFmpeg Camera for HomeKit, set Output Prefix to: <code>-c:v libx264 -pix_fmt yuvj420p -preset ultrafast -bf 0 -g 60 -r 15 -b:v 500000 -bufsize 1000000 -maxrate 500000</code></li>
+                </ol>
+            </details>
         </div>
 
         <!-- SIP/TR-064 Card -->
@@ -257,14 +383,34 @@ void setup() {
         </div>
     </div>
 
-    <div class="log-container" id="log"></div>
+    <div class="logs-grid">
+        <div>
+            <h3 style="text-align: center; margin-bottom: 10px;">📹 Camera Logs</h3>
+            <div class="log-container log-size-md" id="logCamera"></div>
+        </div>
+        <div>
+            <h3 style="text-align: center; margin-bottom: 10px;">☎️ Doorbell Logs</h3>
+            <div class="log-container log-size-md" id="logDoorbell"></div>
+        </div>
+    </div>
+    
     <div class="button-row log-actions">
+        <label style="display: flex; align-items: center; gap: 8px;">
+            <span>Log font size</span>
+            <select id="logFontSize">
+                <option value="sm">Small</option>
+                <option value="md" selected>Medium</option>
+                <option value="lg">Large</option>
+            </select>
+        </label>
         <button class="button danger-btn" onclick="clearLog()">🧹 Clear Log</button>
         <button class="button" onclick="copyLog()">📋 Copy Log to Clipboard</button>
     </div>
 
     <script>
-        const logEl = document.getElementById("log");
+        const logCameraEl = document.getElementById("logCamera");
+        const logDoorbellEl = document.getElementById("logDoorbell");
+        const logFontSizeEl = document.getElementById("logFontSize");
         const statusEl = document.getElementById("cameraStatus");
         const trStatusEl = document.getElementById("tr064Status");
         const darkToggle = document.getElementById("darkModeToggle");
@@ -275,12 +421,45 @@ void setup() {
         const wifiConnectTime = Date.now();
         let lastEventId = 0;
 
+        // Categorize log messages by keywords
+        function isCameraLog(message) {
+            const cameraKeywords = ["Camera", "RTSP", "HTTP", "Stream", "JPEG", "📹", "🎥", "📡", "🔌", "▶️", "🛑", "📴", "⏱️"];
+            return cameraKeywords.some(kw => message.includes(kw));
+        }
+
+        function isDoorbellLog(message) {
+            const doorbellKeywords = ["SIP", "TR-064", "FRITZ", "Ring", "Doorbell", "☎️", "📞", "🔔", "🔐"];
+            return doorbellKeywords.some(kw => message.includes(kw));
+        }
+
         function addLog(message, level = "info") {
             const entry = document.createElement("div");
             entry.className = `log-entry ${level}`;
             const ts = new Date().toLocaleTimeString();
             entry.textContent = `[${ts}] ${message}`;
-            logEl.prepend(entry);
+            
+            // Route to appropriate log container
+            if (isCameraLog(message)) {
+                logCameraEl.prepend(entry.cloneNode(true));
+            } else if (isDoorbellLog(message)) {
+                logDoorbellEl.prepend(entry.cloneNode(true));
+            } else {
+                // System/general logs go to both
+                logCameraEl.prepend(entry.cloneNode(true));
+                logDoorbellEl.prepend(entry);
+            }
+        }
+
+        function applyLogFontSize(size) {
+            const sizes = ["log-size-sm", "log-size-md", "log-size-lg"];
+            sizes.forEach(cls => {
+                logCameraEl.classList.remove(cls);
+                logDoorbellEl.classList.remove(cls);
+            });
+            const cls = `log-size-${size}`;
+            logCameraEl.classList.add(cls);
+            logDoorbellEl.classList.add(cls);
+            localStorage.setItem("logFontSize", size);
         }
 
         function clearLog() {
@@ -288,7 +467,8 @@ void setup() {
                 .then(r => r.text())
                 .then(() => {
                     // Reset both the UI list and the event log cursor so new entries show up again.
-                    logEl.innerHTML = "";
+                    logCameraEl.innerHTML = "";
+                    logDoorbellEl.innerHTML = "";
                     lastEventId = 0;
                 })
                 .catch(() => addLog("Failed to clear log", "error"));
@@ -359,17 +539,28 @@ void setup() {
                         streamStatusEl.innerHTML = "<strong>Stream:</strong> server stopped";
                         return;
                     }
+                    
+                    // Build HTTP stream status
+                    let httpStatus = "";
                     if (!data.active) {
-                        streamStatusEl.innerHTML = "<strong>Stream:</strong> no active clients";
-                        return;
+                        httpStatus = "HTTP: no clients";
+                    } else {
+                        const ip = data.client_ip || "unknown";
+                        const clients = data.clients || 0;
+                        const connectedFor = formatMs(data.connected_ms);
+                        const lastFrame = formatMs(data.last_frame_age_ms);
+                        const list = Array.isArray(data.clients_list) ? data.clients_list.join(", ") : "";
+                        const listText = list.length ? ` | ${list}` : "";
+                        httpStatus = `HTTP: ${clients} client(s)${listText} | connected ${connectedFor} | last frame ${lastFrame} ago`;
                     }
-                    const ip = data.client_ip || "unknown";
-                    const clients = data.clients || 0;
-                    const connectedFor = formatMs(data.connected_ms);
-                    const lastFrame = formatMs(data.last_frame_age_ms);
-                    const list = Array.isArray(data.clients_list) ? data.clients_list.join(", ") : "";
-                    const listText = list.length ? ` | ${list}` : "";
-                    streamStatusEl.innerHTML = `<strong>Stream:</strong> ${clients} client(s)${listText} | connected ${connectedFor} | last frame ${lastFrame} ago`;
+                    
+                    // Build RTSP stream status
+                    const rtspSessions = data.rtsp_sessions || 0;
+                    const rtspStatus = rtspSessions > 0 
+                        ? `RTSP: ${rtspSessions} session(s)` 
+                        : "RTSP: no sessions";
+                    
+                    streamStatusEl.innerHTML = `<strong>Stream:</strong> ${httpStatus}<br>${rtspStatus}`;
                 })
                 .catch(() => {
                     streamStatusEl.innerHTML = "<strong>Stream:</strong> unavailable";
@@ -475,6 +666,12 @@ void setup() {
         setInterval(fetchSipStatus, 10000);
         setInterval(fetchStreamInfo, 3000);
         setInterval(fetchEventLog, 2000);
+
+        const savedLogFontSize = localStorage.getItem("logFontSize") || "md";
+        logFontSizeEl.value = savedLogFontSize;
+        applyLogFontSize(savedLogFontSize);
+        logFontSizeEl.addEventListener("change", (e) => applyLogFontSize(e.target.value));
+
         addLog("UI loaded", "info");
     </script>
 </body>
@@ -485,6 +682,36 @@ void setup() {
         request->send(response);
       });
 
+      server.on("/audio.wav", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!isMicEnabled()) {
+          request->send(503, "text/plain", "Mic disabled");
+          return;
+        }
+
+        const uint32_t sampleRate = AUDIO_SAMPLE_RATE;
+        const uint16_t bitsPerSample = AUDIO_SAMPLE_BITS;
+        const uint16_t channels = 1;
+        const uint32_t sampleCount = sampleRate / 2;
+        const uint32_t dataBytes = sampleCount * sizeof(int16_t);
+        int16_t *samples = static_cast<int16_t *>(malloc(dataBytes));
+        if (!samples) {
+          request->send(500, "text/plain", "Audio buffer allocation failed");
+          return;
+        }
+
+        bool ok = captureMicSamples(samples, sampleCount, 250);
+        if (!ok) {
+          memset(samples, 0, dataBytes);
+        }
+
+        AsyncResponseStream *response = request->beginResponseStream("audio/wav");
+        response->addHeader("Cache-Control", "no-store");
+        writeWavHeader(response, sampleRate, bitsPerSample, channels, dataBytes);
+        response->write(reinterpret_cast<const uint8_t *>(samples), dataBytes);
+        request->send(response);
+        free(samples);
+      });
+
       server.on("/setup", HTTP_GET, [](AsyncWebServerRequest *request) {
         Preferences prefs;
         prefs.begin("features", false);
@@ -492,6 +719,12 @@ void setup() {
         bool tr064_enabled = prefs.getBool("tr064_enabled", true);
         bool http_cam_enabled = prefs.getBool("http_cam_enabled", true);
         bool rtsp_enabled = prefs.getBool("rtsp_enabled", true);
+        bool mic_enabled = prefs.getBool(kFeatMicEnabledKey, false);
+        bool mic_muted = prefs.getBool(kFeatMicMutedKey, false);
+        uint8_t mic_sensitivity = prefs.getUChar(kFeatMicSensitivityKey, DEFAULT_MIC_SENSITIVITY);
+        bool audio_out_enabled = prefs.getBool(kFeatAudioOutEnabledKey, true);
+        bool audio_out_muted = prefs.getBool(kFeatAudioOutMutedKey, false);
+        uint8_t audio_out_volume = prefs.getUChar(kFeatAudioOutVolumeKey, DEFAULT_AUDIO_OUT_VOLUME);
         prefs.end();
 
         String page = R"rawliteral(
@@ -512,64 +745,92 @@ void setup() {
         <span>Dark Mode</span>
     </div>
 
-    <div class="container full-width">
-        <h1>⚙️ Feature Setup</h1>
+    <div class="header-container">
+        <h1 class="main-title">⚙️ Feature Setup</h1>
         <p>Enable or disable individual features for your doorbell.</p>
-        
-        <div class="info-grid">
-            <div class="info-item">
-                <span><strong>☎️ SIP Phone Ringing</strong></span>
-                <label class="switch">
-                    <input type="checkbox" id="sip_enabled" )rawliteral" + String(sip_enabled ? "checked" : "") + R"rawliteral(>
-                    <span class="slider"></span>
-                </label>
-            </div>
-            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                Ring FRITZ!Box phones when doorbell is pressed via SIP protocol.
-            </div>
+    </div>
 
-            <div class="info-item">
-                <span><strong>📡 TR-064 Integration</strong></span>
-                <label class="switch">
-                    <input type="checkbox" id="tr064_enabled" )rawliteral" + String(tr064_enabled ? "checked" : "") + R"rawliteral(>
-                    <span class="slider"></span>
-                </label>
-            </div>
-            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                Enable TR-064 SOAP protocol for advanced FRITZ!Box control.
-            </div>
+    <div class="dashboard">
+        <div class="container card setup-card">
+            <h3>🔧 Core Features</h3>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span><strong>☎️ SIP Phone Ringing</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="sip_enabled" )rawliteral" + String(sip_enabled ? "checked" : "") + R"rawliteral(>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                    Ring FRITZ!Box phones when doorbell is pressed via SIP protocol.
+                </div>
 
-            <div class="info-item">
-                <span><strong>📹 HTTP Camera Streaming</strong></span>
-                <label class="switch">
-                    <input type="checkbox" id="http_cam_enabled" )rawliteral" + String(http_cam_enabled ? "checked" : "") + R"rawliteral(>
-                    <span class="slider"></span>
-                </label>
-            </div>
-            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                MJPEG stream at http://ESP32-IP:81/stream and snapshot endpoint.
-            </div>
-            <div class="info-item">
-                <span><strong>👥 Max MJPEG Clients</strong></span>
-                <input type="number" id="http_cam_max_clients" min="1" max="4" value=")rawliteral" + String(httpCamMaxClients) + R"rawliteral(" style="width: 80px;">
-            </div>
-            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                Limit simultaneous HTTP stream clients (e.g., Scrypted + FRITZ!Box).
-            </div>
+                <div class="info-item">
+                    <span><strong>📡 TR-064 Integration</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="tr064_enabled" )rawliteral" + String(tr064_enabled ? "checked" : "") + R"rawliteral(>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                    Enable TR-064 SOAP protocol for advanced FRITZ!Box control.
+                </div>
 
-            <div class="info-item">
-                <span><strong>🎥 RTSP Camera Streaming</strong></span>
-                <label class="switch">
-                    <input type="checkbox" id="rtsp_enabled" )rawliteral" + String(rtsp_enabled ? "checked" : "") + R"rawliteral(>
-                    <span class="slider"></span>
-                </label>
-            </div>
-            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                RTSP stream at rtsp://ESP32-IP:8554/mjpeg/1 (experimental, use HTTP for Scrypted).
+                <div class="info-item">
+                    <span><strong>📹 HTTP Camera Streaming</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="http_cam_enabled" )rawliteral" + String(http_cam_enabled ? "checked" : "") + R"rawliteral(>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                    MJPEG stream at http://ESP32-IP:81/stream and snapshot endpoint.
+                </div>
+                <div class="info-item">
+                    <span><strong>👥 Max MJPEG Clients</strong></span>
+                    <input type="number" id="http_cam_max_clients" min="1" max="4" value=")rawliteral" + String(httpCamMaxClients) + R"rawliteral(" style="width: 80px;">
+                </div>
+                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                    Limit simultaneous HTTP stream clients (e.g., Scrypted + FRITZ!Box).
+                </div>
+
+                <div class="info-item">
+                    <span><strong>🎥 RTSP Camera Streaming</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="rtsp_enabled" )rawliteral" + String(rtsp_enabled ? "checked" : "") + R"rawliteral(>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                    RTSP stream at rtsp://ESP32-IP:8554/mjpeg/1 (experimental, use HTTP for Scrypted).
+                </div>
+
+                <div class="info-item">
+                    <span><strong>🔊 Audio Out (Gong)</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="audio_out_enabled" )rawliteral" + String(audio_out_enabled ? "checked" : "") + R"rawliteral(>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                    Local gong playback via MAX98357A I2S DAC.
+                </div>
+                <div class="info-item">
+                    <span><strong>🔇 Audio Out Mute</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="audio_out_muted" )rawliteral" + String(audio_out_muted ? "checked" : "") + R"rawliteral(>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="info-item">
+                    <span><strong>🔊 Audio Out Volume</strong></span>
+                    <input type="range" id="audio_out_volume" min="0" max="100" value=")rawliteral" + String(audio_out_volume) + R"rawliteral(">
+                    <span id="audioOutVolumeValue">)rawliteral" + String(audio_out_volume) + R"rawliteral(</span>
+                </div>
             </div>
         </div>
 
-        <div class="container" style="margin-top: 20px;">
+        <div class="container card setup-card">
             <h3>📷 Camera Quality</h3>
             <div class="flash-stats" id="cameraSetupStatus">
                 <strong>Camera:</strong> loading...
@@ -587,16 +848,90 @@ void setup() {
             <input type="range" id="quality" min="4" max="63" value="10">
             <span id="qualityValue">10</span>
 
+            <label><strong>Brightness</strong></label>
+            <input type="range" id="brightness" min="-2" max="2" step="1" value="0">
+            <span id="brightnessValue">0</span>
+
+            <label><strong>Contrast</strong></label>
+            <input type="range" id="contrast" min="-2" max="2" step="1" value="0">
+            <span id="contrastValue">0</span>
+
             <div style="margin-top: 12px;">
                 <button class="button" onclick="applyCameraSettings()">Apply Camera Settings</button>
             </div>
         </div>
 
-        <div style="margin-top: 30px;">
-            <button class="button" onclick="saveFeatures()">💾 Save Features</button>
-            <button class="button danger-btn" onclick="location.href='/restart';">🔄 Restart</button>
-            <a class="button danger-btn" href="/">Back</a>
+        <div class="container card setup-card">
+            <h3>📺 Scrypted Stream Options</h3>
+            <div class="flash-stats" id="scryptedStatus">
+                <strong>Status:</strong> loading...
+            </div>
+
+            <label><strong>Source Type</strong></label>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span>HTTP MJPEG</span>
+                    <input type="radio" name="scrypted_source" id="scrypted_source_http" value="http" )rawliteral" + String(scryptedSource == "http" ? "checked" : "") + R"rawliteral(>
+                </div>
+                <div class="info-item">
+                    <span>RTSP MJPEG</span>
+                    <input type="radio" name="scrypted_source" id="scrypted_source_rtsp" value="rtsp" )rawliteral" + String(scryptedSource == "rtsp" ? "checked" : "") + R"rawliteral(>
+                </div>
+            </div>
+
+            <label style="margin-top: 12px;"><strong>Optimization</strong></label>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span>Low latency (short GOP)</span>
+                    <input type="checkbox" id="scrypted_low_latency" )rawliteral" + String(scryptedLowLatency ? "checked" : "") + R"rawliteral(>
+                </div>
+                <div class="info-item">
+                    <span>Reduce input buffering</span>
+                    <input type="checkbox" id="scrypted_low_buffer" )rawliteral" + String(scryptedLowBuffer ? "checked" : "") + R"rawliteral(>
+                </div>
+                <div class="info-item">
+                    <span>Prefer RTSP UDP transport</span>
+                    <input type="checkbox" id="scrypted_rtsp_udp" )rawliteral" + String(scryptedRtspUdp ? "checked" : "") + R"rawliteral(>
+                </div>
+            </div>
+
+            <label style="margin-top: 12px;"><strong>Audio (Mic)</strong></label>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span>Mic enabled</span>
+                    <input type="checkbox" id="mic_enabled" )rawliteral" + String(mic_enabled ? "checked" : "") + R"rawliteral(>
+                </div>
+                <div class="info-item">
+                    <span>Mic mute</span>
+                    <input type="checkbox" id="mic_muted" )rawliteral" + String(mic_muted ? "checked" : "") + R"rawliteral(>
+                </div>
+            </div>
+            <label><strong>Mic Sensitivity</strong></label>
+            <input type="range" id="mic_sensitivity" min="0" max="100" value=")rawliteral" + String(mic_sensitivity) + R"rawliteral(">
+            <span id="micSensitivityValue">)rawliteral" + String(mic_sensitivity) + R"rawliteral(</span>
+            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                Preview mic capture at http://ESP32-IP/audio.wav (RTSP audio planned).
+            </div>
+
+            <div class="flash-stats" style="margin-top: 12px;">
+                <strong>Recommended Source URL:</strong>
+                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;" id="scrypted_source_url"></p>
+            </div>
+            <div class="flash-stats">
+                <strong>FFmpeg Input Args:</strong>
+                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;" id="scrypted_input_args"></p>
+            </div>
+            <div class="flash-stats">
+                <strong>FFmpeg Output Prefix:</strong>
+                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;" id="scrypted_output_prefix"></p>
+            </div>
         </div>
+    </div>
+
+    <div class="button-row log-actions" style="margin-top: 20px;">
+        <button class="button" onclick="saveFeatures()">💾 Save Features</button>
+        <button class="button danger-btn" onclick="location.href='/restart';">🔄 Restart</button>
+        <a class="button danger-btn" href="/">Back</a>
     </div>
 
     <script>
@@ -619,8 +954,23 @@ void setup() {
                 tr064_enabled: document.getElementById("tr064_enabled").checked,
                 http_cam_enabled: document.getElementById("http_cam_enabled").checked,
                 rtsp_enabled: document.getElementById("rtsp_enabled").checked,
-                http_cam_max_clients: parseInt(document.getElementById("http_cam_max_clients").value || "2", 10)
+                http_cam_max_clients: parseInt(document.getElementById("http_cam_max_clients").value || "2", 10),
+                scrypted_source: document.querySelector("input[name='scrypted_source']:checked")?.value || "http",
+                scrypted_low_latency: document.getElementById("scrypted_low_latency").checked,
+                scrypted_low_buffer: document.getElementById("scrypted_low_buffer").checked,
+                scrypted_rtsp_udp: document.getElementById("scrypted_rtsp_udp").checked,
+                mic_enabled: document.getElementById("mic_enabled").checked,
+                mic_muted: document.getElementById("mic_muted").checked,
+                mic_sensitivity: parseInt(document.getElementById("mic_sensitivity").value || "70", 10),
+                audio_out_enabled: document.getElementById("audio_out_enabled").checked,
+                audio_out_muted: document.getElementById("audio_out_muted").checked,
+                audio_out_volume: parseInt(document.getElementById("audio_out_volume").value || "70", 10)
             };
+
+            if (!validateScryptedOptions()) {
+                alert("Scrypted options are invalid. Enable the required stream type.");
+                return;
+            }
 
             fetch("/saveFeatures", {
                 method: "POST",
@@ -636,6 +986,14 @@ void setup() {
 
         const cameraSetupStatusEl = document.getElementById("cameraSetupStatus");
         const qualityValueEl = document.getElementById("qualityValue");
+        const brightnessValueEl = document.getElementById("brightnessValue");
+        const contrastValueEl = document.getElementById("contrastValue");
+        const scryptedStatusEl = document.getElementById("scryptedStatus");
+        const scryptedSourceUrlEl = document.getElementById("scrypted_source_url");
+        const scryptedInputArgsEl = document.getElementById("scrypted_input_args");
+        const scryptedOutputPrefixEl = document.getElementById("scrypted_output_prefix");
+        const micSensitivityValueEl = document.getElementById("micSensitivityValue");
+        const audioOutVolumeValueEl = document.getElementById("audioOutVolumeValue");
 
         function fetchCameraSetupStatus() {
             fetch("/status")
@@ -649,6 +1007,14 @@ void setup() {
                         document.getElementById("quality").value = data.quality;
                         qualityValueEl.textContent = data.quality;
                     }
+                    if (data.brightness !== undefined) {
+                        document.getElementById("brightness").value = data.brightness;
+                        brightnessValueEl.textContent = data.brightness;
+                    }
+                    if (data.contrast !== undefined) {
+                        document.getElementById("contrast").value = data.contrast;
+                        contrastValueEl.textContent = data.contrast;
+                    }
                 })
                 .catch(() => {
                     cameraSetupStatusEl.innerHTML = "<strong>Camera:</strong> unavailable";
@@ -658,11 +1024,15 @@ void setup() {
         function applyCameraSettings() {
             const fs = document.getElementById("framesize").value;
             const q = document.getElementById("quality").value;
+            const b = document.getElementById("brightness").value;
+            const c = document.getElementById("contrast").value;
             Promise.all([
                 fetch(`/control?var=framesize&val=${fs}`),
-                fetch(`/control?var=quality&val=${q}`)
+                fetch(`/control?var=quality&val=${q}`),
+                fetch(`/control?var=brightness&val=${b}`),
+                fetch(`/control?var=contrast&val=${c}`)
             ]).then(() => {
-                alert(`Applied camera settings: framesize=${fs}, quality=${q}`);
+                alert(`Applied camera settings: framesize=${fs}, quality=${q}, brightness=${b}, contrast=${c}`);
                 fetchCameraSetupStatus();
             }).catch(() => alert("Failed to apply camera settings"));
         }
@@ -670,8 +1040,119 @@ void setup() {
         document.getElementById("quality").addEventListener("input", (e) => {
             qualityValueEl.textContent = e.target.value;
         });
+        document.getElementById("brightness").addEventListener("input", (e) => {
+            brightnessValueEl.textContent = e.target.value;
+        });
+        document.getElementById("contrast").addEventListener("input", (e) => {
+            contrastValueEl.textContent = e.target.value;
+        });
+        document.getElementById("mic_sensitivity").addEventListener("input", (e) => {
+            micSensitivityValueEl.textContent = e.target.value;
+        });
+        document.getElementById("audio_out_volume").addEventListener("input", (e) => {
+            audioOutVolumeValueEl.textContent = e.target.value;
+        });
+
+        function updateAudioUi() {
+            const micEnabled = document.getElementById("mic_enabled").checked;
+            document.getElementById("mic_muted").disabled = !micEnabled;
+            document.getElementById("mic_sensitivity").disabled = !micEnabled;
+
+            const audioOutEnabled = document.getElementById("audio_out_enabled").checked;
+            document.getElementById("audio_out_muted").disabled = !audioOutEnabled;
+            document.getElementById("audio_out_volume").disabled = !audioOutEnabled;
+        }
+
+        function getScryptedSource() {
+            const selected = document.querySelector("input[name='scrypted_source']:checked");
+            return selected ? selected.value : "http";
+        }
+
+        function buildScryptedOutputPrefix() {
+            const lowLatency = document.getElementById("scrypted_low_latency").checked;
+            const gop = lowLatency ? 30 : 60;
+            return `-c:v libx264 -pix_fmt yuvj420p -preset ultrafast -bf 0 -g ${gop} -r 15 -b:v 500000 -bufsize 1000000 -maxrate 500000`;
+        }
+
+        function buildScryptedInputArgs() {
+            const source = getScryptedSource();
+            const lowBuffer = document.getElementById("scrypted_low_buffer").checked;
+            const preferUdp = document.getElementById("scrypted_rtsp_udp").checked;
+            const args = [];
+            if (source === "rtsp") {
+                args.push(`-rtsp_transport ${preferUdp ? "udp" : "tcp"}`);
+            }
+            if (lowBuffer) {
+                args.push("-fflags nobuffer -flags low_delay -analyzeduration 0 -probesize 32");
+            }
+            return args.length ? args.join(" ") : "(none)";
+        }
+
+        function updateScryptedUi() {
+            const httpRadio = document.getElementById("scrypted_source_http");
+            const rtspRadio = document.getElementById("scrypted_source_rtsp");
+            const rtspEnabled = document.getElementById("rtsp_enabled").checked;
+            const httpEnabled = document.getElementById("http_cam_enabled").checked;
+
+            httpRadio.disabled = !httpEnabled;
+            rtspRadio.disabled = !rtspEnabled;
+
+            if (!httpEnabled && rtspEnabled) {
+                rtspRadio.checked = true;
+            } else if (!rtspEnabled && httpEnabled) {
+                httpRadio.checked = true;
+            }
+
+            const source = getScryptedSource();
+            const ip = ")rawliteral" + WiFi.localIP().toString() + R"rawliteral(";
+            const sourceUrl = source === "rtsp"
+                ? `rtsp://${ip}:8554/mjpeg/1`
+                : `http://${ip}:81/stream`;
+            scryptedSourceUrlEl.textContent = sourceUrl;
+            scryptedInputArgsEl.textContent = buildScryptedInputArgs();
+            scryptedOutputPrefixEl.textContent = buildScryptedOutputPrefix();
+
+            const rtspUdpEl = document.getElementById("scrypted_rtsp_udp");
+            rtspUdpEl.disabled = source !== "rtsp";
+
+            let status = "OK";
+            if (!httpEnabled && !rtspEnabled) {
+                status = "Enable HTTP or RTSP streaming to use Scrypted.";
+            } else if (source === "rtsp" && !rtspEnabled) {
+                status = "Enable RTSP streaming to use RTSP source.";
+            } else if (source === "http" && !httpEnabled) {
+                status = "Enable HTTP streaming to use HTTP source.";
+            }
+            scryptedStatusEl.innerHTML = `<strong>Status:</strong> ${status}`;
+        }
+
+        function validateScryptedOptions() {
+            const source = getScryptedSource();
+            const rtspEnabled = document.getElementById("rtsp_enabled").checked;
+            const httpEnabled = document.getElementById("http_cam_enabled").checked;
+            if (source === "rtsp" && !rtspEnabled) {
+                return false;
+            }
+            if (source === "http" && !httpEnabled) {
+                return false;
+            }
+            return true;
+        }
+
+        document.querySelectorAll("input[name='scrypted_source']").forEach((el) => {
+            el.addEventListener("change", updateScryptedUi);
+        });
+        document.getElementById("scrypted_low_latency").addEventListener("change", updateScryptedUi);
+        document.getElementById("scrypted_low_buffer").addEventListener("change", updateScryptedUi);
+        document.getElementById("scrypted_rtsp_udp").addEventListener("change", updateScryptedUi);
+        document.getElementById("rtsp_enabled").addEventListener("change", updateScryptedUi);
+        document.getElementById("http_cam_enabled").addEventListener("change", updateScryptedUi);
+        document.getElementById("mic_enabled").addEventListener("change", updateAudioUi);
+        document.getElementById("audio_out_enabled").addEventListener("change", updateAudioUi);
 
         fetchCameraSetupStatus();
+        updateScryptedUi();
+        updateAudioUi();
     </script>
 </body>
 </html>
@@ -965,6 +1446,59 @@ void setup() {
           } else if (http_cam_max_clients > 4) {
             http_cam_max_clients = 4;
           }
+          String scrypted_source = doc["scrypted_source"].isNull()
+            ? scryptedSource
+            : doc["scrypted_source"].as<String>();
+          bool scrypted_low_latency = doc["scrypted_low_latency"].isNull()
+            ? scryptedLowLatency
+            : doc["scrypted_low_latency"].as<bool>();
+          bool scrypted_low_buffer = doc["scrypted_low_buffer"].isNull()
+            ? scryptedLowBuffer
+            : doc["scrypted_low_buffer"].as<bool>();
+          bool scrypted_rtsp_udp = doc["scrypted_rtsp_udp"].isNull()
+            ? scryptedRtspUdp
+            : doc["scrypted_rtsp_udp"].as<bool>();
+          bool mic_enabled = doc["mic_enabled"].isNull()
+            ? micEnabled
+            : doc["mic_enabled"].as<bool>();
+          bool mic_muted = doc["mic_muted"].isNull()
+            ? micMuted
+            : doc["mic_muted"].as<bool>();
+          int mic_sensitivity = doc["mic_sensitivity"].isNull()
+            ? micSensitivity
+            : doc["mic_sensitivity"].as<int>();
+          bool audio_out_enabled = doc["audio_out_enabled"].isNull()
+            ? audioOutEnabled
+            : doc["audio_out_enabled"].as<bool>();
+          bool audio_out_muted = doc["audio_out_muted"].isNull()
+            ? audioOutMuted
+            : doc["audio_out_muted"].as<bool>();
+          int audio_out_volume = doc["audio_out_volume"].isNull()
+            ? audioOutVolume
+            : doc["audio_out_volume"].as<int>();
+          if (scrypted_source != "http" && scrypted_source != "rtsp") {
+            scrypted_source = "http";
+          }
+          if (scrypted_source == "rtsp" && !rtsp_enabled) {
+            request->send(400, "text/plain", "RTSP source requires RTSP streaming enabled");
+            return;
+          }
+          if (scrypted_source == "http" && !http_cam_enabled) {
+            request->send(400, "text/plain", "HTTP source requires HTTP streaming enabled");
+            return;
+          }
+          if (mic_sensitivity > 100) {
+            mic_sensitivity = 100;
+          }
+          if (mic_sensitivity < 0) {
+            mic_sensitivity = 0;
+          }
+          if (audio_out_volume > 100) {
+            audio_out_volume = 100;
+          }
+          if (audio_out_volume < 0) {
+            audio_out_volume = 0;
+          }
 
           Preferences prefs;
           prefs.begin("features", false);
@@ -973,6 +1507,16 @@ void setup() {
           prefs.putBool("http_cam_enabled", http_cam_enabled);
           prefs.putBool("rtsp_enabled", rtsp_enabled);
           prefs.putUChar("http_cam_max_clients", http_cam_max_clients);
+          prefs.putString("scrypted_source", scrypted_source);
+          prefs.putBool("scrypted_low_latency", scrypted_low_latency);
+          prefs.putBool("scrypted_low_buffer", scrypted_low_buffer);
+          prefs.putBool("scrypted_rtsp_udp", scrypted_rtsp_udp);
+          prefs.putBool(kFeatMicEnabledKey, mic_enabled);
+          prefs.putBool(kFeatMicMutedKey, mic_muted);
+          prefs.putUChar(kFeatMicSensitivityKey, static_cast<uint8_t>(mic_sensitivity));
+          prefs.putBool(kFeatAudioOutEnabledKey, audio_out_enabled);
+          prefs.putBool(kFeatAudioOutMutedKey, audio_out_muted);
+          prefs.putUChar(kFeatAudioOutVolumeKey, static_cast<uint8_t>(audio_out_volume));
           prefs.end();
 
           // Update global variables
@@ -981,15 +1525,37 @@ void setup() {
           httpCamEnabled = http_cam_enabled;
           rtspEnabled = rtsp_enabled;
           httpCamMaxClients = http_cam_max_clients;
+          scryptedSource = scrypted_source;
+          scryptedLowLatency = scrypted_low_latency;
+          scryptedLowBuffer = scrypted_low_buffer;
+          scryptedRtspUdp = scrypted_rtsp_udp;
+          micEnabled = mic_enabled;
+          micMuted = mic_muted;
+          micSensitivity = static_cast<uint8_t>(mic_sensitivity);
+          audioOutEnabled = audio_out_enabled;
+          audioOutMuted = audio_out_muted;
+          audioOutVolume = static_cast<uint8_t>(audio_out_volume);
           #ifdef CAMERA
           setCameraStreamMaxClients(httpCamMaxClients);
+          setRtspAllowUdp(scryptedRtspUdp);
           #endif
+          configureAudio(micEnabled, micMuted, micSensitivity, audioOutEnabled, audioOutMuted, audioOutVolume);
 
           String summary = "Feature settings saved: SIP=" + String(sip_enabled ? "on" : "off") +
                            " TR-064=" + String(tr064_enabled ? "on" : "off") +
                            " HTTP=" + String(http_cam_enabled ? "on" : "off") +
                            " RTSP=" + String(rtsp_enabled ? "on" : "off") +
                            " HTTP max clients=" + String(http_cam_max_clients) +
+                           " Scrypted source=" + scrypted_source +
+                           " low-latency=" + String(scrypted_low_latency ? "on" : "off") +
+                           " low-buffer=" + String(scrypted_low_buffer ? "on" : "off") +
+                           " rtsp-udp=" + String(scrypted_rtsp_udp ? "on" : "off") +
+                           " mic=" + String(mic_enabled ? "on" : "off") +
+                           " mic-mute=" + String(mic_muted ? "on" : "off") +
+                           " mic-sens=" + String(mic_sensitivity) +
+                           " audio-out=" + String(audio_out_enabled ? "on" : "off") +
+                           " audio-mute=" + String(audio_out_muted ? "on" : "off") +
+                           " audio-vol=" + String(audio_out_volume) +
                            ". Restarting ESP32...";
           logEvent(LOG_INFO, "✅ " + summary);
           request->send(200, "text/plain", summary);
@@ -1119,6 +1685,9 @@ void setup() {
         String clientsJson = "[]";
         bool active = getCameraStreamClientInfo(clientIp, clients, connectedMs, lastFrameAgeMs, clientsJson);
 
+        // Get RTSP session count
+        int rtspSessions = getRtspActiveSessionCount();
+
         String json = "{";
         json += "\"running\":" + String(running ? "true" : "false") + ",";
         json += "\"active\":" + String(active ? "true" : "false") + ",";
@@ -1126,7 +1695,8 @@ void setup() {
         json += "\"client_ip\":\"" + clientIp + "\",";
         json += "\"connected_ms\":" + String(connectedMs) + ",";
         json += "\"last_frame_age_ms\":" + String(lastFrameAgeMs) + ",";
-        json += "\"clients_list\":" + clientsJson;
+        json += "\"clients_list\":" + clientsJson + ",";
+        json += "\"rtsp_sessions\":" + String(rtspSessions);
         json += "}";
         request->send(200, "application/json", json);
       });
@@ -1244,6 +1814,8 @@ bool isDoorbellPressed() {
 }
 
 void handleDoorbellPress() {
+  playGongAsync();
+
   // Trigger Scrypted doorbell event (HomeKit notification)
   if (!sipConfig.scrypted_webhook.isEmpty()) {
     HTTPClient http;
@@ -1272,6 +1844,17 @@ void handleDoorbellPress() {
 }
 
 void loop() {
+  // Periodic memory health logging (every 5 minutes)
+  static unsigned long lastHeapLog = 0;
+  unsigned long now = millis();
+  if (now - lastHeapLog > 300000) {  // 5 minutes
+    size_t freeHeap = ESP.getFreeHeap();
+    size_t minHeap = ESP.getMinFreeHeap();
+    size_t heapSize = ESP.getHeapSize();
+    logEvent(LOG_INFO, "💾 Heap: " + String(freeHeap) + " bytes free (" + String(freeHeap * 100 / heapSize) + "%), min: " + String(minHeap));
+    lastHeapLog = now;
+  }
+  
   // Handle DNS requests in AP mode
   if (isAPModeActive()) {
     dnsServer.processNextRequest();
@@ -1292,7 +1875,9 @@ void loop() {
   
   // Handle RTSP client connections for Scrypted (non-blocking)
   if (rtspEnabled) {
-    handleRtspClient();
+    if (!isRtspTaskRunning()) {
+      handleRtspClient();
+    }
   } else if (isRtspServerRunning()) {
     stopRtspServer();
     logEvent(LOG_INFO, "ℹ️ RTSP disabled - server stopped");
