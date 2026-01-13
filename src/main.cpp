@@ -220,6 +220,7 @@ void setup() {
   // Initialize camera and register endpoints if hardware is present.
   cameraReady = initCamera();
   if (cameraReady) {
+    // Camera API endpoints (/status, /capture, /control, /stream) only exist when init succeeds.
     registerCameraEndpoints(server);
   }
   #endif
@@ -246,7 +247,7 @@ void setup() {
         sendSipRegister(sipConfig);
       }
       
-      // Start web server for normal operation
+      // Start web server for normal operation (dashboard + JSON endpoints).
       server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         String streamInfo;
         if (httpCamEnabled) {
@@ -682,6 +683,42 @@ void setup() {
         request->send(response);
       });
 
+      // Raw PCM endpoint for integrations that want bytes only (no WAV header).
+      // Format: signed 16-bit little-endian mono at AUDIO_SAMPLE_RATE.
+      server.on("/audio", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!isMicEnabled()) {
+          request->send(503, "text/plain", "Mic disabled");
+          return;
+        }
+
+        const uint32_t sampleRate = AUDIO_SAMPLE_RATE;
+        const uint16_t bitsPerSample = AUDIO_SAMPLE_BITS;
+        const uint16_t channels = 1;
+        const uint32_t sampleCount = sampleRate / 2;
+        const uint32_t dataBytes = sampleCount * sizeof(int16_t);
+        int16_t *samples = static_cast<int16_t *>(malloc(dataBytes));
+        if (!samples) {
+          request->send(500, "text/plain", "Audio buffer allocation failed");
+          return;
+        }
+
+        bool ok = captureMicSamples(samples, sampleCount, 250);
+        if (!ok) {
+          memset(samples, 0, dataBytes);
+        }
+
+        AsyncResponseStream *response = request->beginResponseStream("application/octet-stream");
+        response->addHeader("Cache-Control", "no-store");
+        response->addHeader("X-Audio-Format", "PCM16LE");
+        response->addHeader("X-Audio-Rate", String(sampleRate));
+        response->addHeader("X-Audio-Bits", String(bitsPerSample));
+        response->addHeader("X-Audio-Channels", String(channels));
+        response->write(reinterpret_cast<const uint8_t *>(samples), dataBytes);
+        request->send(response);
+        free(samples);
+      });
+
+      // Short mic preview for browser testing; not a continuous stream.
       server.on("/audio.wav", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!isMicEnabled()) {
           request->send(503, "text/plain", "Mic disabled");
@@ -710,6 +747,20 @@ void setup() {
         response->write(reinterpret_cast<const uint8_t *>(samples), dataBytes);
         request->send(response);
         free(samples);
+      });
+
+      // Manual gong trigger for testing audio-out without pressing the doorbell.
+      server.on("/gong", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!isAudioOutEnabled()) {
+          request->send(503, "text/plain", "Audio out disabled");
+          return;
+        }
+        if (isAudioOutMuted()) {
+          request->send(503, "text/plain", "Audio out muted");
+          return;
+        }
+        playGongAsync();
+        request->send(200, "text/plain", "Gong triggered");
       });
 
       server.on("/setup", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -1814,6 +1865,7 @@ bool isDoorbellPressed() {
 }
 
 void handleDoorbellPress() {
+  // Sequence: local gong first, then external notifications.
   playGongAsync();
 
   // Trigger Scrypted doorbell event (HomeKit notification)
@@ -1876,6 +1928,7 @@ void loop() {
   // Handle RTSP client connections for Scrypted (non-blocking)
   if (rtspEnabled) {
     if (!isRtspTaskRunning()) {
+      // Fallback when RTSP task isn't running (e.g., task creation failed).
       handleRtspClient();
     }
   } else if (isRtspServerRunning()) {

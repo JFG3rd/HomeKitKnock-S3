@@ -16,7 +16,6 @@
 
 static const char *kGongPcmPath = "/gong.pcm";
 static const uint32_t kAudioSampleRate = AUDIO_SAMPLE_RATE;
-static const uint16_t kAudioBitsPerSample = AUDIO_SAMPLE_BITS;
 
 static bool micEnabled = false;
 static bool micMuted = false;
@@ -139,6 +138,8 @@ void configureAudio(bool micEnable,
                     bool audioOutEnableValue,
                     bool audioOutMuteValue,
                     uint8_t audioOutVolumeValue) {
+  // Apply runtime toggles and only keep I2S drivers installed when needed.
+  // This avoids keeping the mic/DAC powered when the feature is disabled.
   micEnabled = micEnable;
   micMuted = micMute;
   micSensitivity = micSensitivityValue;
@@ -191,6 +192,7 @@ bool captureMicSamples(int16_t *buffer, size_t sampleCount, uint32_t timeoutMs) 
     return false;
   }
   if (micMuted) {
+    // When muted, return silence so downstream packetizers keep cadence.
     memset(buffer, 0, sampleCount * sizeof(int16_t));
     return true;
   }
@@ -217,6 +219,7 @@ bool captureMicSamples(int16_t *buffer, size_t sampleCount, uint32_t timeoutMs) 
 }
 
 static void writeSamples(const int16_t *samples, size_t sampleCount) {
+  // Only attempt I2S writes when the output path is initialized.
   if (!samples || sampleCount == 0 || !audioOutI2sReady) {
     return;
   }
@@ -239,6 +242,7 @@ static void gongTask(void *pvParameters) {
     return;
   }
 
+  // Prefer the LittleFS gong clip; fall back to a synthesized two-tone if missing.
   if (LittleFS.exists(kGongPcmPath)) {
     File file = LittleFS.open(kGongPcmPath, "r");
     if (file) {
@@ -299,6 +303,7 @@ static void gongTask(void *pvParameters) {
 }
 
 void playGongAsync() {
+  // Fire-and-forget the gong on the streaming/audio core to avoid blocking loop().
   if (!audioOutEnabled || audioOutMuted) {
     return;
   }

@@ -94,12 +94,12 @@ static size_t findJpegScanData(const uint8_t* jpeg, size_t len, uint8_t &type, u
 
 // RTSP server configuration
 #define RTSP_PORT 8554
-#define RTP_PORT_BASE 5000
 
 // RTSP session state
 struct RtspSession {
   WiFiClient client;
   WiFiUDP rtpSocket;
+  // RTCP sockets/ports are tracked for future sender reports (not emitted yet).
   WiFiUDP rtcpSocket;
   WiFiUDP audioRtpSocket;
   WiFiUDP audioRtcpSocket;
@@ -308,6 +308,7 @@ static void handleDescribe(WiFiClient &client, int cseq) {
     sdp += "a=framesize:26 " + String(lastFrameWidth) + "-" + String(lastFrameHeight) + "\r\n";
   }
   sdp += "a=control:" + rtspUrl + "/track1\r\n";
+  // Only advertise audio when the mic is enabled so clients don't SETUP a dead track.
   if (isMicEnabled()) {
     sdp += "m=audio 0 RTP/AVP 0\r\n";
     sdp += "a=rtpmap:0 PCMU/8000\r\n";
@@ -729,6 +730,8 @@ static void sendRtpJpeg(RtspSession* session, camera_fb_t* fb) {
   }
 }
 
+// Mic capture runs at AUDIO_SAMPLE_RATE; RTSP advertises 8kHz PCMU.
+// Downsample to 8kHz and packetize 20ms frames (160 samples).
 static const uint32_t kAudioRtpSampleRate = 8000;
 static const size_t kAudioSamplesPerPacket = 160;  // 20ms at 8kHz
 static const size_t kMicSamplesPerPacket = (AUDIO_SAMPLE_RATE / kAudioRtpSampleRate) * kAudioSamplesPerPacket;
@@ -823,6 +826,7 @@ static void sendRtpAudio(RtspSession* session) {
     downsampleTo8k(micBuffer, kMicSamplesPerPacket, audioBuffer, kAudioSamplesPerPacket);
     encodeUlaw(audioBuffer, kAudioSamplesPerPacket, ulawBuffer);
   } else {
+    // G.711 mu-law "silence" is 0xFF; use it when muted or capture fails.
     memset(ulawBuffer, 0xFF, sizeof(ulawBuffer));
   }
 
