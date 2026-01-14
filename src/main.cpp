@@ -38,6 +38,16 @@ static const char *kFeatMicSensitivityKey = "mic_sens";
 static const char *kFeatAudioOutEnabledKey = "aud_en";
 static const char *kFeatAudioOutMutedKey = "aud_mute";
 static const char *kFeatAudioOutVolumeKey = "aud_vol";
+// NVS keys must be <= 15 chars; keep feature keys short.
+static const char *kFeatSipEnabledKey = "sip_en";
+static const char *kFeatTr064EnabledKey = "tr064_en";
+static const char *kFeatHttpCamEnabledKey = "http_en";
+static const char *kFeatRtspEnabledKey = "rtsp_en";
+static const char *kFeatHttpCamMaxClientsKey = "http_max";
+static const char *kFeatScryptedSourceKey = "scr_src";
+static const char *kFeatScryptedLowLatencyKey = "scr_lat";
+static const char *kFeatScryptedLowBufferKey = "scr_buf";
+static const char *kFeatScryptedRtspUdpKey = "scr_udp";
 
 // Feature toggles (loaded once at boot, updated on save)
 bool sipEnabled = true;
@@ -152,6 +162,30 @@ void setup() {
   if (audioPrefsMigrated) {
     logEvent(LOG_INFO, "✅ Migrated legacy audio preference keys");
   }
+  bool featurePrefsMigrated = false;
+  auto migrateBoolPref = [&](const char *newKey, const char *oldKey, bool defaultValue) {
+    if (!featPrefs.isKey(newKey) && featPrefs.isKey(oldKey)) {
+      featPrefs.putBool(newKey, featPrefs.getBool(oldKey, defaultValue));
+      featPrefs.remove(oldKey);
+      featurePrefsMigrated = true;
+    }
+  };
+  auto migrateStringPref = [&](const char *newKey, const char *oldKey, const String &defaultValue) {
+    if (!featPrefs.isKey(newKey) && featPrefs.isKey(oldKey)) {
+      featPrefs.putString(newKey, featPrefs.getString(oldKey, defaultValue));
+      featPrefs.remove(oldKey);
+      featurePrefsMigrated = true;
+    }
+  };
+
+  // Migrate legacy feature keys (<= 15 chars) into the new short-key scheme.
+  migrateBoolPref(kFeatSipEnabledKey, "sip_enabled", true);
+  migrateBoolPref(kFeatTr064EnabledKey, "tr064_enabled", true);
+  migrateBoolPref(kFeatRtspEnabledKey, "rtsp_enabled", true);
+  migrateStringPref(kFeatScryptedSourceKey, "scrypted_source", "http");
+  if (featurePrefsMigrated) {
+    logEvent(LOG_INFO, "✅ Migrated legacy feature keys");
+  }
   // Initialize missing feature keys individually so new keys don't reset existing values.
   bool defaultsApplied = false;
   auto ensureBoolPref = [&](const char *key, bool value) {
@@ -173,14 +207,14 @@ void setup() {
     }
   };
 
-  ensureBoolPref("sip_enabled", true);
-  ensureBoolPref("tr064_enabled", true);
-  ensureBoolPref("http_cam_enabled", true);
-  ensureBoolPref("rtsp_enabled", true);
-  ensureUCharPref("http_cam_max_clients", 2);
-  ensureBoolPref("scrypted_low_latency", true);
-  ensureBoolPref("scrypted_low_buffer", true);
-  ensureBoolPref("scrypted_rtsp_udp", false);
+  ensureBoolPref(kFeatSipEnabledKey, true);
+  ensureBoolPref(kFeatTr064EnabledKey, true);
+  ensureBoolPref(kFeatHttpCamEnabledKey, true);
+  ensureBoolPref(kFeatRtspEnabledKey, true);
+  ensureUCharPref(kFeatHttpCamMaxClientsKey, 2);
+  ensureBoolPref(kFeatScryptedLowLatencyKey, true);
+  ensureBoolPref(kFeatScryptedLowBufferKey, true);
+  ensureBoolPref(kFeatScryptedRtspUdpKey, false);
   ensureBoolPref(kFeatMicEnabledKey, false);
   ensureBoolPref(kFeatMicMutedKey, false);
   ensureUCharPref(kFeatMicSensitivityKey, DEFAULT_MIC_SENSITIVITY);
@@ -188,26 +222,26 @@ void setup() {
   ensureBoolPref(kFeatAudioOutMutedKey, false);
   ensureUCharPref(kFeatAudioOutVolumeKey, DEFAULT_AUDIO_OUT_VOLUME);
 
-  bool httpEnabledPref = featPrefs.getBool("http_cam_enabled", true);
-  bool rtspEnabledPref = featPrefs.getBool("rtsp_enabled", true);
-  if (!featPrefs.isKey("scrypted_source")) {
+  bool httpEnabledPref = featPrefs.getBool(kFeatHttpCamEnabledKey, true);
+  bool rtspEnabledPref = featPrefs.getBool(kFeatRtspEnabledKey, true);
+  if (!featPrefs.isKey(kFeatScryptedSourceKey)) {
     String defaultSource = httpEnabledPref ? "http" : (rtspEnabledPref ? "rtsp" : "http");
-    ensureStringPref("scrypted_source", defaultSource);
+    ensureStringPref(kFeatScryptedSourceKey, defaultSource);
   }
 
   if (defaultsApplied) {
     logEvent(LOG_INFO, "✅ Feature defaults applied for missing keys");
   }
   // Load feature flags into global variables
-  sipEnabled = featPrefs.getBool("sip_enabled", true);
-  tr064Enabled = featPrefs.getBool("tr064_enabled", true);
-  httpCamEnabled = featPrefs.getBool("http_cam_enabled", true);
-  rtspEnabled = featPrefs.getBool("rtsp_enabled", true);
-  httpCamMaxClients = featPrefs.getUChar("http_cam_max_clients", 2);
-  scryptedSource = featPrefs.getString("scrypted_source", httpCamEnabled ? "http" : "rtsp");
-  scryptedLowLatency = featPrefs.getBool("scrypted_low_latency", true);
-  scryptedLowBuffer = featPrefs.getBool("scrypted_low_buffer", true);
-  scryptedRtspUdp = featPrefs.getBool("scrypted_rtsp_udp", false);
+  sipEnabled = featPrefs.getBool(kFeatSipEnabledKey, true);
+  tr064Enabled = featPrefs.getBool(kFeatTr064EnabledKey, true);
+  httpCamEnabled = featPrefs.getBool(kFeatHttpCamEnabledKey, true);
+  rtspEnabled = featPrefs.getBool(kFeatRtspEnabledKey, true);
+  httpCamMaxClients = featPrefs.getUChar(kFeatHttpCamMaxClientsKey, 2);
+  scryptedSource = featPrefs.getString(kFeatScryptedSourceKey, httpCamEnabled ? "http" : "rtsp");
+  scryptedLowLatency = featPrefs.getBool(kFeatScryptedLowLatencyKey, true);
+  scryptedLowBuffer = featPrefs.getBool(kFeatScryptedLowBufferKey, true);
+  scryptedRtspUdp = featPrefs.getBool(kFeatScryptedRtspUdpKey, false);
   micEnabled = featPrefs.getBool(kFeatMicEnabledKey, false);
   micMuted = featPrefs.getBool(kFeatMicMutedKey, false);
   micSensitivity = featPrefs.getUChar(kFeatMicSensitivityKey, DEFAULT_MIC_SENSITIVITY);
@@ -784,10 +818,16 @@ void setup() {
       server.on("/setup", HTTP_GET, [](AsyncWebServerRequest *request) {
         Preferences prefs;
         prefs.begin("features", false);
-        bool sip_enabled = prefs.getBool("sip_enabled", true);
-        bool tr064_enabled = prefs.getBool("tr064_enabled", true);
-        bool http_cam_enabled = prefs.getBool("http_cam_enabled", true);
-        bool rtsp_enabled = prefs.getBool("rtsp_enabled", true);
+        bool sip_enabled = prefs.getBool(kFeatSipEnabledKey, true);
+        bool tr064_enabled = prefs.getBool(kFeatTr064EnabledKey, true);
+        bool http_cam_enabled = prefs.getBool(kFeatHttpCamEnabledKey, true);
+        bool rtsp_enabled = prefs.getBool(kFeatRtspEnabledKey, true);
+        uint8_t http_cam_max_clients = prefs.getUChar(kFeatHttpCamMaxClientsKey, 2);
+        String scrypted_source = prefs.getString(kFeatScryptedSourceKey,
+                                                 http_cam_enabled ? "http" : (rtsp_enabled ? "rtsp" : "http"));
+        bool scrypted_low_latency = prefs.getBool(kFeatScryptedLowLatencyKey, true);
+        bool scrypted_low_buffer = prefs.getBool(kFeatScryptedLowBufferKey, true);
+        bool scrypted_rtsp_udp = prefs.getBool(kFeatScryptedRtspUdpKey, false);
         bool mic_enabled = prefs.getBool(kFeatMicEnabledKey, false);
         bool mic_muted = prefs.getBool(kFeatMicMutedKey, false);
         uint8_t mic_sensitivity = prefs.getUChar(kFeatMicSensitivityKey, DEFAULT_MIC_SENSITIVITY);
@@ -795,6 +835,12 @@ void setup() {
         bool audio_out_muted = prefs.getBool(kFeatAudioOutMutedKey, false);
         uint8_t audio_out_volume = prefs.getUChar(kFeatAudioOutVolumeKey, DEFAULT_AUDIO_OUT_VOLUME);
         prefs.end();
+
+        if (http_cam_max_clients < 1) {
+          http_cam_max_clients = 1;
+        } else if (http_cam_max_clients > 4) {
+          http_cam_max_clients = 4;
+        }
 
         String page = R"rawliteral(
 <!DOCTYPE html>
@@ -857,7 +903,7 @@ void setup() {
                 </div>
                 <div class="info-item">
                     <span><strong>👥 Max MJPEG Clients</strong></span>
-                    <input type="number" id="http_cam_max_clients" min="1" max="4" value=")rawliteral" + String(httpCamMaxClients) + R"rawliteral(" style="width: 80px;">
+                    <input type="number" id="http_cam_max_clients" min="1" max="4" value=")rawliteral" + String(http_cam_max_clients) + R"rawliteral(" style="width: 80px;">
                 </div>
                 <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
                     Limit simultaneous HTTP stream clients (e.g., Scrypted + FRITZ!Box).
@@ -940,11 +986,11 @@ void setup() {
             <div class="info-grid">
                 <div class="info-item">
                     <span>HTTP MJPEG</span>
-                    <input type="radio" name="scrypted_source" id="scrypted_source_http" value="http" )rawliteral" + String(scryptedSource == "http" ? "checked" : "") + R"rawliteral(>
+                    <input type="radio" name="scrypted_source" id="scrypted_source_http" value="http" )rawliteral" + String(scrypted_source == "http" ? "checked" : "") + R"rawliteral(>
                 </div>
                 <div class="info-item">
                     <span>RTSP MJPEG</span>
-                    <input type="radio" name="scrypted_source" id="scrypted_source_rtsp" value="rtsp" )rawliteral" + String(scryptedSource == "rtsp" ? "checked" : "") + R"rawliteral(>
+                    <input type="radio" name="scrypted_source" id="scrypted_source_rtsp" value="rtsp" )rawliteral" + String(scrypted_source == "rtsp" ? "checked" : "") + R"rawliteral(>
                 </div>
             </div>
 
@@ -952,15 +998,15 @@ void setup() {
             <div class="info-grid">
                 <div class="info-item">
                     <span>Low latency (short GOP)</span>
-                    <input type="checkbox" id="scrypted_low_latency" )rawliteral" + String(scryptedLowLatency ? "checked" : "") + R"rawliteral(>
+                    <input type="checkbox" id="scrypted_low_latency" )rawliteral" + String(scrypted_low_latency ? "checked" : "") + R"rawliteral(>
                 </div>
                 <div class="info-item">
                     <span>Reduce input buffering</span>
-                    <input type="checkbox" id="scrypted_low_buffer" )rawliteral" + String(scryptedLowBuffer ? "checked" : "") + R"rawliteral(>
+                    <input type="checkbox" id="scrypted_low_buffer" )rawliteral" + String(scrypted_low_buffer ? "checked" : "") + R"rawliteral(>
                 </div>
                 <div class="info-item">
                     <span>Prefer RTSP UDP transport</span>
-                    <input type="checkbox" id="scrypted_rtsp_udp" )rawliteral" + String(scryptedRtspUdp ? "checked" : "") + R"rawliteral(>
+                    <input type="checkbox" id="scrypted_rtsp_udp" )rawliteral" + String(scrypted_rtsp_udp ? "checked" : "") + R"rawliteral(>
                 </div>
             </div>
 
@@ -1226,7 +1272,9 @@ void setup() {
 </body>
 </html>
 )rawliteral";
-        request->send(200, "text/html", page);
+        AsyncWebServerResponse *response = request->beginResponse(200, "text/html", page);
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
       });
 
       server.on("/tr064", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -1571,15 +1619,15 @@ void setup() {
 
           Preferences prefs;
           prefs.begin("features", false);
-          prefs.putBool("sip_enabled", sip_enabled);
-          prefs.putBool("tr064_enabled", tr064_enabled);
-          prefs.putBool("http_cam_enabled", http_cam_enabled);
-          prefs.putBool("rtsp_enabled", rtsp_enabled);
-          prefs.putUChar("http_cam_max_clients", http_cam_max_clients);
-          prefs.putString("scrypted_source", scrypted_source);
-          prefs.putBool("scrypted_low_latency", scrypted_low_latency);
-          prefs.putBool("scrypted_low_buffer", scrypted_low_buffer);
-          prefs.putBool("scrypted_rtsp_udp", scrypted_rtsp_udp);
+          prefs.putBool(kFeatSipEnabledKey, sip_enabled);
+          prefs.putBool(kFeatTr064EnabledKey, tr064_enabled);
+          prefs.putBool(kFeatHttpCamEnabledKey, http_cam_enabled);
+          prefs.putBool(kFeatRtspEnabledKey, rtsp_enabled);
+          prefs.putUChar(kFeatHttpCamMaxClientsKey, http_cam_max_clients);
+          prefs.putString(kFeatScryptedSourceKey, scrypted_source);
+          prefs.putBool(kFeatScryptedLowLatencyKey, scrypted_low_latency);
+          prefs.putBool(kFeatScryptedLowBufferKey, scrypted_low_buffer);
+          prefs.putBool(kFeatScryptedRtspUdpKey, scrypted_rtsp_udp);
           prefs.putBool(kFeatMicEnabledKey, mic_enabled);
           prefs.putBool(kFeatMicMutedKey, mic_muted);
           prefs.putUChar(kFeatMicSensitivityKey, static_cast<uint8_t>(mic_sensitivity));
