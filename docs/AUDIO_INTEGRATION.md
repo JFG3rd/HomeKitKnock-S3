@@ -25,7 +25,7 @@ This document outlines the plan to integrate the Seeed XIAO ESP32-S3 Sense onboa
   - **BCLK**: GPIO7 (D8 / A8 / SCK)
   - **LRCLK/WS**: GPIO8 (D9 / A9 / MISO)
   - **DIN**: GPIO9 (D10 / A10 / MOSI)
-  - **SD/EN**: tie to 3V3 (always on) or use GPIO1 (D0) for mute control
+  - **SC**: tie to 3V3 (always on)
 
 **Notes**:
 - GPIO7/8/9 are free on the XIAO ESP32-S3 Sense and do not overlap the camera pin map in `include/camera_pins.h`.

@@ -31,4 +31,7 @@ void clearEventLog();
 // Convert a LogLevel to a CSS-friendly string label.
 const char* logLevelToString(LogLevel level);
 
+// Sync time from NTP with configured timezone.
+void syncTimeFromNTP(const String &timezone);
+
 #endif // LOGGER_H

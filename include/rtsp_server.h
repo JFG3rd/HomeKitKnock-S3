@@ -29,6 +29,9 @@ String getRtspUrl();
 // Get number of active RTSP sessions
 int getRtspActiveSessionCount();
 
+// Count of RTSP UDP endPacket failures (video + audio).
+uint32_t getRtspUdpEndPacketFailCount();
+
 // Allow or disallow RTSP UDP sessions (TCP interleaved still allowed).
 void setRtspAllowUdp(bool allow);
 

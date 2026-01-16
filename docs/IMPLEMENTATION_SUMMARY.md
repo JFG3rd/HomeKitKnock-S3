@@ -89,7 +89,7 @@ platformio device monitor
 - Enable HomeKit
 
 ### 5. Test
-- Press physical button (GPIO1)
+- Press physical button (GPIO4)
 - OR visit http://DEVICE_IP/ring/sip
 - Phones should ring, HomeKit notification appears
 

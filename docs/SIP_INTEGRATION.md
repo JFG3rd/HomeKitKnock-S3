@@ -49,7 +49,7 @@ Integrated SIP client functionality into the ESP32-S3 doorbell to ring FRITZ!Box
   - `sip_password` - SIP password
   - `sip_displayname` - Caller ID name (default: "Doorbell")
   - `sip_target` - Target number (default: "**610")
-  - `scrypted_webhook` - Scrypted doorbell webhook URL (optional)
+- Scrypted doorbell webhook stored in the "features" namespace (configured on `/setup`)
 
 ## Setup Instructions
 
@@ -77,6 +77,7 @@ Integrated SIP client functionality into the ESP32-S3 doorbell to ring FRITZ!Box
      - `**9` + extension to ring specific phone
 5. Click **"💾 Save"**
 6. Test with **"🔔 Test SIP Ring"** button
+7. If using Scrypted HomeKit, set the doorbell webhook on `http://<ESP32-IP>/setup`
 
 ### 3. Verify Registration
 - Check FRITZ!Box → Telefonie → Telefoniegeräte

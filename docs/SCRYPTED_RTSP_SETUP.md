@@ -233,8 +233,8 @@ Configure ESP32 to trigger the Scrypted doorbell webhook from the web UI:
 1. In Scrypted, open your doorbell device
 2. Find the **"Webhook URL"** (usually under Advanced settings)
 3. Copy the URL (looks like: `http://scrypted-ip:11080/endpoint/<id>/public/`)
-4. Open `http://<ESP32-IP>/sip` and paste it into **Doorbell Webhook URL**
-5. Save and press the doorbell button to verify HomeKit notifications
+4. Open `http://<ESP32-IP>/setup` and paste it into **Doorbell Webhook (HomeKit)**
+5. Save and press the doorbell button or use **HomeKit Test Gong** to verify notifications
 
 ### Option 2: Motion Detection in Scrypted
 

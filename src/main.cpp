@@ -45,9 +45,11 @@ static const char *kFeatHttpCamEnabledKey = "http_en";
 static const char *kFeatRtspEnabledKey = "rtsp_en";
 static const char *kFeatHttpCamMaxClientsKey = "http_max";
 static const char *kFeatScryptedSourceKey = "scr_src";
+static const char *kFeatScryptedWebhookKey = "scr_hook";
 static const char *kFeatScryptedLowLatencyKey = "scr_lat";
 static const char *kFeatScryptedLowBufferKey = "scr_buf";
 static const char *kFeatScryptedRtspUdpKey = "scr_udp";
+static const char *kFeatTimezoneKey = "tz";
 
 // Feature toggles (loaded once at boot, updated on save)
 bool sipEnabled = true;
@@ -56,6 +58,7 @@ bool httpCamEnabled = true;
 bool rtspEnabled = true;
 uint8_t httpCamMaxClients = 2;
 String scryptedSource = "http";
+String scryptedWebhook = "";
 bool scryptedLowLatency = true;
 bool scryptedLowBuffer = true;
 bool scryptedRtspUdp = false;
@@ -65,7 +68,7 @@ uint8_t micSensitivity = DEFAULT_MIC_SENSITIVITY;
 bool audioOutEnabled = true;
 bool audioOutMuted = false;
 uint8_t audioOutVolume = DEFAULT_AUDIO_OUT_VOLUME;
-
+String timezone = "PST8PDT,M3.2.0,M11.1.0";
 bool lastButtonPressed = false;
 unsigned long lastButtonChangeMs = 0;
 
@@ -104,6 +107,55 @@ static void writeWavHeader(AsyncResponseStream *response,
   response->write(reinterpret_cast<const uint8_t *>(&bitsPerSample), 2);
   response->write(reinterpret_cast<const uint8_t *>("data"), 4);
   response->write(reinterpret_cast<const uint8_t *>(&dataBytes), 4);
+}
+
+static void setStatusLed(bool on) {
+  digitalWrite(STATUS_LED_PIN, STATUS_LED_ACTIVE_LOW ? !on : on);
+}
+
+static void updateStatusLed() {
+  static bool lastReady = false;
+  bool ready = (WiFi.status() == WL_CONNECTED) && !isAPModeActive();
+  if (ready != lastReady) {
+    setStatusLed(ready);
+    lastReady = ready;
+  }
+}
+
+static void triggerDoorbellEvent(bool includeSip) {
+  // Sequence: local gong first, then external notifications.
+  playGongAsync();
+
+  // Trigger Scrypted doorbell event (HomeKit notification).
+  if (!scryptedWebhook.isEmpty()) {
+    HTTPClient http;
+    http.begin(scryptedWebhook);
+    http.setTimeout(2000);
+    int httpCode = http.GET();
+    http.end();
+
+    if (httpCode > 0) {
+      logEvent(LOG_INFO, "🔔 Scrypted webhook triggered (HomeKit notification)");
+    } else {
+      logEvent(LOG_WARN, "⚠️ Scrypted webhook failed");
+    }
+  }
+
+  if (!includeSip) {
+    logEvent(LOG_INFO, "ℹ️ SIP skipped for HomeKit test");
+    return;
+  }
+
+  // Ring FRITZ!Box internal phones (only if SIP enabled).
+  if (sipEnabled) {
+    if (triggerSipRing(sipConfig)) {
+      logEvent(LOG_INFO, "📞 FRITZ!Box ring triggered via SIP");
+    } else {
+      logEvent(LOG_WARN, "⚠️ SIP ring failed - check SIP configuration");
+    }
+  } else {
+    logEvent(LOG_INFO, "ℹ️ SIP disabled - skipping phone ring");
+  }
 }
 
 void setup() {
@@ -183,6 +235,17 @@ void setup() {
   migrateBoolPref(kFeatTr064EnabledKey, "tr064_enabled", true);
   migrateBoolPref(kFeatRtspEnabledKey, "rtsp_enabled", true);
   migrateStringPref(kFeatScryptedSourceKey, "scrypted_source", "http");
+  if (!featPrefs.isKey(kFeatScryptedWebhookKey)) {
+    Preferences sipPrefs;
+    if (sipPrefs.begin("sip", true)) {
+      String legacyWebhook = sipPrefs.getString("scrypted_webhook", "");
+      sipPrefs.end();
+      if (!legacyWebhook.isEmpty()) {
+        featPrefs.putString(kFeatScryptedWebhookKey, legacyWebhook);
+        logEvent(LOG_INFO, "✅ Migrated Scrypted webhook from SIP settings");
+      }
+    }
+  }
   if (featurePrefsMigrated) {
     logEvent(LOG_INFO, "✅ Migrated legacy feature keys");
   }
@@ -212,6 +275,7 @@ void setup() {
   ensureBoolPref(kFeatHttpCamEnabledKey, true);
   ensureBoolPref(kFeatRtspEnabledKey, true);
   ensureUCharPref(kFeatHttpCamMaxClientsKey, 2);
+  ensureStringPref(kFeatScryptedWebhookKey, "");
   ensureBoolPref(kFeatScryptedLowLatencyKey, true);
   ensureBoolPref(kFeatScryptedLowBufferKey, true);
   ensureBoolPref(kFeatScryptedRtspUdpKey, false);
@@ -221,7 +285,7 @@ void setup() {
   ensureBoolPref(kFeatAudioOutEnabledKey, true);
   ensureBoolPref(kFeatAudioOutMutedKey, false);
   ensureUCharPref(kFeatAudioOutVolumeKey, DEFAULT_AUDIO_OUT_VOLUME);
-
+  ensureStringPref(kFeatTimezoneKey, "PST8PDT,M3.2.0,M11.1.0");  // Default: Pacific Time with auto DST
   bool httpEnabledPref = featPrefs.getBool(kFeatHttpCamEnabledKey, true);
   bool rtspEnabledPref = featPrefs.getBool(kFeatRtspEnabledKey, true);
   if (!featPrefs.isKey(kFeatScryptedSourceKey)) {
@@ -239,6 +303,7 @@ void setup() {
   rtspEnabled = featPrefs.getBool(kFeatRtspEnabledKey, true);
   httpCamMaxClients = featPrefs.getUChar(kFeatHttpCamMaxClientsKey, 2);
   scryptedSource = featPrefs.getString(kFeatScryptedSourceKey, httpCamEnabled ? "http" : "rtsp");
+  scryptedWebhook = featPrefs.getString(kFeatScryptedWebhookKey, "");
   scryptedLowLatency = featPrefs.getBool(kFeatScryptedLowLatencyKey, true);
   scryptedLowBuffer = featPrefs.getBool(kFeatScryptedLowBufferKey, true);
   scryptedRtspUdp = featPrefs.getBool(kFeatScryptedRtspUdpKey, false);
@@ -260,6 +325,10 @@ void setup() {
   setRtspAllowUdp(scryptedRtspUdp);
   #endif
   configureAudio(micEnabled, micMuted, micSensitivity, audioOutEnabled, audioOutMuted, audioOutVolume);
+
+  // Initialize status LED (off until WiFi is ready).
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  setStatusLed(false);
 
   // Configure doorbell GPIO based on active-low setting.
   pinMode(DOORBELL_BUTTON_PIN, DOORBELL_BUTTON_ACTIVE_LOW ? INPUT_PULLUP : INPUT);
@@ -290,6 +359,9 @@ void setup() {
     if (WiFi.status() == WL_CONNECTED) {
       logEvent(LOG_INFO, "✅ Connected to WiFi successfully!");
       
+      // Sync time via NTP for accurate event logging.
+      // Sync time from NTP for timestamped logs.
+      syncTimeFromNTP(timezone);
       // Initialize SIP client and send initial REGISTER only when enabled.
       if (sipEnabled) {
         if (initSipClient()) {
@@ -434,36 +506,33 @@ void setup() {
             </div>
             <a class="button" href="/sipDebug" target="_blank">🐛 Debug JSON</a>
         </div>
-    </div>
 
-    <div class="logs-grid">
-        <div>
-            <h3 style="text-align: center; margin-bottom: 10px;">📹 Camera Logs</h3>
-            <div class="log-container log-size-md" id="logCamera"></div>
+        <!-- Metrics Card -->
+        <div class="container card">
+            <h3>📈 Metrics</h3>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span class="info-label">RTSP Sessions:</span>
+                    <span class="info-value" id="metricRtspSessions">--</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">HTTP Clients:</span>
+                    <span class="info-value" id="metricHttpClients">--</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">RTSP UDP endPacket fails:</span>
+                    <span class="info-value" id="metricRtspUdpFails">--</span>
+                </div>
+            </div>
+            <hr>
+            <div class="button-row">
+                <a class="button" href="/logs/camera">📹 Camera Logs</a>
+                <a class="button" href="/logs/doorbell">☎️ Doorbell Logs</a>
+            </div>
         </div>
-        <div>
-            <h3 style="text-align: center; margin-bottom: 10px;">☎️ Doorbell Logs</h3>
-            <div class="log-container log-size-md" id="logDoorbell"></div>
-        </div>
-    </div>
-    
-    <div class="button-row log-actions">
-        <label style="display: flex; align-items: center; gap: 8px;">
-            <span>Log font size</span>
-            <select id="logFontSize">
-                <option value="sm">Small</option>
-                <option value="md" selected>Medium</option>
-                <option value="lg">Large</option>
-            </select>
-        </label>
-        <button class="button danger-btn" onclick="clearLog()">🧹 Clear Log</button>
-        <button class="button" onclick="copyLog()">📋 Copy Log to Clipboard</button>
     </div>
 
     <script>
-        const logCameraEl = document.getElementById("logCamera");
-        const logDoorbellEl = document.getElementById("logDoorbell");
-        const logFontSizeEl = document.getElementById("logFontSize");
         const statusEl = document.getElementById("cameraStatus");
         const trStatusEl = document.getElementById("tr064Status");
         const darkToggle = document.getElementById("darkModeToggle");
@@ -471,81 +540,10 @@ void setup() {
         const uptimeEl = document.getElementById("uptime");
         const wifiConnectedEl = document.getElementById("wifiConnected");
         const streamStatusEl = document.getElementById("streamStatus");
+        const metricRtspSessionsEl = document.getElementById("metricRtspSessions");
+        const metricHttpClientsEl = document.getElementById("metricHttpClients");
+        const metricRtspUdpFailsEl = document.getElementById("metricRtspUdpFails");
         const wifiConnectTime = Date.now();
-        let lastEventId = 0;
-
-        // Categorize log messages by keywords
-        function isCameraLog(message) {
-            const cameraKeywords = ["Camera", "RTSP", "HTTP", "Stream", "JPEG", "📹", "🎥", "📡", "🔌", "▶️", "🛑", "📴", "⏱️"];
-            return cameraKeywords.some(kw => message.includes(kw));
-        }
-
-        function isDoorbellLog(message) {
-            const doorbellKeywords = ["SIP", "TR-064", "FRITZ", "Ring", "Doorbell", "☎️", "📞", "🔔", "🔐"];
-            return doorbellKeywords.some(kw => message.includes(kw));
-        }
-
-        function addLog(message, level = "info") {
-            const entry = document.createElement("div");
-            entry.className = `log-entry ${level}`;
-            const ts = new Date().toLocaleTimeString();
-            entry.textContent = `[${ts}] ${message}`;
-            
-            // Route to appropriate log container
-            if (isCameraLog(message)) {
-                logCameraEl.prepend(entry.cloneNode(true));
-            } else if (isDoorbellLog(message)) {
-                logDoorbellEl.prepend(entry.cloneNode(true));
-            } else {
-                // System/general logs go to both
-                logCameraEl.prepend(entry.cloneNode(true));
-                logDoorbellEl.prepend(entry);
-            }
-        }
-
-        function applyLogFontSize(size) {
-            const sizes = ["log-size-sm", "log-size-md", "log-size-lg"];
-            sizes.forEach(cls => {
-                logCameraEl.classList.remove(cls);
-                logDoorbellEl.classList.remove(cls);
-            });
-            const cls = `log-size-${size}`;
-            logCameraEl.classList.add(cls);
-            logDoorbellEl.classList.add(cls);
-            localStorage.setItem("logFontSize", size);
-        }
-
-        function clearLog() {
-            fetch("/clearLog", { method: "POST" })
-                .then(r => r.text())
-                .then(() => {
-                    // Reset both the UI list and the event log cursor so new entries show up again.
-                    logCameraEl.innerHTML = "";
-                    logDoorbellEl.innerHTML = "";
-                    lastEventId = 0;
-                })
-                .catch(() => addLog("Failed to clear log", "error"));
-        }
-
-        function copyLog() {
-            fetch("/eventLog?since=0")
-                .then(r => r.json())
-                .then(data => {
-                    const entries = (data.entries || []).map(entry => {
-                        const level = (entry.level || "info").toUpperCase();
-                        return `[${entry.id}] [${level}] ${entry.message}`;
-                    });
-                    const text = entries.join("\n");
-                    if (!text.length) {
-                        addLog("Log is empty, nothing to copy", "warn");
-                        return;
-                    }
-                    return navigator.clipboard.writeText(text)
-                        .then(() => addLog("Log copied to clipboard", "info"))
-                        .catch(() => addLog("Clipboard copy failed", "error"));
-                })
-                .catch(() => addLog("Log fetch failed for clipboard copy", "error"));
-        }
 
         function setDarkMode(enabled) {
             document.body.classList.toggle("dark-mode", enabled);
@@ -560,7 +558,6 @@ void setup() {
 
         darkToggle.addEventListener("change", () => {
             setDarkMode(darkToggle.checked);
-            addLog(`Dark mode ${darkToggle.checked ? "enabled" : "disabled"}`);
         });
 
         function fetchStatus() {
@@ -571,7 +568,6 @@ void setup() {
                 })
                 .catch(() => {
                     statusEl.innerHTML = "<strong>Camera:</strong> unavailable";
-                    addLog("Camera status unavailable", "warn");
                 });
         }
 
@@ -588,6 +584,13 @@ void setup() {
             fetch("/cameraStreamInfo")
                 .then(r => r.json())
                 .then(data => {
+                    const rtspSessions = data.rtsp_sessions || 0;
+                    const httpClients = data.clients || 0;
+                    const rtspUdpFails = data.rtsp_udp_endpacket_fail || 0;
+                    metricRtspSessionsEl.textContent = rtspSessions;
+                    metricHttpClientsEl.textContent = httpClients;
+                    metricRtspUdpFailsEl.textContent = rtspUdpFails;
+
                     if (!data.running) {
                         streamStatusEl.innerHTML = "<strong>Stream:</strong> server stopped";
                         return;
@@ -608,7 +611,6 @@ void setup() {
                     }
                     
                     // Build RTSP stream status
-                    const rtspSessions = data.rtsp_sessions || 0;
                     const rtspStatus = rtspSessions > 0 
                         ? `RTSP: ${rtspSessions} session(s)` 
                         : "RTSP: no sessions";
@@ -617,22 +619,10 @@ void setup() {
                 })
                 .catch(() => {
                     streamStatusEl.innerHTML = "<strong>Stream:</strong> unavailable";
+                    metricRtspSessionsEl.textContent = "--";
+                    metricHttpClientsEl.textContent = "--";
+                    metricRtspUdpFailsEl.textContent = "--";
                 });
-        }
-
-        function fetchEventLog() {
-            fetch(`/eventLog?since=${lastEventId}`)
-                .then(r => r.json())
-                .then(data => {
-                    if (!data.entries) return;
-                    data.entries.forEach(entry => {
-                        addLog(entry.message, entry.level || "info");
-                        if (entry.id > lastEventId) {
-                            lastEventId = entry.id;
-                        }
-                    });
-                })
-                .catch(() => addLog("Event log fetch failed", "warn"));
         }
 
         function formatUptime(seconds) {
@@ -675,26 +665,28 @@ void setup() {
                     rssiEl.textContent = "--";
                     uptimeEl.textContent = "--";
                     wifiConnectedEl.textContent = "--";
-                    addLog("Device status unavailable", "warn");
                 });
         }
 
-        function testRingSip() {
-            fetch("/ring/sip")
-                .then(async (r) => {
-                    const text = await r.text();
-                    if (!r.ok) {
-                        addLog(text || "SIP Ring failed", "error");
-                        return fetch("/sipDebug")
-                            .then(d => d.json())
-                            .then(info => {
-                                addLog(`SIP debug: user=${info.sip_user} target=${info.sip_target} has_sip_config=${info.has_sip_config}`, "warn");
-                            })
-                            .catch(() => addLog("SIP debug unavailable", "warn"));
+        async function testRingSip() {
+            try {
+                const response = await fetch("/ring/sip");
+                const text = await response.text();
+                if (!response.ok) {
+                    let details = text || "SIP Ring failed";
+                    try {
+                        const info = await fetch("/sipDebug").then(r => r.json());
+                        details += `\nSIP debug: user=${info.sip_user} target=${info.sip_target} has_sip_config=${info.has_sip_config}`;
+                    } catch (err) {
+                        details += "\nSIP debug unavailable";
                     }
-                    addLog(text || "SIP Ring triggered", "info");
-                })
-                .catch(() => addLog("Failed to trigger SIP ring", "error"));
+                    alert(details);
+                    return;
+                }
+                alert(text || "SIP Ring triggered");
+            } catch (err) {
+                alert("Failed to trigger SIP ring");
+            }
         }
 
         function fetchSipStatus() {
@@ -706,7 +698,6 @@ void setup() {
                 })
                 .catch(() => {
                     trStatusEl.innerHTML = "<strong>Status:</strong> unavailable";
-                    addLog("SIP status unavailable", "warn");
                 });
         }
 
@@ -714,18 +705,291 @@ void setup() {
         fetchStreamInfo();
         fetchDeviceStatus();
         fetchSipStatus();
-        fetchEventLog();
         setInterval(fetchDeviceStatus, 5000);
         setInterval(fetchSipStatus, 10000);
         setInterval(fetchStreamInfo, 3000);
-        setInterval(fetchEventLog, 2000);
+    </script>
+</body>
+</html>
+)rawliteral";
+        AsyncWebServerResponse *response = request->beginResponse(200, "text/html", page);
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
+      });
+
+      server.on("/logs/camera", HTTP_GET, [](AsyncWebServerRequest *request) {
+        String page = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Camera Logs</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body class="full-width-page">
+    <div class="dark-mode-toggle">
+        <label class="switch">
+            <input type="checkbox" id="darkModeToggle">
+            <span class="slider"></span>
+        </label>
+        <span>Dark Mode</span>
+    </div>
+
+    <div class="header-container">
+        <h1 class="main-title">📹 Camera Logs</h1>
+        <p>Streaming and camera subsystem events.</p>
+    </div>
+
+    <div class="log-container log-size-md" id="logContainer"></div>
+
+    <div class="button-row log-actions">
+        <label style="display: flex; align-items: center; gap: 8px;">
+            <span>Log font size</span>
+            <select id="logFontSize">
+                <option value="sm">Small</option>
+                <option value="md" selected>Medium</option>
+                <option value="lg">Large</option>
+            </select>
+        </label>
+        <button class="button danger-btn" onclick="clearLog()">🧹 Clear Log</button>
+        <button class="button" onclick="copyLog()">📋 Copy Log to Clipboard</button>
+        <a class="button danger-btn" href="/">Back</a>
+    </div>
+
+    <script>
+        const logContainerEl = document.getElementById("logContainer");
+        const logFontSizeEl = document.getElementById("logFontSize");
+        const darkToggle = document.getElementById("darkModeToggle");
+        let lastEventId = 0;
+
+        const cameraKeywords = ["Camera", "RTSP", "HTTP", "Stream", "JPEG", "📹", "🎥", "📡", "🔌", "▶️", "🛑", "📴", "⏱️"];
+        function matchesCameraLog(message) {
+            return cameraKeywords.some(kw => message.includes(kw));
+        }
+
+        function addLog(message, level = "info", formattedTime = null) {
+            const entry = document.createElement("div");
+            entry.className = `log-entry ${level}`;
+            const ts = formattedTime || new Date().toLocaleTimeString();
+            entry.textContent = `${ts} ${message}`;
+            logContainerEl.prepend(entry);
+        }
+
+        function applyLogFontSize(size) {
+            const sizes = ["log-size-sm", "log-size-md", "log-size-lg"];
+            sizes.forEach(cls => logContainerEl.classList.remove(cls));
+            const cls = `log-size-${size}`;
+            logContainerEl.classList.add(cls);
+            localStorage.setItem("logFontSize", size);
+        }
+
+        function clearLog() {
+            fetch("/clearLog", { method: "POST" })
+                .then(r => r.text())
+                .then(() => {
+                    logContainerEl.innerHTML = "";
+                    lastEventId = 0;
+                })
+                .catch(() => alert("Failed to clear log"));
+        }
+
+        function copyLog() {
+            fetch("/eventLog?since=0")
+                .then(r => r.json())
+                .then(data => {
+                    const entries = (data.entries || [])
+                        .filter(entry => matchesCameraLog(entry.message || ""))
+                        .map(entry => {
+                            const level = (entry.level || "info").toUpperCase();
+                            return `${entry.time || ""} [${level}] ${entry.message}`;
+                        });
+                    const text = entries.join("\n");
+                    if (!text.length) {
+                        alert("Log is empty, nothing to copy");
+                        return;
+                    }
+                    return navigator.clipboard.writeText(text)
+                        .then(() => alert("Log copied to clipboard"))
+                        .catch(() => alert("Clipboard copy failed"));
+                })
+                .catch(() => alert("Log fetch failed for clipboard copy"));
+        }
+
+        function setDarkMode(enabled) {
+            document.body.classList.toggle("dark-mode", enabled);
+            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        }
+        const savedDarkMode = localStorage.getItem("darkMode");
+        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
+        darkToggle.checked = darkModeEnabled;
+        setDarkMode(darkModeEnabled);
+        darkToggle.addEventListener("change", () => setDarkMode(darkToggle.checked));
+
+        function fetchEventLog() {
+            fetch(`/eventLog?since=${lastEventId}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.entries) return;
+                    data.entries.forEach(entry => {
+                        if (matchesCameraLog(entry.message || "")) {
+                            addLog(entry.message, entry.level || "info", entry.time || null);
+                        }
+                        if (entry.id > lastEventId) {
+                            lastEventId = entry.id;
+                        }
+                    });
+                });
+        }
 
         const savedLogFontSize = localStorage.getItem("logFontSize") || "md";
         logFontSizeEl.value = savedLogFontSize;
         applyLogFontSize(savedLogFontSize);
         logFontSizeEl.addEventListener("change", (e) => applyLogFontSize(e.target.value));
 
-        addLog("UI loaded", "info");
+        fetchEventLog();
+        setInterval(fetchEventLog, 2000);
+    </script>
+</body>
+</html>
+)rawliteral";
+        AsyncWebServerResponse *response = request->beginResponse(200, "text/html", page);
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
+      });
+
+      server.on("/logs/doorbell", HTTP_GET, [](AsyncWebServerRequest *request) {
+        String page = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Doorbell Logs</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body class="full-width-page">
+    <div class="dark-mode-toggle">
+        <label class="switch">
+            <input type="checkbox" id="darkModeToggle">
+            <span class="slider"></span>
+        </label>
+        <span>Dark Mode</span>
+    </div>
+
+    <div class="header-container">
+        <h1 class="main-title">☎️ Doorbell Logs</h1>
+        <p>Ring events, SIP, TR-064, and webhook activity.</p>
+    </div>
+
+    <div class="log-container log-size-md" id="logContainer"></div>
+
+    <div class="button-row log-actions">
+        <label style="display: flex; align-items: center; gap: 8px;">
+            <span>Log font size</span>
+            <select id="logFontSize">
+                <option value="sm">Small</option>
+                <option value="md" selected>Medium</option>
+                <option value="lg">Large</option>
+            </select>
+        </label>
+        <button class="button danger-btn" onclick="clearLog()">🧹 Clear Log</button>
+        <button class="button" onclick="copyLog()">📋 Copy Log to Clipboard</button>
+        <a class="button danger-btn" href="/">Back</a>
+    </div>
+
+    <script>
+        const logContainerEl = document.getElementById("logContainer");
+        const logFontSizeEl = document.getElementById("logFontSize");
+        const darkToggle = document.getElementById("darkModeToggle");
+        let lastEventId = 0;
+
+        const doorbellKeywords = ["SIP", "TR-064", "FRITZ", "Ring", "Doorbell", "☎️", "📞", "🔔", "🔐"];
+        function matchesDoorbellLog(message) {
+            return doorbellKeywords.some(kw => message.includes(kw));
+        }
+
+        function addLog(message, level = "info", formattedTime = null) {
+            const entry = document.createElement("div");
+            entry.className = `log-entry ${level}`;
+            const ts = formattedTime || new Date().toLocaleTimeString();
+            entry.textContent = `${ts} ${message}`;
+            logContainerEl.prepend(entry);
+        }
+
+        function applyLogFontSize(size) {
+            const sizes = ["log-size-sm", "log-size-md", "log-size-lg"];
+            sizes.forEach(cls => logContainerEl.classList.remove(cls));
+            const cls = `log-size-${size}`;
+            logContainerEl.classList.add(cls);
+            localStorage.setItem("logFontSize", size);
+        }
+
+        function clearLog() {
+            fetch("/clearLog", { method: "POST" })
+                .then(r => r.text())
+                .then(() => {
+                    logContainerEl.innerHTML = "";
+                    lastEventId = 0;
+                })
+                .catch(() => alert("Failed to clear log"));
+        }
+
+        function copyLog() {
+            fetch("/eventLog?since=0")
+                .then(r => r.json())
+                .then(data => {
+                    const entries = (data.entries || [])
+                        .filter(entry => matchesDoorbellLog(entry.message || ""))
+                        .map(entry => {
+                            const level = (entry.level || "info").toUpperCase();
+                            return `${entry.time || ""} [${level}] ${entry.message}`;
+                        });
+                    const text = entries.join("\n");
+                    if (!text.length) {
+                        alert("Log is empty, nothing to copy");
+                        return;
+                    }
+                    return navigator.clipboard.writeText(text)
+                        .then(() => alert("Log copied to clipboard"))
+                        .catch(() => alert("Clipboard copy failed"));
+                })
+                .catch(() => alert("Log fetch failed for clipboard copy"));
+        }
+
+        function setDarkMode(enabled) {
+            document.body.classList.toggle("dark-mode", enabled);
+            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        }
+        const savedDarkMode = localStorage.getItem("darkMode");
+        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
+        darkToggle.checked = darkModeEnabled;
+        setDarkMode(darkModeEnabled);
+        darkToggle.addEventListener("change", () => setDarkMode(darkToggle.checked));
+
+        function fetchEventLog() {
+            fetch(`/eventLog?since=${lastEventId}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.entries) return;
+                    data.entries.forEach(entry => {
+                        if (matchesDoorbellLog(entry.message || "")) {
+                            addLog(entry.message, entry.level || "info", entry.time || null);
+                        }
+                        if (entry.id > lastEventId) {
+                            lastEventId = entry.id;
+                        }
+                    });
+                });
+        }
+
+        const savedLogFontSize = localStorage.getItem("logFontSize") || "md";
+        logFontSizeEl.value = savedLogFontSize;
+        applyLogFontSize(savedLogFontSize);
+        logFontSizeEl.addEventListener("change", (e) => applyLogFontSize(e.target.value));
+
+        fetchEventLog();
+        setInterval(fetchEventLog, 2000);
     </script>
 </body>
 </html>
@@ -825,6 +1089,7 @@ void setup() {
         uint8_t http_cam_max_clients = prefs.getUChar(kFeatHttpCamMaxClientsKey, 2);
         String scrypted_source = prefs.getString(kFeatScryptedSourceKey,
                                                  http_cam_enabled ? "http" : (rtsp_enabled ? "rtsp" : "http"));
+        String scrypted_webhook = prefs.getString(kFeatScryptedWebhookKey, "");
         bool scrypted_low_latency = prefs.getBool(kFeatScryptedLowLatencyKey, true);
         bool scrypted_low_buffer = prefs.getBool(kFeatScryptedLowBufferKey, true);
         bool scrypted_rtsp_udp = prefs.getBool(kFeatScryptedRtspUdpKey, false);
@@ -834,6 +1099,7 @@ void setup() {
         bool audio_out_enabled = prefs.getBool(kFeatAudioOutEnabledKey, true);
         bool audio_out_muted = prefs.getBool(kFeatAudioOutMutedKey, false);
         uint8_t audio_out_volume = prefs.getUChar(kFeatAudioOutVolumeKey, DEFAULT_AUDIO_OUT_VOLUME);
+        String timezone = prefs.getString(kFeatTimezoneKey, "PST8PDT,M3.2.0,M11.1.0");
         prefs.end();
 
         if (http_cam_max_clients < 1) {
@@ -869,6 +1135,30 @@ void setup() {
         <div class="container card setup-card">
             <h3>🔧 Core Features</h3>
             <div class="info-grid">
+                <div class="info-item">
+                    <span><strong>🌍 Timezone</strong></span>
+                </div>
+                <select id="timezone" style="grid-column: 1 / -1; margin-bottom: 12px;">
+                    <option value="PST8PDT,M3.2.0,M11.1.0">🇺🇸 Pacific Time (US & Canada)</option>
+                    <option value="MST7MDT,M3.2.0,M11.1.0">🇺🇸 Mountain Time (US & Canada)</option>
+                    <option value="CST6CDT,M3.2.0,M11.1.0">🇺🇸 Central Time (US & Canada)</option>
+                    <option value="EST5EDT,M3.2.0,M11.1.0">🇺🇸 Eastern Time (US & Canada)</option>
+                    <option value="AKST9AKDT,M3.2.0,M11.1.0">🇺🇸 Alaska Time</option>
+                    <option value="HST10">🇺🇸 Hawaii-Aleutian Time (No DST)</option>
+                    <option value="GMT0BST,M3.5.0/1,M10.5.0">🇬🇧 UK Time (GMT/BST)</option>
+                    <option value="CET-1CEST,M3.5.0,M10.5.0/3">🇪🇺 Central European Time</option>
+                    <option value="EET-2EEST,M3.5.0,M10.5.0/3">🇪🇺 Eastern European Time</option>
+                    <option value="WET0WEST,M3.5.0/1,M10.5.0">🇪🇺 Western European Time</option>
+                    <option value="JST-9">🇯🇵 Japan Standard Time (No DST)</option>
+                    <option value="CST-8">🇨🇳 China Standard Time (No DST)</option>
+                    <option value="AEST-10AEDT,M10.1.0,M4.1.0/3">🇦🇺 Australian Eastern Time</option>
+                    <option value="ACST-9:30ACDT,M10.1.0,M4.1.0/3">🇦🇺 Australian Central Time</option>
+                    <option value="AWST-8">🇦🇺 Australian Western Time (No DST)</option>
+                    <option value="NZST-12NZDT,M9.5.0,M4.1.0/3">🇳🇿 New Zealand Time</option>
+                </select>
+                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666; grid-column: 1 / -1;">
+                    Automatically handles daylight saving time transitions for your region.
+                </div>
                 <div class="info-item">
                     <span><strong>☎️ SIP Phone Ringing</strong></span>
                     <label class="switch">
@@ -1028,6 +1318,15 @@ void setup() {
                 Preview mic capture at http://ESP32-IP/audio.wav (RTSP audio planned).
             </div>
 
+            <label style="margin-top: 12px;"><strong>Doorbell Webhook (HomeKit)</strong></label>
+            <input type="text" id="scrypted_webhook" value=")rawliteral" + scrypted_webhook + R"rawliteral(" placeholder="http://scrypted-ip:11080/endpoint/your-id/public/">
+            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                Get this from Scrypted doorbell device settings. Leave empty to disable HomeKit ring.
+            </div>
+            <div class="button-row" style="margin-top: 8px;">
+                <button class="button" onclick="testHomekitGong()">🔔 HomeKit Test Gong</button>
+            </div>
+
             <div class="flash-stats" style="margin-top: 12px;">
                 <strong>Recommended Source URL:</strong>
                 <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;" id="scrypted_source_url"></p>
@@ -1065,12 +1364,14 @@ void setup() {
 
         function saveFeatures() {
             const features = {
+                timezone: document.getElementById("timezone").value,
                 sip_enabled: document.getElementById("sip_enabled").checked,
                 tr064_enabled: document.getElementById("tr064_enabled").checked,
                 http_cam_enabled: document.getElementById("http_cam_enabled").checked,
                 rtsp_enabled: document.getElementById("rtsp_enabled").checked,
                 http_cam_max_clients: parseInt(document.getElementById("http_cam_max_clients").value || "2", 10),
                 scrypted_source: document.querySelector("input[name='scrypted_source']:checked")?.value || "http",
+                scrypted_webhook: document.getElementById("scrypted_webhook").value.trim(),
                 scrypted_low_latency: document.getElementById("scrypted_low_latency").checked,
                 scrypted_low_buffer: document.getElementById("scrypted_low_buffer").checked,
                 scrypted_rtsp_udp: document.getElementById("scrypted_rtsp_udp").checked,
@@ -1097,6 +1398,13 @@ void setup() {
                   setTimeout(() => window.location.reload(), 1000);
               })
               .catch(e => alert("Save failed: " + e));
+        }
+
+        function testHomekitGong() {
+            fetch("/ring/homekit")
+                .then(r => r.text())
+                .then(t => alert(t))
+                .catch(e => alert("HomeKit test failed: " + e));
         }
 
         const cameraSetupStatusEl = document.getElementById("cameraSetupStatus");
@@ -1264,10 +1572,14 @@ void setup() {
         document.getElementById("http_cam_enabled").addEventListener("change", updateScryptedUi);
         document.getElementById("mic_enabled").addEventListener("change", updateAudioUi);
         document.getElementById("audio_out_enabled").addEventListener("change", updateAudioUi);
+        // Set selected timezone
+        document.getElementById("timezone").value = ")rawliteral" + String(timezone) + R"rawliteral(";
 
         fetchCameraSetupStatus();
         updateScryptedUi();
         updateAudioUi();
+
+
     </script>
 </body>
 </html>
@@ -1398,7 +1710,6 @@ void setup() {
         String sip_password = prefs.getString("sip_password", "");
         String sip_displayname = prefs.getString("sip_displayname", "Doorbell");
         String sip_target = prefs.getString("sip_target", "**610");
-        String scrypted_webhook = prefs.getString("scrypted_webhook", "");
         prefs.end();
 
         String page = R"rawliteral(
@@ -1460,11 +1771,6 @@ void setup() {
         <label><strong>Target Number:</strong></label>
         <input type="text" id="sip_target" value=")rawliteral" + sip_target + R"rawliteral(" placeholder="e.g., **610">
 
-        <h3>🏠 Scrypted Integration (HomeKit)</h3>
-        <label><strong>Doorbell Webhook URL:</strong></label>
-        <input type="text" id="scrypted_webhook" value=")rawliteral" + scrypted_webhook + R"rawliteral(" placeholder="http://scrypted-ip:11080/endpoint/your-id/public/">
-        <p style="font-size: 0.9em; color: #666;">Get this from Scrypted doorbell device settings. Leave empty if not using Scrypted.</p>
-
         <div>
             <button class="button" onclick="saveSip()">💾 Save</button>
             <button class="button" onclick="testRingSip()">🔔 Test SIP Ring</button>
@@ -1492,7 +1798,6 @@ void setup() {
             let sip_password = document.getElementById("sip_password").value;
             let sip_displayname = document.getElementById("sip_displayname").value;
             let sip_target = document.getElementById("sip_target").value;
-            let scrypted_webhook = document.getElementById("scrypted_webhook").value;
 
             fetch("/saveSIP", {
                 method: "POST",
@@ -1501,8 +1806,7 @@ void setup() {
                     "sip_user": sip_user, 
                     "sip_password": sip_password, 
                     "sip_displayname": sip_displayname, 
-                    "sip_target": sip_target,
-                    "scrypted_webhook": scrypted_webhook
+                    "sip_target": sip_target
                 })
             }).then(r => r.text())
               .then(t => alert(t))
@@ -1550,7 +1854,9 @@ void setup() {
             request->send(400, "text/plain", "Invalid JSON");
             return;
           }
-
+          String tz = doc["timezone"].isNull()
+            ? timezone
+            : doc["timezone"].as<String>();
           bool sip_enabled = doc["sip_enabled"].as<bool>();
           bool tr064_enabled = doc["tr064_enabled"].as<bool>();
           bool http_cam_enabled = doc["http_cam_enabled"].as<bool>();
@@ -1566,6 +1872,10 @@ void setup() {
           String scrypted_source = doc["scrypted_source"].isNull()
             ? scryptedSource
             : doc["scrypted_source"].as<String>();
+          String scrypted_webhook = doc["scrypted_webhook"].isNull()
+            ? scryptedWebhook
+            : doc["scrypted_webhook"].as<String>();
+          scrypted_webhook.trim();
           bool scrypted_low_latency = doc["scrypted_low_latency"].isNull()
             ? scryptedLowLatency
             : doc["scrypted_low_latency"].as<bool>();
@@ -1625,6 +1935,7 @@ void setup() {
           prefs.putBool(kFeatRtspEnabledKey, rtsp_enabled);
           prefs.putUChar(kFeatHttpCamMaxClientsKey, http_cam_max_clients);
           prefs.putString(kFeatScryptedSourceKey, scrypted_source);
+          prefs.putString(kFeatScryptedWebhookKey, scrypted_webhook);
           prefs.putBool(kFeatScryptedLowLatencyKey, scrypted_low_latency);
           prefs.putBool(kFeatScryptedLowBufferKey, scrypted_low_buffer);
           prefs.putBool(kFeatScryptedRtspUdpKey, scrypted_rtsp_udp);
@@ -1634,6 +1945,7 @@ void setup() {
           prefs.putBool(kFeatAudioOutEnabledKey, audio_out_enabled);
           prefs.putBool(kFeatAudioOutMutedKey, audio_out_muted);
           prefs.putUChar(kFeatAudioOutVolumeKey, static_cast<uint8_t>(audio_out_volume));
+          prefs.putString(kFeatTimezoneKey, tz);
           prefs.end();
 
           // Update global variables
@@ -1643,6 +1955,7 @@ void setup() {
           rtspEnabled = rtsp_enabled;
           httpCamMaxClients = http_cam_max_clients;
           scryptedSource = scrypted_source;
+          scryptedWebhook = scrypted_webhook;
           scryptedLowLatency = scrypted_low_latency;
           scryptedLowBuffer = scrypted_low_buffer;
           scryptedRtspUdp = scrypted_rtsp_udp;
@@ -1652,18 +1965,21 @@ void setup() {
           audioOutEnabled = audio_out_enabled;
           audioOutMuted = audio_out_muted;
           audioOutVolume = static_cast<uint8_t>(audio_out_volume);
+          timezone = tz;
           #ifdef CAMERA
           setCameraStreamMaxClients(httpCamMaxClients);
           setRtspAllowUdp(scryptedRtspUdp);
           #endif
           configureAudio(micEnabled, micMuted, micSensitivity, audioOutEnabled, audioOutMuted, audioOutVolume);
 
-          String summary = "Feature settings saved: SIP=" + String(sip_enabled ? "on" : "off") +
+          String summary = "Feature settings saved: timezone=" + tz +
+                           " SIP=" + String(sip_enabled ? "on" : "off") +
                            " TR-064=" + String(tr064_enabled ? "on" : "off") +
                            " HTTP=" + String(http_cam_enabled ? "on" : "off") +
                            " RTSP=" + String(rtsp_enabled ? "on" : "off") +
                            " HTTP max clients=" + String(http_cam_max_clients) +
                            " Scrypted source=" + scrypted_source +
+                           " webhook=" + String(scrypted_webhook.isEmpty() ? "empty" : "set") +
                            " low-latency=" + String(scrypted_low_latency ? "on" : "off") +
                            " low-buffer=" + String(scrypted_low_buffer ? "on" : "off") +
                            " rtsp-udp=" + String(scrypted_rtsp_udp ? "on" : "off") +
@@ -1701,7 +2017,6 @@ void setup() {
           String sip_password = doc["sip_password"].as<String>();
           String sip_displayname = doc["sip_displayname"].as<String>();
           String sip_target = doc["sip_target"].as<String>();
-          String scrypted_webhook = doc["scrypted_webhook"].as<String>();
 
           Preferences prefs;
           prefs.begin("sip", false);
@@ -1710,7 +2025,6 @@ void setup() {
             prefs.remove("sip_password");
             prefs.remove("sip_displayname");
             prefs.remove("sip_target");
-            prefs.remove("scrypted_webhook");
             prefs.end();
             request->send(200, "text/plain", "SIP settings cleared");
             return;
@@ -1720,7 +2034,6 @@ void setup() {
           prefs.putString("sip_password", sip_password);
           prefs.putString("sip_displayname", sip_displayname);
           prefs.putString("sip_target", sip_target);
-          prefs.putString("scrypted_webhook", scrypted_webhook);
           prefs.end();
 
           // Reload config into global sipConfig
@@ -1813,7 +2126,8 @@ void setup() {
         json += "\"connected_ms\":" + String(connectedMs) + ",";
         json += "\"last_frame_age_ms\":" + String(lastFrameAgeMs) + ",";
         json += "\"clients_list\":" + clientsJson + ",";
-        json += "\"rtsp_sessions\":" + String(rtspSessions);
+        json += "\"rtsp_sessions\":" + String(rtspSessions) + ",";
+        json += "\"rtsp_udp_endpacket_fail\":" + String(getRtspUdpEndPacketFailCount());
         json += "}";
         request->send(200, "application/json", json);
       });
@@ -1869,6 +2183,15 @@ void setup() {
         } else {
           request->send(500, "text/plain", "SIP ring failed - check configuration");
         }
+      });
+
+      server.on("/ring/homekit", HTTP_GET, [](AsyncWebServerRequest *request) {
+        triggerDoorbellEvent(false);
+        if (scryptedWebhook.isEmpty()) {
+          request->send(200, "text/plain", "HomeKit test triggered (webhook not set)");
+          return;
+        }
+        request->send(200, "text/plain", "HomeKit gong triggered (no SIP)");
       });
 
       server.on("/forget", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -1935,34 +2258,7 @@ bool isDoorbellPressed() {
 }
 
 void handleDoorbellPress() {
-  // Sequence: local gong first, then external notifications.
-  playGongAsync();
-
-  // Trigger Scrypted doorbell event (HomeKit notification)
-  if (!sipConfig.scrypted_webhook.isEmpty()) {
-    HTTPClient http;
-    http.begin(sipConfig.scrypted_webhook);
-    http.setTimeout(2000); // 2 second timeout
-    int httpCode = http.GET();
-    http.end();
-    
-    if (httpCode > 0) {
-      logEvent(LOG_INFO, "🔔 Scrypted webhook triggered (HomeKit notification)");
-    } else {
-      logEvent(LOG_WARN, "⚠️ Scrypted webhook failed");
-    }
-  }
-  
-  // Ring FRITZ!Box internal phones (only if SIP enabled)
-  if (sipEnabled) {
-    if (triggerSipRing(sipConfig)) {
-      logEvent(LOG_INFO, "📞 FRITZ!Box ring triggered via SIP");
-    } else {
-      logEvent(LOG_WARN, "⚠️ SIP ring failed - check SIP configuration");
-    }
-  } else {
-    logEvent(LOG_INFO, "ℹ️ SIP disabled - skipping phone ring");
-  }
+  triggerDoorbellEvent(true);
 }
 
 void loop() {
@@ -1981,6 +2277,7 @@ void loop() {
   if (isAPModeActive()) {
     dnsServer.processNextRequest();
   }
+  updateStatusLed();
 
   #ifdef CAMERA
   if (cameraReady) {

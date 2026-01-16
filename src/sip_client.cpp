@@ -276,7 +276,6 @@ bool loadSipConfig(SipConfig &config) {
   config.sip_password = prefs.getString("sip_password", "");
   config.sip_displayname = prefs.getString("sip_displayname", "Doorbell");
   config.sip_target = prefs.getString("sip_target", "**610");
-  config.scrypted_webhook = prefs.getString("scrypted_webhook", "");
   
   prefs.end();
   return true;

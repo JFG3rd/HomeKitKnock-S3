@@ -95,6 +95,8 @@ static size_t findJpegScanData(const uint8_t* jpeg, size_t len, uint8_t &type, u
 // RTSP server configuration
 #define RTSP_PORT 8554
 
+static uint32_t rtspUdpEndPacketFailCount = 0;
+
 // RTSP session state
 struct RtspSession {
   WiFiClient client;
@@ -702,6 +704,7 @@ static void sendRtpJpegUdp(RtspSession* session, camera_fb_t* fb) {
     
     int result = session->rtpSocket.endPacket();
     if (result == 0) {
+      rtspUdpEndPacketFailCount++;
       logEvent(LOG_WARN, "⚠️ RTSP UDP endPacket failed");
       return;
     }
@@ -871,6 +874,7 @@ static void sendRtpAudio(RtspSession* session) {
     }
     int result = session->audioRtpSocket.endPacket();
     if (result == 0) {
+      rtspUdpEndPacketFailCount++;
       logEvent(LOG_WARN, "⚠️ RTSP audio UDP endPacket failed");
       return;
     }
@@ -978,6 +982,10 @@ int getRtspActiveSessionCount() {
     }
   }
   return count;
+}
+
+uint32_t getRtspUdpEndPacketFailCount() {
+  return rtspUdpEndPacketFailCount;
 }
 
 void setRtspAllowUdp(bool allow) {
@@ -1183,6 +1191,7 @@ void stopRtspServer() {}
 bool isRtspServerRunning() { return false; }
 bool isRtspTaskRunning() { return false; }
 String getRtspUrl() { return ""; }
+uint32_t getRtspUdpEndPacketFailCount() { return 0; }
 void setRtspAllowUdp(bool allow) { (void)allow; }
 void handleRtspClient() {}
 

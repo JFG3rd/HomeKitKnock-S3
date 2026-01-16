@@ -16,7 +16,6 @@ struct SipConfig {
   String sip_password;     // SIP password
   String sip_displayname;  // Display name for caller ID
   String sip_target;       // Target number to ring (e.g., **610)
-  String scrypted_webhook; // Scrypted doorbell webhook URL (optional)
 };
 
 // Load SIP configuration from NVS

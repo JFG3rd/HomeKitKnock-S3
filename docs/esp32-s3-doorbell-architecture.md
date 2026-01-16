@@ -158,11 +158,67 @@ Notes:
 	•	Audio path will be I2S in/out (mic in, DAC out)
 	•	Onboard PDM mic: GPIO42 = CLK, GPIO41 = DATA (I2S0 RX)
 	•	MAX98357A I2S DAC: GPIO7 = BCLK, GPIO8 = LRCLK/WS, GPIO9 = DIN (I2S1 TX)
-	•	MAX98357A SD/EN: tie to 3V3 (always on) or use a spare GPIO (e.g., GPIO1/D0) for mute
+	•	MAX98357A SC/SD: tie to 3V3 (always on)
 	•	GPIO7/8/9 are default SPI pins; avoid SPI on those pins or remap if needed
 	•	Feature setup exposes mic enable/mute + sensitivity and audio out enable/mute + volume
 	•	HTML test endpoint: http://ESP32-IP/audio.wav
 	•	Local gong playback uses `/gong.pcm` from LittleFS when present
+
+⸻
+
+🔌 Current Wiring (Rev A)
+
+Pin assignments (current):
+	•	Doorbell button: GPIO4 (active-low, internal pull-up)
+	•	Status LED (online/ready): GPIO2 (active-high) + 330 ohm resistor
+	•	I2C (reserved for sensors): GPIO5 = SDA, GPIO6 = SCL
+	•	MAX98357A I2S: GPIO7 = BCLK, GPIO8 = LRC/WS, GPIO9 = DIN
+	•	PDM mic: GPIO42 = CLK, GPIO41 = DATA
+	•	Camera pins: see `include/camera_pins.h` (XIAO ESP32-S3 Sense map)
+
+Status LED behavior:
+	•	On when WiFi is connected and AP mode is inactive
+	•	Off during AP provisioning or offline
+
+MAX98357A pin order (left → right): LRC, BCLK, DIN, GAIN, SC, GND, Vin
+
+Circuit diagram (text schematic):
+
+```
+XIAO ESP32-S3 Sense                    MAX98357A I2S amp
+-------------------                    -----------------
+3V3  ------------------------------->  Vin
+GND  ------------------------------->  GND
+GPIO8 (LRCLK/WS) -------------------->  LRC
+GPIO7 (BCLK) ------------------------>  BCLK
+GPIO9 (DIN) ------------------------->  DIN
+3V3  ------------------------------->  SC
+GAIN  --------------------------------  (leave floating or strap for gain)
+
+Speaker wiring:
+MAX98357A L+  ----------------------->  Speaker +
+MAX98357A L-  ----------------------->  Speaker -
+
+Doorbell switch (active-low):
+GPIO4  ----[momentary switch]---- GND
+
+Status LED (online/ready):
+GPIO2  ----[330 ohm]----|>|---- GND
+                    LED
+
+Future I2C sensor header:
+GPIO5 = SDA, GPIO6 = SCL (add 4.7k pull-ups to 3V3 when used)
+```
+
+Build steps (soldering + wiring):
+	1.	Solder headers on the XIAO ESP32-S3 Sense and mount it securely.
+	2.	Doorbell switch: connect one leg to GPIO4 and the other to GND (internal pull-up is enabled in firmware).
+	3.	Status LED: connect GPIO2 → 330 ohm resistor → LED anode; LED cathode to GND.
+	4.	MAX98357A: wire LRC→GPIO8, BCLK→GPIO7, DIN→GPIO9, GND→GND, Vin→3V3.
+	5.	MAX98357A SC: tie to 3V3 for always-on.
+	6.	MAX98357A GAIN: leave floating for default gain (or strap per datasheet).
+	7.	Speaker: connect to MAX98357A L+ and L- (do not connect either side to GND).
+	8.	Reserve GPIO5/6 for future I2C sensors; add pull-ups when you install sensors.
 
 ⸻
 
@@ -232,7 +288,7 @@ After MVP works:
 📝 Open Questions / To-Do
 	•	Select final doorbell button sensing scheme:
 	•	AC detector vs dry contact + relay
-	•	Confirm final GPIO pin mapping
+	•	Confirm I2C sensor selection + pull-up values
 	•	Confirm DECT group number and FRITZ!Box SIP account settings
 	•	Decide target RTSP audio codec (AAC vs G.711)
 	•	Verify I2S pin mapping for mic + MAX98357A on hardware (GPIO42/41 + GPIO7/8/9)

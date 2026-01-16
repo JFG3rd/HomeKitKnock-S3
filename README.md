@@ -28,7 +28,9 @@ Audio streaming is planned for a later phase.
 
 ### Hardware
 - Seeed Studio **XIAO ESP32-S3 Sense**
-- Doorbell push button connected to a GPIO
+- Doorbell push button (GPIO4 to GND, internal pull-up)
+- Status LED + 330 ohm resistor (GPIO2 to GND, online/ready indicator)
+- MAX98357A I2S mono amp + small speaker (local gong output)
 - USB data cable for programming
 - (Optional) AC detector or relay interface for legacy 8 V gong
 
@@ -50,6 +52,18 @@ Audio streaming is planned for a later phase.
 4. Serial monitor (adjust baud if needed):
    - VS Code: PlatformIO "Monitor" task
    - CLI: `pio device monitor -b 115200`
+
+---
+
+## 🔌 Wiring (Current Pin Map)
+
+Summary (see `docs/esp32-s3-doorbell-architecture.md` for full diagram + steps):
+- Doorbell button: GPIO4 → momentary switch → GND (active-low, internal pull-up)
+- Status LED: GPIO2 → 330 ohm → LED → GND (active-high)
+- I2S amp: GPIO7 = BCLK, GPIO8 = LRC/WS, GPIO9 = DIN, 3V3 + GND, SC tied to 3V3
+- I2C reserved for sensors: GPIO5 = SDA, GPIO6 = SCL (add pull-ups when used)
+
+Status LED is on when WiFi is connected (ready) and off during AP provisioning.
 
 ---
 
@@ -80,6 +94,8 @@ If none are found or the connection fails, it starts a configuration AP:
 - `GET /tr064Debug` - TR-064 debug JSON
 - `GET /sip` - SIP setup page
 - `GET /sipDebug` - SIP debug JSON
+- `GET /logs/camera` - Camera/streaming logs
+- `GET /logs/doorbell` - Doorbell/SIP/TR-064 logs
 
 ### TR-064 Settings
 The setup page lets you configure FRITZ!Box TR-064 credentials and the internal
