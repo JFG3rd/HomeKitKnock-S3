@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Doorbell Logs</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body class="full-width-page">
+    <div class="dark-mode-toggle">
+        <label class="switch">
+            <input type="checkbox" id="darkModeToggle">
+            <span class="slider"></span>
+        </label>
+        <span>Dark Mode</span>
+    </div>
+
+    <div class="header-container">
+        <h1 class="main-title">☎️ Doorbell Logs</h1>
+        <p>Ring events, SIP, TR-064, and webhook activity.</p>
+    </div>
+
+    <div class="log-container log-size-md" id="logContainer"></div>
+
+    <div class="button-row log-actions">
+        <label style="display: flex; align-items: center; gap: 8px;">
+            <span>Log font size</span>
+            <select id="logFontSize">
+                <option value="sm">Small</option>
+                <option value="md" selected>Medium</option>
+                <option value="lg">Large</option>
+            </select>
+        </label>
+        <button class="button danger-btn" title="Clear the in-memory event log." onclick="clearLog()">🧹 Clear Log</button>
+        <button class="button" title="Copy the filtered log to clipboard." onclick="copyLog()">📋 Copy Log to Clipboard</button>
+        <a class="button danger-btn" href="/" title="Return to the main dashboard.">Back</a>
+    </div>
+
+    <script>
+        const logContainerEl = document.getElementById("logContainer");
+        const logFontSizeEl = document.getElementById("logFontSize");
+        const darkToggle = document.getElementById("darkModeToggle");
+        let lastEventId = 0;
+
+        const doorbellKeywords = ["SIP", "TR-064", "FRITZ", "Ring", "Doorbell", "☎️", "📞", "🔔", "🔐"];
+        function matchesDoorbellLog(message) {
+            return doorbellKeywords.some(kw => message.includes(kw));
+        }
+
+        function addLog(message, level = "info", formattedTime = null) {
+            const entry = document.createElement("div");
+            entry.className = `log-entry ${level}`;
+            const ts = formattedTime || new Date().toLocaleTimeString();
+            entry.textContent = `${ts} ${message}`;
+            logContainerEl.prepend(entry);
+        }
+
+        function applyLogFontSize(size) {
+            const sizes = ["log-size-sm", "log-size-md", "log-size-lg"];
+            sizes.forEach(cls => logContainerEl.classList.remove(cls));
+            const cls = `log-size-${size}`;
+            logContainerEl.classList.add(cls);
+            localStorage.setItem("logFontSize", size);
+        }
+
+        function clearLog() {
+            fetch("/clearLog", { method: "POST" })
+                .then(r => r.text())
+                .then(() => {
+                    logContainerEl.innerHTML = "";
+                    lastEventId = 0;
+                })
+                .catch(() => alert("Failed to clear log"));
+        }
+
+        function copyLog() {
+            fetch("/eventLog?since=0")
+                .then(r => r.json())
+                .then(data => {
+                    const entries = (data.entries || [])
+                        .filter(entry => matchesDoorbellLog(entry.message || ""))
+                        .map(entry => {
+                            const level = (entry.level || "info").toUpperCase();
+                            return `${entry.time || ""} [${level}] ${entry.message}`;
+                        });
+                    const text = entries.join("\n");
+                    if (!text.length) {
+                        alert("Log is empty, nothing to copy");
+                        return;
+                    }
+                    return navigator.clipboard.writeText(text)
+                        .then(() => alert("Log copied to clipboard"))
+                        .catch(() => alert("Clipboard copy failed"));
+                })
+                .catch(() => alert("Log fetch failed for clipboard copy"));
+        }
+
+        function setDarkMode(enabled) {
+            document.body.classList.toggle("dark-mode", enabled);
+            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        }
+        const savedDarkMode = localStorage.getItem("darkMode");
+        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
+        darkToggle.checked = darkModeEnabled;
+        setDarkMode(darkModeEnabled);
+        darkToggle.addEventListener("change", () => setDarkMode(darkToggle.checked));
+
+        function fetchEventLog() {
+            fetch(`/eventLog?since=${lastEventId}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.entries) return;
+                    data.entries.forEach(entry => {
+                        if (matchesDoorbellLog(entry.message || "")) {
+                            addLog(entry.message, entry.level || "info", entry.time || null);
+                        }
+                        if (entry.id > lastEventId) {
+                            lastEventId = entry.id;
+                        }
+                    });
+                });
+        }
+
+        const savedLogFontSize = localStorage.getItem("logFontSize") || "md";
+        logFontSizeEl.value = savedLogFontSize;
+        applyLogFontSize(savedLogFontSize);
+        logFontSizeEl.addEventListener("change", (e) => applyLogFontSize(e.target.value));
+
+        fetchEventLog();
+        setInterval(fetchEventLog, 2000);
+    </script>
+</body>
+</html>

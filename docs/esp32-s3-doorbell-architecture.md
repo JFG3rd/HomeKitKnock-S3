@@ -256,6 +256,16 @@ Current focus:
 
 ⸻
 
+🖥 UI Diagnostics
+
+Main UI now includes metrics + diagnostic actions:
+	•	RTSP sessions, HTTP clients, UDP endPacket fail count
+	•	UDP backoff state (active + remaining ms)
+	•	Buttons to reset UDP fail counter and clear backoff state
+	•	Separate log pages: `/logs/camera` and `/logs/doorbell`
+
+⸻
+
 🔗 Integration Responsibilities
 
 Responsibility                                 Owner

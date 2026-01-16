@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SIP Setup</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="dark-mode-toggle">
+        <label class="switch">
+            <input type="checkbox" id="darkModeToggle">
+            <span class="slider"></span>
+        </label>
+        <span>Dark Mode</span>
+    </div>
+
+    <div class="container full-width">
+        <h1>☎️ SIP Setup</h1>
+        <p>Configure FRITZ!Box SIP credentials to ring internal phones.</p>
+        <div class="flash-stats">
+            <strong>FRITZ!Box SIP Setup Instructions</strong>
+            <p><strong>1) Create an IP Phone in FRITZ!Box</strong></p>
+            <ul>
+                <li>FRITZ!Box UI → Telefonie → Telefoniegeräte</li>
+                <li>Click "Neues Gerät einrichten"</li>
+                <li>Select "Telefon (mit und ohne Anrufbeantworter)"</li>
+                <li>Select "LAN/WLAN (IP-Telefon)"</li>
+                <li>Enter username (e.g., 620) and password</li>
+                <li>Give it a name like "ESP32-Doorbell"</li>
+            </ul>
+            <p><strong>2) Note the credentials</strong></p>
+            <ul>
+                <li>Username (Benutzername): This is your SIP username</li>
+                <li>Password (Kennwort): This is your SIP password</li>
+            </ul>
+            <p><strong>3) Configure target number</strong></p>
+            <ul>
+                <li>Use **610 to ring all DECT phones</li>
+                <li>Use **9 plus extension to ring a specific phone</li>
+            </ul>
+        <p><strong>FRITZ!Box address:</strong> {{GATEWAY_IP}}</p>
+        </div>
+
+        <h3>📡 SIP Credentials</h3>
+        <label><strong>SIP Username:</strong></label>
+        <input type="text" id="sip_user" value="{{SIP_USER}}" placeholder="e.g., 620">
+
+        <label><strong>SIP Password:</strong></label>
+        <input type="password" id="sip_password" value="{{SIP_PASS}}" placeholder="IP phone password">
+
+        <label><strong>Display Name:</strong></label>
+        <input type="text" id="sip_displayname" value="{{SIP_DISPLAY}}" placeholder="Doorbell">
+
+        <h3>📞 Ring Configuration</h3>
+        <label><strong>Target Number:</strong></label>
+        <input type="text" id="sip_target" value="{{SIP_TARGET}}" placeholder="e.g., **610">
+
+        <div>
+            <button class="button" title="Save SIP credentials and ring target." onclick="saveSip()">💾 Save</button>
+            <button class="button" title="Trigger a SIP ring test." onclick="testRingSip()">🔔 Test SIP Ring</button>
+            <a class="button danger-btn" href="/" title="Return to the main dashboard.">Back</a>
+        </div>
+    </div>
+
+    <script>
+        // Dark mode handling
+        const darkToggle = document.getElementById("darkModeToggle");
+        function setDarkMode(enabled) {
+            document.body.classList.toggle("dark-mode", enabled);
+            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        }
+        const savedDarkMode = localStorage.getItem("darkMode");
+        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
+        darkToggle.checked = darkModeEnabled;
+        setDarkMode(darkModeEnabled);
+        darkToggle.addEventListener("change", () => {
+            setDarkMode(darkToggle.checked);
+        });
+
+        function saveSip() {
+            let sip_user = document.getElementById("sip_user").value;
+            let sip_password = document.getElementById("sip_password").value;
+            let sip_displayname = document.getElementById("sip_displayname").value;
+            let sip_target = document.getElementById("sip_target").value;
+
+            fetch("/saveSIP", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ 
+                    "sip_user": sip_user, 
+                    "sip_password": sip_password, 
+                    "sip_displayname": sip_displayname, 
+                    "sip_target": sip_target
+                })
+            }).then(r => r.text())
+              .then(t => alert(t))
+              .catch(e => alert("Save failed: " + e));
+        }
+
+        function testRingSip() {
+            fetch("/ring/sip")
+                .then(r => r.text())
+                .then(t => alert(t))
+                .catch(e => alert("SIP Ring failed: " + e));
+        }
+    </script>
+</body>
+</html>

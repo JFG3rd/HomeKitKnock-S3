@@ -83,6 +83,17 @@ bool initFileSystem(AsyncWebServer &server) {
   return true;
 }
 
+static String loadUiTemplate(const char *path) {
+  File file = LittleFS.open(path, "r");
+  if (!file) {
+    logEvent(LOG_ERROR, "❌ UI template missing: " + String(path));
+    return String();
+  }
+  String content = file.readString();
+  file.close();
+  return content;
+}
+
 static void writeWavHeader(AsyncResponseStream *response,
                            uint32_t sampleRate,
                            uint16_t bitsPerSample,
@@ -375,625 +386,66 @@ void setup() {
       server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         String streamInfo;
         if (httpCamEnabled) {
-          streamInfo += "<div class=\\\"flash-stats\\\">"
+          streamInfo += "<div class=\"flash-stats\">"
                         "<strong>📹 HTTP Stream:</strong>"
-                        "<p style=\\\"font-family: monospace; font-size: 0.9em; word-break: break-all;\\\">"
+                        "<p style=\"font-family: monospace; font-size: 0.9em; word-break: break-all;\">"
                         "http://" + WiFi.localIP().toString() + ":81/stream"
                         "</p>"
-                        "<p style=\\\"font-size: 0.85em; color: #666;\\\">"
+                        "<p style=\"font-size: 0.85em; color: #666;\">"
                         "Use this URL for MJPEG clients (Scrypted HTTP camera, FRITZ!Box)."
                         "</p>"
                         "</div>";
         } else {
-          streamInfo += "<div class=\\\"flash-stats\\\">"
+          streamInfo += "<div class=\"flash-stats\">"
                         "<strong>📹 HTTP Stream:</strong> disabled"
                         "</div>";
         }
         if (rtspEnabled) {
-          streamInfo += "<div class=\\\"flash-stats\\\">"
+          streamInfo += "<div class=\"flash-stats\">"
                         "<strong>📡 RTSP Stream (for Scrypted):</strong>"
-                        "<p style=\\\"font-family: monospace; font-size: 0.9em; word-break: break-all;\\\">"
+                        "<p style=\"font-family: monospace; font-size: 0.9em; word-break: break-all;\">"
                         "rtsp://" + WiFi.localIP().toString() + ":8554/mjpeg/1"
                         "</p>"
-                        "<p style=\\\"font-size: 0.85em; color: #666;\\\">"
+                        "<p style=\"font-size: 0.85em; color: #666;\">"
                         "Use the RTSP Camera plugin or prefix with <code>-i</code> if using FFmpeg Camera."
                         "</p>"
                         "</div>";
         } else {
-          streamInfo += "<div class=\\\"flash-stats\\\">"
+          streamInfo += "<div class=\"flash-stats\">"
                         "<strong>📡 RTSP Stream:</strong> disabled"
                         "</div>";
         }
 
-        String page = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head>
-    <title>ESP32 Doorbell</title>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="/style.css">
-</head>
-<body class="full-width-page">
-    <div class="dark-mode-toggle">
-        <label class="switch">
-            <input type="checkbox" id="darkModeToggle">
-            <span class="slider"></span>
-        </label>
-        <span>Dark Mode</span>
-    </div>
-
-    <div class="header-container">
-        <h1 class="main-title">🔔 ESP32-S3 Doorbell</h1>
-    </div>
-
-    <div class="dashboard">
-        <!-- System Information Card -->
-        <div class="container card">
-            <h3>📊 System Information</h3>
-            <div class="info-grid">
-                <div class="info-item">
-                    <span class="info-label">Status:</span>
-                    <span class="info-value status-online">● Online</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">WiFi:</span>
-                    <span class="info-value">Connected</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">IP Address:</span>
-                    <span class="info-value">)rawliteral" + WiFi.localIP().toString() + R"rawliteral(</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">Signal Strength:</span>
-                    <span class="info-value"><span id="rssi">--</span> dBm</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">System Uptime:</span>
-                    <span class="info-value" id="uptime">--</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">WiFi Connected:</span>
-                    <span class="info-value" id="wifiConnected">--</span>
-                </div>
-            </div>
-            <hr>
-            <button class="danger-btn" onclick="location.href='/forget';">Forget WiFi</button>
-            <div class="button-row" style="margin-top: 12px;">
-                <a class="button" href="/setup">⚙️ Feature Setup</a>
-                <button class="button danger-btn" onclick="location.href='/restart';">🔄 Restart</button>
-            </div>
-        </div>
-
-        <!-- Camera Settings Card -->
-        <div class="container card">
-            <h3>📷 Camera Settings</h3>
-            <div class="flash-stats" id="cameraStatus">
-                <strong>Camera:</strong> loading...
-            </div>
-            <div class="flash-stats" id="streamStatus">
-                <strong>Stream:</strong> loading...
-            </div>
-            
-            <hr>
-            <div class="button-row">
-                <a class="button config-btn" href="/capture" target="_blank">📸 Snapshot</a>
-                <a class="button" href="http://)rawliteral" + WiFi.localIP().toString() + R"rawliteral(:81/stream" target="_blank">🎥 Live Stream</a>
-            </div>
-            <hr>
-            )rawliteral" + streamInfo + R"rawliteral(
-            <details class="flash-stats">
-                <summary><strong>📺 Scrypted Setup (Quick Steps)</strong></summary>
-                <ol style="margin: 8px 0 0 16px; padding: 0; font-size: 0.9em;">
-                    <li>Add a camera in Scrypted.</li>
-                    <li>Use <strong>HTTP Camera</strong> with <code>http://ESP32-IP:81/stream</code>, or <strong>RTSP Camera</strong> with <code>rtsp://ESP32-IP:8554/mjpeg/1</code>.</li>
-                    <li>If using FFmpeg Camera for HomeKit, set Output Prefix to: <code>-c:v libx264 -pix_fmt yuvj420p -preset ultrafast -bf 0 -g 60 -r 15 -b:v 500000 -bufsize 1000000 -maxrate 500000</code></li>
-                </ol>
-            </details>
-        </div>
-
-        <!-- SIP/TR-064 Card -->
-        <div class="container card">
-            <h3>☎️ SIP/TR-064</h3>
-            <p>FRITZ!Box SIP/TR-064 integration for doorbell notifications.</p>
-            <div class="flash-stats" id="tr064Status">
-                <strong>Status:</strong> loading...
-            </div>
-            <hr>
-            <div class="button-row">
-                <button class="button" onclick="testRingSip()">🔔 Test Ring (SIP)</button>
-                <a class="button config-btn" href="/sip">⚙️ Setup</a>
-            </div>
-            <a class="button" href="/sipDebug" target="_blank">🐛 Debug JSON</a>
-        </div>
-
-        <!-- Metrics Card -->
-        <div class="container card">
-            <h3>📈 Metrics</h3>
-            <div class="info-grid">
-                <div class="info-item">
-                    <span class="info-label">RTSP Sessions:</span>
-                    <span class="info-value" id="metricRtspSessions">--</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">HTTP Clients:</span>
-                    <span class="info-value" id="metricHttpClients">--</span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">RTSP UDP endPacket fails:</span>
-                    <span class="info-value" id="metricRtspUdpFails">--</span>
-                </div>
-            </div>
-            <hr>
-            <div class="button-row">
-                <a class="button" href="/logs/camera">📹 Camera Logs</a>
-                <a class="button" href="/logs/doorbell">☎️ Doorbell Logs</a>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        const statusEl = document.getElementById("cameraStatus");
-        const trStatusEl = document.getElementById("tr064Status");
-        const darkToggle = document.getElementById("darkModeToggle");
-        const rssiEl = document.getElementById("rssi");
-        const uptimeEl = document.getElementById("uptime");
-        const wifiConnectedEl = document.getElementById("wifiConnected");
-        const streamStatusEl = document.getElementById("streamStatus");
-        const metricRtspSessionsEl = document.getElementById("metricRtspSessions");
-        const metricHttpClientsEl = document.getElementById("metricHttpClients");
-        const metricRtspUdpFailsEl = document.getElementById("metricRtspUdpFails");
-        const wifiConnectTime = Date.now();
-
-        function setDarkMode(enabled) {
-            document.body.classList.toggle("dark-mode", enabled);
-            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        String page = loadUiTemplate("/index.html");
+        if (page.isEmpty()) {
+          request->send(500, "text/plain", "UI template missing");
+          return;
         }
+        page.replace("{{LOCAL_IP}}", WiFi.localIP().toString());
+        page.replace("{{STREAM_INFO}}", streamInfo);
 
-        // Initialize dark mode from localStorage (default: enabled)
-        const savedDarkMode = localStorage.getItem("darkMode");
-        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
-        darkToggle.checked = darkModeEnabled;
-        setDarkMode(darkModeEnabled);
-
-        darkToggle.addEventListener("change", () => {
-            setDarkMode(darkToggle.checked);
-        });
-
-        function fetchStatus() {
-            fetch("/status")
-                .then(r => r.json())
-                .then(data => {
-                    statusEl.innerHTML = `<strong>Camera:</strong> ${data.PID || "Unknown"} | size=${data.framesize} | quality=${data.quality}`;
-                })
-                .catch(() => {
-                    statusEl.innerHTML = "<strong>Camera:</strong> unavailable";
-                });
-        }
-
-        function formatMs(ms) {
-            if (!ms || ms < 0) return "0s";
-            const sec = Math.floor(ms / 1000);
-            if (sec < 60) return `${sec}s`;
-            const min = Math.floor(sec / 60);
-            const rem = sec % 60;
-            return `${min}m ${rem}s`;
-        }
-
-        function fetchStreamInfo() {
-            fetch("/cameraStreamInfo")
-                .then(r => r.json())
-                .then(data => {
-                    const rtspSessions = data.rtsp_sessions || 0;
-                    const httpClients = data.clients || 0;
-                    const rtspUdpFails = data.rtsp_udp_endpacket_fail || 0;
-                    metricRtspSessionsEl.textContent = rtspSessions;
-                    metricHttpClientsEl.textContent = httpClients;
-                    metricRtspUdpFailsEl.textContent = rtspUdpFails;
-
-                    if (!data.running) {
-                        streamStatusEl.innerHTML = "<strong>Stream:</strong> server stopped";
-                        return;
-                    }
-                    
-                    // Build HTTP stream status
-                    let httpStatus = "";
-                    if (!data.active) {
-                        httpStatus = "HTTP: no clients";
-                    } else {
-                        const ip = data.client_ip || "unknown";
-                        const clients = data.clients || 0;
-                        const connectedFor = formatMs(data.connected_ms);
-                        const lastFrame = formatMs(data.last_frame_age_ms);
-                        const list = Array.isArray(data.clients_list) ? data.clients_list.join(", ") : "";
-                        const listText = list.length ? ` | ${list}` : "";
-                        httpStatus = `HTTP: ${clients} client(s)${listText} | connected ${connectedFor} | last frame ${lastFrame} ago`;
-                    }
-                    
-                    // Build RTSP stream status
-                    const rtspStatus = rtspSessions > 0 
-                        ? `RTSP: ${rtspSessions} session(s)` 
-                        : "RTSP: no sessions";
-                    
-                    streamStatusEl.innerHTML = `<strong>Stream:</strong> ${httpStatus}<br>${rtspStatus}`;
-                })
-                .catch(() => {
-                    streamStatusEl.innerHTML = "<strong>Stream:</strong> unavailable";
-                    metricRtspSessionsEl.textContent = "--";
-                    metricHttpClientsEl.textContent = "--";
-                    metricRtspUdpFailsEl.textContent = "--";
-                });
-        }
-
-        function formatUptime(seconds) {
-            const days = Math.floor(seconds / 86400);
-            const hours = Math.floor((seconds % 86400) / 3600);
-            const minutes = Math.floor((seconds % 3600) / 60);
-            const secs = seconds % 60;
-            
-            if (days > 0) {
-                return `${days}d ${hours}h ${minutes}m`;
-            } else if (hours > 0) {
-                return `${hours}h ${minutes}m ${secs}s`;
-            } else if (minutes > 0) {
-                return `${minutes}m ${secs}s`;
-            } else {
-                return `${secs}s`;
-            }
-        }
-
-        function formatDateTime(timestamp) {
-            const date = new Date(timestamp);
-            const day = String(date.getDate()).padStart(2, '0');
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const year = date.getFullYear();
-            const hours = String(date.getHours()).padStart(2, '0');
-            const minutes = String(date.getMinutes()).padStart(2, '0');
-            const seconds = String(date.getSeconds()).padStart(2, '0');
-            return `${day}.${month}.${year} ${hours}:${minutes}:${seconds}`;
-        }
-
-        function fetchDeviceStatus() {
-            fetch("/deviceStatus")
-                .then(r => r.json())
-                .then(data => {
-                    rssiEl.textContent = data.rssi;
-                    uptimeEl.textContent = formatUptime(data.uptimeSeconds || 0);
-                    wifiConnectedEl.textContent = formatDateTime(wifiConnectTime);
-                })
-                .catch(() => {
-                    rssiEl.textContent = "--";
-                    uptimeEl.textContent = "--";
-                    wifiConnectedEl.textContent = "--";
-                });
-        }
-
-        async function testRingSip() {
-            try {
-                const response = await fetch("/ring/sip");
-                const text = await response.text();
-                if (!response.ok) {
-                    let details = text || "SIP Ring failed";
-                    try {
-                        const info = await fetch("/sipDebug").then(r => r.json());
-                        details += `\nSIP debug: user=${info.sip_user} target=${info.sip_target} has_sip_config=${info.has_sip_config}`;
-                    } catch (err) {
-                        details += "\nSIP debug unavailable";
-                    }
-                    alert(details);
-                    return;
-                }
-                alert(text || "SIP Ring triggered");
-            } catch (err) {
-                alert("Failed to trigger SIP ring");
-            }
-        }
-
-        function fetchSipStatus() {
-            fetch("/sipDebug")
-                .then(r => r.json())
-                .then(data => {
-                    const sipCfg = data.has_sip_config ? "✓" : "✗";
-                    trStatusEl.innerHTML = `<strong>Status:</strong> SIP ${sipCfg} | user=${data.sip_user || "-"} | target=${data.sip_target || "-"}`;
-                })
-                .catch(() => {
-                    trStatusEl.innerHTML = "<strong>Status:</strong> unavailable";
-                });
-        }
-
-        fetchStatus();
-        fetchStreamInfo();
-        fetchDeviceStatus();
-        fetchSipStatus();
-        setInterval(fetchDeviceStatus, 5000);
-        setInterval(fetchSipStatus, 10000);
-        setInterval(fetchStreamInfo, 3000);
-    </script>
-</body>
-</html>
-)rawliteral";
         AsyncWebServerResponse *response = request->beginResponse(200, "text/html", page);
         response->addHeader("Cache-Control", "no-store");
         request->send(response);
       });
 
       server.on("/logs/camera", HTTP_GET, [](AsyncWebServerRequest *request) {
-        String page = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Camera Logs</title>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="/style.css">
-</head>
-<body class="full-width-page">
-    <div class="dark-mode-toggle">
-        <label class="switch">
-            <input type="checkbox" id="darkModeToggle">
-            <span class="slider"></span>
-        </label>
-        <span>Dark Mode</span>
-    </div>
-
-    <div class="header-container">
-        <h1 class="main-title">📹 Camera Logs</h1>
-        <p>Streaming and camera subsystem events.</p>
-    </div>
-
-    <div class="log-container log-size-md" id="logContainer"></div>
-
-    <div class="button-row log-actions">
-        <label style="display: flex; align-items: center; gap: 8px;">
-            <span>Log font size</span>
-            <select id="logFontSize">
-                <option value="sm">Small</option>
-                <option value="md" selected>Medium</option>
-                <option value="lg">Large</option>
-            </select>
-        </label>
-        <button class="button danger-btn" onclick="clearLog()">🧹 Clear Log</button>
-        <button class="button" onclick="copyLog()">📋 Copy Log to Clipboard</button>
-        <a class="button danger-btn" href="/">Back</a>
-    </div>
-
-    <script>
-        const logContainerEl = document.getElementById("logContainer");
-        const logFontSizeEl = document.getElementById("logFontSize");
-        const darkToggle = document.getElementById("darkModeToggle");
-        let lastEventId = 0;
-
-        const cameraKeywords = ["Camera", "RTSP", "HTTP", "Stream", "JPEG", "📹", "🎥", "📡", "🔌", "▶️", "🛑", "📴", "⏱️"];
-        function matchesCameraLog(message) {
-            return cameraKeywords.some(kw => message.includes(kw));
+        String page = loadUiTemplate("/logs-camera.html");
+        if (page.isEmpty()) {
+          request->send(500, "text/plain", "UI template missing");
+          return;
         }
-
-        function addLog(message, level = "info", formattedTime = null) {
-            const entry = document.createElement("div");
-            entry.className = `log-entry ${level}`;
-            const ts = formattedTime || new Date().toLocaleTimeString();
-            entry.textContent = `${ts} ${message}`;
-            logContainerEl.prepend(entry);
-        }
-
-        function applyLogFontSize(size) {
-            const sizes = ["log-size-sm", "log-size-md", "log-size-lg"];
-            sizes.forEach(cls => logContainerEl.classList.remove(cls));
-            const cls = `log-size-${size}`;
-            logContainerEl.classList.add(cls);
-            localStorage.setItem("logFontSize", size);
-        }
-
-        function clearLog() {
-            fetch("/clearLog", { method: "POST" })
-                .then(r => r.text())
-                .then(() => {
-                    logContainerEl.innerHTML = "";
-                    lastEventId = 0;
-                })
-                .catch(() => alert("Failed to clear log"));
-        }
-
-        function copyLog() {
-            fetch("/eventLog?since=0")
-                .then(r => r.json())
-                .then(data => {
-                    const entries = (data.entries || [])
-                        .filter(entry => matchesCameraLog(entry.message || ""))
-                        .map(entry => {
-                            const level = (entry.level || "info").toUpperCase();
-                            return `${entry.time || ""} [${level}] ${entry.message}`;
-                        });
-                    const text = entries.join("\n");
-                    if (!text.length) {
-                        alert("Log is empty, nothing to copy");
-                        return;
-                    }
-                    return navigator.clipboard.writeText(text)
-                        .then(() => alert("Log copied to clipboard"))
-                        .catch(() => alert("Clipboard copy failed"));
-                })
-                .catch(() => alert("Log fetch failed for clipboard copy"));
-        }
-
-        function setDarkMode(enabled) {
-            document.body.classList.toggle("dark-mode", enabled);
-            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
-        }
-        const savedDarkMode = localStorage.getItem("darkMode");
-        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
-        darkToggle.checked = darkModeEnabled;
-        setDarkMode(darkModeEnabled);
-        darkToggle.addEventListener("change", () => setDarkMode(darkToggle.checked));
-
-        function fetchEventLog() {
-            fetch(`/eventLog?since=${lastEventId}`)
-                .then(r => r.json())
-                .then(data => {
-                    if (!data.entries) return;
-                    data.entries.forEach(entry => {
-                        if (matchesCameraLog(entry.message || "")) {
-                            addLog(entry.message, entry.level || "info", entry.time || null);
-                        }
-                        if (entry.id > lastEventId) {
-                            lastEventId = entry.id;
-                        }
-                    });
-                });
-        }
-
-        const savedLogFontSize = localStorage.getItem("logFontSize") || "md";
-        logFontSizeEl.value = savedLogFontSize;
-        applyLogFontSize(savedLogFontSize);
-        logFontSizeEl.addEventListener("change", (e) => applyLogFontSize(e.target.value));
-
-        fetchEventLog();
-        setInterval(fetchEventLog, 2000);
-    </script>
-</body>
-</html>
-)rawliteral";
         AsyncWebServerResponse *response = request->beginResponse(200, "text/html", page);
         response->addHeader("Cache-Control", "no-store");
         request->send(response);
       });
 
       server.on("/logs/doorbell", HTTP_GET, [](AsyncWebServerRequest *request) {
-        String page = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Doorbell Logs</title>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="/style.css">
-</head>
-<body class="full-width-page">
-    <div class="dark-mode-toggle">
-        <label class="switch">
-            <input type="checkbox" id="darkModeToggle">
-            <span class="slider"></span>
-        </label>
-        <span>Dark Mode</span>
-    </div>
-
-    <div class="header-container">
-        <h1 class="main-title">☎️ Doorbell Logs</h1>
-        <p>Ring events, SIP, TR-064, and webhook activity.</p>
-    </div>
-
-    <div class="log-container log-size-md" id="logContainer"></div>
-
-    <div class="button-row log-actions">
-        <label style="display: flex; align-items: center; gap: 8px;">
-            <span>Log font size</span>
-            <select id="logFontSize">
-                <option value="sm">Small</option>
-                <option value="md" selected>Medium</option>
-                <option value="lg">Large</option>
-            </select>
-        </label>
-        <button class="button danger-btn" onclick="clearLog()">🧹 Clear Log</button>
-        <button class="button" onclick="copyLog()">📋 Copy Log to Clipboard</button>
-        <a class="button danger-btn" href="/">Back</a>
-    </div>
-
-    <script>
-        const logContainerEl = document.getElementById("logContainer");
-        const logFontSizeEl = document.getElementById("logFontSize");
-        const darkToggle = document.getElementById("darkModeToggle");
-        let lastEventId = 0;
-
-        const doorbellKeywords = ["SIP", "TR-064", "FRITZ", "Ring", "Doorbell", "☎️", "📞", "🔔", "🔐"];
-        function matchesDoorbellLog(message) {
-            return doorbellKeywords.some(kw => message.includes(kw));
+        String page = loadUiTemplate("/logs-doorbell.html");
+        if (page.isEmpty()) {
+          request->send(500, "text/plain", "UI template missing");
+          return;
         }
-
-        function addLog(message, level = "info", formattedTime = null) {
-            const entry = document.createElement("div");
-            entry.className = `log-entry ${level}`;
-            const ts = formattedTime || new Date().toLocaleTimeString();
-            entry.textContent = `${ts} ${message}`;
-            logContainerEl.prepend(entry);
-        }
-
-        function applyLogFontSize(size) {
-            const sizes = ["log-size-sm", "log-size-md", "log-size-lg"];
-            sizes.forEach(cls => logContainerEl.classList.remove(cls));
-            const cls = `log-size-${size}`;
-            logContainerEl.classList.add(cls);
-            localStorage.setItem("logFontSize", size);
-        }
-
-        function clearLog() {
-            fetch("/clearLog", { method: "POST" })
-                .then(r => r.text())
-                .then(() => {
-                    logContainerEl.innerHTML = "";
-                    lastEventId = 0;
-                })
-                .catch(() => alert("Failed to clear log"));
-        }
-
-        function copyLog() {
-            fetch("/eventLog?since=0")
-                .then(r => r.json())
-                .then(data => {
-                    const entries = (data.entries || [])
-                        .filter(entry => matchesDoorbellLog(entry.message || ""))
-                        .map(entry => {
-                            const level = (entry.level || "info").toUpperCase();
-                            return `${entry.time || ""} [${level}] ${entry.message}`;
-                        });
-                    const text = entries.join("\n");
-                    if (!text.length) {
-                        alert("Log is empty, nothing to copy");
-                        return;
-                    }
-                    return navigator.clipboard.writeText(text)
-                        .then(() => alert("Log copied to clipboard"))
-                        .catch(() => alert("Clipboard copy failed"));
-                })
-                .catch(() => alert("Log fetch failed for clipboard copy"));
-        }
-
-        function setDarkMode(enabled) {
-            document.body.classList.toggle("dark-mode", enabled);
-            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
-        }
-        const savedDarkMode = localStorage.getItem("darkMode");
-        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
-        darkToggle.checked = darkModeEnabled;
-        setDarkMode(darkModeEnabled);
-        darkToggle.addEventListener("change", () => setDarkMode(darkToggle.checked));
-
-        function fetchEventLog() {
-            fetch(`/eventLog?since=${lastEventId}`)
-                .then(r => r.json())
-                .then(data => {
-                    if (!data.entries) return;
-                    data.entries.forEach(entry => {
-                        if (matchesDoorbellLog(entry.message || "")) {
-                            addLog(entry.message, entry.level || "info", entry.time || null);
-                        }
-                        if (entry.id > lastEventId) {
-                            lastEventId = entry.id;
-                        }
-                    });
-                });
-        }
-
-        const savedLogFontSize = localStorage.getItem("logFontSize") || "md";
-        logFontSizeEl.value = savedLogFontSize;
-        applyLogFontSize(savedLogFontSize);
-        logFontSizeEl.addEventListener("change", (e) => applyLogFontSize(e.target.value));
-
-        fetchEventLog();
-        setInterval(fetchEventLog, 2000);
-    </script>
-</body>
-</html>
-)rawliteral";
         AsyncWebServerResponse *response = request->beginResponse(200, "text/html", page);
         response->addHeader("Cache-Control", "no-store");
         request->send(response);
@@ -1108,482 +560,31 @@ void setup() {
           http_cam_max_clients = 4;
         }
 
-        String page = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Feature Setup</title>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="/style.css">
-</head>
-<body>
-    <div class="dark-mode-toggle">
-        <label class="switch">
-            <input type="checkbox" id="darkModeToggle">
-            <span class="slider"></span>
-        </label>
-        <span>Dark Mode</span>
-    </div>
-
-    <div class="header-container">
-        <h1 class="main-title">⚙️ Feature Setup</h1>
-        <p>Enable or disable individual features for your doorbell.</p>
-    </div>
-
-    <div class="dashboard">
-        <div class="container card setup-card">
-            <h3>🔧 Core Features</h3>
-            <div class="info-grid">
-                <div class="info-item">
-                    <span><strong>🌍 Timezone</strong></span>
-                </div>
-                <select id="timezone" style="grid-column: 1 / -1; margin-bottom: 12px;">
-                    <option value="PST8PDT,M3.2.0,M11.1.0">🇺🇸 Pacific Time (US & Canada)</option>
-                    <option value="MST7MDT,M3.2.0,M11.1.0">🇺🇸 Mountain Time (US & Canada)</option>
-                    <option value="CST6CDT,M3.2.0,M11.1.0">🇺🇸 Central Time (US & Canada)</option>
-                    <option value="EST5EDT,M3.2.0,M11.1.0">🇺🇸 Eastern Time (US & Canada)</option>
-                    <option value="AKST9AKDT,M3.2.0,M11.1.0">🇺🇸 Alaska Time</option>
-                    <option value="HST10">🇺🇸 Hawaii-Aleutian Time (No DST)</option>
-                    <option value="GMT0BST,M3.5.0/1,M10.5.0">🇬🇧 UK Time (GMT/BST)</option>
-                    <option value="CET-1CEST,M3.5.0,M10.5.0/3">🇪🇺 Central European Time</option>
-                    <option value="EET-2EEST,M3.5.0,M10.5.0/3">🇪🇺 Eastern European Time</option>
-                    <option value="WET0WEST,M3.5.0/1,M10.5.0">🇪🇺 Western European Time</option>
-                    <option value="JST-9">🇯🇵 Japan Standard Time (No DST)</option>
-                    <option value="CST-8">🇨🇳 China Standard Time (No DST)</option>
-                    <option value="AEST-10AEDT,M10.1.0,M4.1.0/3">🇦🇺 Australian Eastern Time</option>
-                    <option value="ACST-9:30ACDT,M10.1.0,M4.1.0/3">🇦🇺 Australian Central Time</option>
-                    <option value="AWST-8">🇦🇺 Australian Western Time (No DST)</option>
-                    <option value="NZST-12NZDT,M9.5.0,M4.1.0/3">🇳🇿 New Zealand Time</option>
-                </select>
-                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666; grid-column: 1 / -1;">
-                    Automatically handles daylight saving time transitions for your region.
-                </div>
-                <div class="info-item">
-                    <span><strong>☎️ SIP Phone Ringing</strong></span>
-                    <label class="switch">
-                        <input type="checkbox" id="sip_enabled" )rawliteral" + String(sip_enabled ? "checked" : "") + R"rawliteral(>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                    Ring FRITZ!Box phones when doorbell is pressed via SIP protocol.
-                </div>
-
-                <div class="info-item">
-                    <span><strong>📡 TR-064 Integration</strong></span>
-                    <label class="switch">
-                        <input type="checkbox" id="tr064_enabled" )rawliteral" + String(tr064_enabled ? "checked" : "") + R"rawliteral(>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                    Enable TR-064 SOAP protocol for advanced FRITZ!Box control.
-                </div>
-
-                <div class="info-item">
-                    <span><strong>📹 HTTP Camera Streaming</strong></span>
-                    <label class="switch">
-                        <input type="checkbox" id="http_cam_enabled" )rawliteral" + String(http_cam_enabled ? "checked" : "") + R"rawliteral(>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                    MJPEG stream at http://ESP32-IP:81/stream and snapshot endpoint.
-                </div>
-                <div class="info-item">
-                    <span><strong>👥 Max MJPEG Clients</strong></span>
-                    <input type="number" id="http_cam_max_clients" min="1" max="4" value=")rawliteral" + String(http_cam_max_clients) + R"rawliteral(" style="width: 80px;">
-                </div>
-                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                    Limit simultaneous HTTP stream clients (e.g., Scrypted + FRITZ!Box).
-                </div>
-
-                <div class="info-item">
-                    <span><strong>🎥 RTSP Camera Streaming</strong></span>
-                    <label class="switch">
-                        <input type="checkbox" id="rtsp_enabled" )rawliteral" + String(rtsp_enabled ? "checked" : "") + R"rawliteral(>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                    RTSP stream at rtsp://ESP32-IP:8554/mjpeg/1 (experimental, use HTTP for Scrypted).
-                </div>
-
-                <div class="info-item">
-                    <span><strong>🔊 Audio Out (Gong)</strong></span>
-                    <label class="switch">
-                        <input type="checkbox" id="audio_out_enabled" )rawliteral" + String(audio_out_enabled ? "checked" : "") + R"rawliteral(>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                    Local gong playback via MAX98357A I2S DAC.
-                </div>
-                <div class="info-item">
-                    <span><strong>🔇 Audio Out Mute</strong></span>
-                    <label class="switch">
-                        <input type="checkbox" id="audio_out_muted" )rawliteral" + String(audio_out_muted ? "checked" : "") + R"rawliteral(>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="info-item">
-                    <span><strong>🔊 Audio Out Volume</strong></span>
-                    <input type="range" id="audio_out_volume" min="0" max="100" value=")rawliteral" + String(audio_out_volume) + R"rawliteral(">
-                    <span id="audioOutVolumeValue">)rawliteral" + String(audio_out_volume) + R"rawliteral(</span>
-                </div>
-            </div>
-        </div>
-
-        <div class="container card setup-card">
-            <h3>📷 Camera Quality</h3>
-            <div class="flash-stats" id="cameraSetupStatus">
-                <strong>Camera:</strong> loading...
-            </div>
-
-            <label><strong>Frame Size</strong></label>
-            <select id="framesize">
-                <option value="5">QVGA (320x240)</option>
-                <option value="6">CIF (400x296)</option>
-                <option value="7">HVGA (480x320)</option>
-                <option value="8">VGA (640x480)</option>
-            </select>
-
-            <label><strong>JPEG Quality</strong></label>
-            <input type="range" id="quality" min="4" max="63" value="10">
-            <span id="qualityValue">10</span>
-
-            <label><strong>Brightness</strong></label>
-            <input type="range" id="brightness" min="-2" max="2" step="1" value="0">
-            <span id="brightnessValue">0</span>
-
-            <label><strong>Contrast</strong></label>
-            <input type="range" id="contrast" min="-2" max="2" step="1" value="0">
-            <span id="contrastValue">0</span>
-
-            <div style="margin-top: 12px;">
-                <button class="button" onclick="applyCameraSettings()">Apply Camera Settings</button>
-            </div>
-        </div>
-
-        <div class="container card setup-card">
-            <h3>📺 Scrypted Stream Options</h3>
-            <div class="flash-stats" id="scryptedStatus">
-                <strong>Status:</strong> loading...
-            </div>
-
-            <label><strong>Source Type</strong></label>
-            <div class="info-grid">
-                <div class="info-item">
-                    <span>HTTP MJPEG</span>
-                    <input type="radio" name="scrypted_source" id="scrypted_source_http" value="http" )rawliteral" + String(scrypted_source == "http" ? "checked" : "") + R"rawliteral(>
-                </div>
-                <div class="info-item">
-                    <span>RTSP MJPEG</span>
-                    <input type="radio" name="scrypted_source" id="scrypted_source_rtsp" value="rtsp" )rawliteral" + String(scrypted_source == "rtsp" ? "checked" : "") + R"rawliteral(>
-                </div>
-            </div>
-
-            <label style="margin-top: 12px;"><strong>Optimization</strong></label>
-            <div class="info-grid">
-                <div class="info-item">
-                    <span>Low latency (short GOP)</span>
-                    <input type="checkbox" id="scrypted_low_latency" )rawliteral" + String(scrypted_low_latency ? "checked" : "") + R"rawliteral(>
-                </div>
-                <div class="info-item">
-                    <span>Reduce input buffering</span>
-                    <input type="checkbox" id="scrypted_low_buffer" )rawliteral" + String(scrypted_low_buffer ? "checked" : "") + R"rawliteral(>
-                </div>
-                <div class="info-item">
-                    <span>Prefer RTSP UDP transport</span>
-                    <input type="checkbox" id="scrypted_rtsp_udp" )rawliteral" + String(scrypted_rtsp_udp ? "checked" : "") + R"rawliteral(>
-                </div>
-            </div>
-
-            <label style="margin-top: 12px;"><strong>Audio (Mic)</strong></label>
-            <div class="info-grid">
-                <div class="info-item">
-                    <span>Mic enabled</span>
-                    <input type="checkbox" id="mic_enabled" )rawliteral" + String(mic_enabled ? "checked" : "") + R"rawliteral(>
-                </div>
-                <div class="info-item">
-                    <span>Mic mute</span>
-                    <input type="checkbox" id="mic_muted" )rawliteral" + String(mic_muted ? "checked" : "") + R"rawliteral(>
-                </div>
-            </div>
-            <label><strong>Mic Sensitivity</strong></label>
-            <input type="range" id="mic_sensitivity" min="0" max="100" value=")rawliteral" + String(mic_sensitivity) + R"rawliteral(">
-            <span id="micSensitivityValue">)rawliteral" + String(mic_sensitivity) + R"rawliteral(</span>
-            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                Preview mic capture at http://ESP32-IP/audio.wav (RTSP audio planned).
-            </div>
-
-            <label style="margin-top: 12px;"><strong>Doorbell Webhook (HomeKit)</strong></label>
-            <input type="text" id="scrypted_webhook" value=")rawliteral" + scrypted_webhook + R"rawliteral(" placeholder="http://scrypted-ip:11080/endpoint/your-id/public/">
-            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                Get this from Scrypted doorbell device settings. Leave empty to disable HomeKit ring.
-            </div>
-            <div class="button-row" style="margin-top: 8px;">
-                <button class="button" onclick="testHomekitGong()">🔔 HomeKit Test Gong</button>
-            </div>
-
-            <div class="flash-stats" style="margin-top: 12px;">
-                <strong>Recommended Source URL:</strong>
-                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;" id="scrypted_source_url"></p>
-            </div>
-            <div class="flash-stats">
-                <strong>FFmpeg Input Args:</strong>
-                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;" id="scrypted_input_args"></p>
-            </div>
-            <div class="flash-stats">
-                <strong>FFmpeg Output Prefix:</strong>
-                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;" id="scrypted_output_prefix"></p>
-            </div>
-        </div>
-    </div>
-
-    <div class="button-row log-actions" style="margin-top: 20px;">
-        <button class="button" onclick="saveFeatures()">💾 Save Features</button>
-        <button class="button danger-btn" onclick="location.href='/restart';">🔄 Restart</button>
-        <a class="button danger-btn" href="/">Back</a>
-    </div>
-
-    <script>
-        const darkToggle = document.getElementById("darkModeToggle");
-        function setDarkMode(enabled) {
-            document.body.classList.toggle("dark-mode", enabled);
-            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        String page = loadUiTemplate("/setup.html");
+        if (page.isEmpty()) {
+          request->send(500, "text/plain", "UI template missing");
+          return;
         }
-        const savedDarkMode = localStorage.getItem("darkMode");
-        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
-        darkToggle.checked = darkModeEnabled;
-        setDarkMode(darkModeEnabled);
-        darkToggle.addEventListener("change", () => {
-            setDarkMode(darkToggle.checked);
-        });
+        page.replace("{{SIP_ENABLED_CHECKED}}", sip_enabled ? "checked" : "");
+        page.replace("{{TR064_ENABLED_CHECKED}}", tr064_enabled ? "checked" : "");
+        page.replace("{{HTTP_CAM_ENABLED_CHECKED}}", http_cam_enabled ? "checked" : "");
+        page.replace("{{RTSP_ENABLED_CHECKED}}", rtsp_enabled ? "checked" : "");
+        page.replace("{{HTTP_CAM_MAX_CLIENTS}}", String(http_cam_max_clients));
+        page.replace("{{SCRYPTED_SOURCE_HTTP_CHECKED}}", scrypted_source == "http" ? "checked" : "");
+        page.replace("{{SCRYPTED_SOURCE_RTSP_CHECKED}}", scrypted_source == "rtsp" ? "checked" : "");
+        page.replace("{{SCRYPTED_LOW_LATENCY_CHECKED}}", scrypted_low_latency ? "checked" : "");
+        page.replace("{{SCRYPTED_LOW_BUFFER_CHECKED}}", scrypted_low_buffer ? "checked" : "");
+        page.replace("{{SCRYPTED_RTSP_UDP_CHECKED}}", scrypted_rtsp_udp ? "checked" : "");
+        page.replace("{{MIC_ENABLED_CHECKED}}", mic_enabled ? "checked" : "");
+        page.replace("{{MIC_MUTED_CHECKED}}", mic_muted ? "checked" : "");
+        page.replace("{{MIC_SENSITIVITY}}", String(mic_sensitivity));
+        page.replace("{{AUDIO_OUT_ENABLED_CHECKED}}", audio_out_enabled ? "checked" : "");
+        page.replace("{{AUDIO_OUT_MUTED_CHECKED}}", audio_out_muted ? "checked" : "");
+        page.replace("{{AUDIO_OUT_VOLUME}}", String(audio_out_volume));
+        page.replace("{{SCRYPTED_WEBHOOK}}", scrypted_webhook);
+        page.replace("{{LOCAL_IP}}", WiFi.localIP().toString());
+        page.replace("{{TIMEZONE}}", timezone);
 
-        function saveFeatures() {
-            const features = {
-                timezone: document.getElementById("timezone").value,
-                sip_enabled: document.getElementById("sip_enabled").checked,
-                tr064_enabled: document.getElementById("tr064_enabled").checked,
-                http_cam_enabled: document.getElementById("http_cam_enabled").checked,
-                rtsp_enabled: document.getElementById("rtsp_enabled").checked,
-                http_cam_max_clients: parseInt(document.getElementById("http_cam_max_clients").value || "2", 10),
-                scrypted_source: document.querySelector("input[name='scrypted_source']:checked")?.value || "http",
-                scrypted_webhook: document.getElementById("scrypted_webhook").value.trim(),
-                scrypted_low_latency: document.getElementById("scrypted_low_latency").checked,
-                scrypted_low_buffer: document.getElementById("scrypted_low_buffer").checked,
-                scrypted_rtsp_udp: document.getElementById("scrypted_rtsp_udp").checked,
-                mic_enabled: document.getElementById("mic_enabled").checked,
-                mic_muted: document.getElementById("mic_muted").checked,
-                mic_sensitivity: parseInt(document.getElementById("mic_sensitivity").value || "70", 10),
-                audio_out_enabled: document.getElementById("audio_out_enabled").checked,
-                audio_out_muted: document.getElementById("audio_out_muted").checked,
-                audio_out_volume: parseInt(document.getElementById("audio_out_volume").value || "70", 10)
-            };
-
-            if (!validateScryptedOptions()) {
-                alert("Scrypted options are invalid. Enable the required stream type.");
-                return;
-            }
-
-            fetch("/saveFeatures", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(features)
-            }).then(r => r.text())
-              .then(t => {
-                  alert(t);
-                  setTimeout(() => window.location.reload(), 1000);
-              })
-              .catch(e => alert("Save failed: " + e));
-        }
-
-        function testHomekitGong() {
-            fetch("/ring/homekit")
-                .then(r => r.text())
-                .then(t => alert(t))
-                .catch(e => alert("HomeKit test failed: " + e));
-        }
-
-        const cameraSetupStatusEl = document.getElementById("cameraSetupStatus");
-        const qualityValueEl = document.getElementById("qualityValue");
-        const brightnessValueEl = document.getElementById("brightnessValue");
-        const contrastValueEl = document.getElementById("contrastValue");
-        const scryptedStatusEl = document.getElementById("scryptedStatus");
-        const scryptedSourceUrlEl = document.getElementById("scrypted_source_url");
-        const scryptedInputArgsEl = document.getElementById("scrypted_input_args");
-        const scryptedOutputPrefixEl = document.getElementById("scrypted_output_prefix");
-        const micSensitivityValueEl = document.getElementById("micSensitivityValue");
-        const audioOutVolumeValueEl = document.getElementById("audioOutVolumeValue");
-
-        function fetchCameraSetupStatus() {
-            fetch("/status")
-                .then(r => r.json())
-                .then(data => {
-                    cameraSetupStatusEl.innerHTML = `<strong>Camera:</strong> ${data.PID || "Unknown"} | size=${data.framesize} | quality=${data.quality}`;
-                    if (data.framesize !== undefined) {
-                        document.getElementById("framesize").value = data.framesize;
-                    }
-                    if (data.quality !== undefined) {
-                        document.getElementById("quality").value = data.quality;
-                        qualityValueEl.textContent = data.quality;
-                    }
-                    if (data.brightness !== undefined) {
-                        document.getElementById("brightness").value = data.brightness;
-                        brightnessValueEl.textContent = data.brightness;
-                    }
-                    if (data.contrast !== undefined) {
-                        document.getElementById("contrast").value = data.contrast;
-                        contrastValueEl.textContent = data.contrast;
-                    }
-                })
-                .catch(() => {
-                    cameraSetupStatusEl.innerHTML = "<strong>Camera:</strong> unavailable";
-                });
-        }
-
-        function applyCameraSettings() {
-            const fs = document.getElementById("framesize").value;
-            const q = document.getElementById("quality").value;
-            const b = document.getElementById("brightness").value;
-            const c = document.getElementById("contrast").value;
-            Promise.all([
-                fetch(`/control?var=framesize&val=${fs}`),
-                fetch(`/control?var=quality&val=${q}`),
-                fetch(`/control?var=brightness&val=${b}`),
-                fetch(`/control?var=contrast&val=${c}`)
-            ]).then(() => {
-                alert(`Applied camera settings: framesize=${fs}, quality=${q}, brightness=${b}, contrast=${c}`);
-                fetchCameraSetupStatus();
-            }).catch(() => alert("Failed to apply camera settings"));
-        }
-
-        document.getElementById("quality").addEventListener("input", (e) => {
-            qualityValueEl.textContent = e.target.value;
-        });
-        document.getElementById("brightness").addEventListener("input", (e) => {
-            brightnessValueEl.textContent = e.target.value;
-        });
-        document.getElementById("contrast").addEventListener("input", (e) => {
-            contrastValueEl.textContent = e.target.value;
-        });
-        document.getElementById("mic_sensitivity").addEventListener("input", (e) => {
-            micSensitivityValueEl.textContent = e.target.value;
-        });
-        document.getElementById("audio_out_volume").addEventListener("input", (e) => {
-            audioOutVolumeValueEl.textContent = e.target.value;
-        });
-
-        function updateAudioUi() {
-            const micEnabled = document.getElementById("mic_enabled").checked;
-            document.getElementById("mic_muted").disabled = !micEnabled;
-            document.getElementById("mic_sensitivity").disabled = !micEnabled;
-
-            const audioOutEnabled = document.getElementById("audio_out_enabled").checked;
-            document.getElementById("audio_out_muted").disabled = !audioOutEnabled;
-            document.getElementById("audio_out_volume").disabled = !audioOutEnabled;
-        }
-
-        function getScryptedSource() {
-            const selected = document.querySelector("input[name='scrypted_source']:checked");
-            return selected ? selected.value : "http";
-        }
-
-        function buildScryptedOutputPrefix() {
-            const lowLatency = document.getElementById("scrypted_low_latency").checked;
-            const gop = lowLatency ? 30 : 60;
-            return `-c:v libx264 -pix_fmt yuvj420p -preset ultrafast -bf 0 -g ${gop} -r 15 -b:v 500000 -bufsize 1000000 -maxrate 500000`;
-        }
-
-        function buildScryptedInputArgs() {
-            const source = getScryptedSource();
-            const lowBuffer = document.getElementById("scrypted_low_buffer").checked;
-            const preferUdp = document.getElementById("scrypted_rtsp_udp").checked;
-            const args = [];
-            if (source === "rtsp") {
-                args.push(`-rtsp_transport ${preferUdp ? "udp" : "tcp"}`);
-            }
-            if (lowBuffer) {
-                args.push("-fflags nobuffer -flags low_delay -analyzeduration 0 -probesize 32");
-            }
-            return args.length ? args.join(" ") : "(none)";
-        }
-
-        function updateScryptedUi() {
-            const httpRadio = document.getElementById("scrypted_source_http");
-            const rtspRadio = document.getElementById("scrypted_source_rtsp");
-            const rtspEnabled = document.getElementById("rtsp_enabled").checked;
-            const httpEnabled = document.getElementById("http_cam_enabled").checked;
-
-            httpRadio.disabled = !httpEnabled;
-            rtspRadio.disabled = !rtspEnabled;
-
-            if (!httpEnabled && rtspEnabled) {
-                rtspRadio.checked = true;
-            } else if (!rtspEnabled && httpEnabled) {
-                httpRadio.checked = true;
-            }
-
-            const source = getScryptedSource();
-            const ip = ")rawliteral" + WiFi.localIP().toString() + R"rawliteral(";
-            const sourceUrl = source === "rtsp"
-                ? `rtsp://${ip}:8554/mjpeg/1`
-                : `http://${ip}:81/stream`;
-            scryptedSourceUrlEl.textContent = sourceUrl;
-            scryptedInputArgsEl.textContent = buildScryptedInputArgs();
-            scryptedOutputPrefixEl.textContent = buildScryptedOutputPrefix();
-
-            const rtspUdpEl = document.getElementById("scrypted_rtsp_udp");
-            rtspUdpEl.disabled = source !== "rtsp";
-
-            let status = "OK";
-            if (!httpEnabled && !rtspEnabled) {
-                status = "Enable HTTP or RTSP streaming to use Scrypted.";
-            } else if (source === "rtsp" && !rtspEnabled) {
-                status = "Enable RTSP streaming to use RTSP source.";
-            } else if (source === "http" && !httpEnabled) {
-                status = "Enable HTTP streaming to use HTTP source.";
-            }
-            scryptedStatusEl.innerHTML = `<strong>Status:</strong> ${status}`;
-        }
-
-        function validateScryptedOptions() {
-            const source = getScryptedSource();
-            const rtspEnabled = document.getElementById("rtsp_enabled").checked;
-            const httpEnabled = document.getElementById("http_cam_enabled").checked;
-            if (source === "rtsp" && !rtspEnabled) {
-                return false;
-            }
-            if (source === "http" && !httpEnabled) {
-                return false;
-            }
-            return true;
-        }
-
-        document.querySelectorAll("input[name='scrypted_source']").forEach((el) => {
-            el.addEventListener("change", updateScryptedUi);
-        });
-        document.getElementById("scrypted_low_latency").addEventListener("change", updateScryptedUi);
-        document.getElementById("scrypted_low_buffer").addEventListener("change", updateScryptedUi);
-        document.getElementById("scrypted_rtsp_udp").addEventListener("change", updateScryptedUi);
-        document.getElementById("rtsp_enabled").addEventListener("change", updateScryptedUi);
-        document.getElementById("http_cam_enabled").addEventListener("change", updateScryptedUi);
-        document.getElementById("mic_enabled").addEventListener("change", updateAudioUi);
-        document.getElementById("audio_out_enabled").addEventListener("change", updateAudioUi);
-        // Set selected timezone
-        document.getElementById("timezone").value = ")rawliteral" + String(timezone) + R"rawliteral(";
-
-        fetchCameraSetupStatus();
-        updateScryptedUi();
-        updateAudioUi();
-
-
-    </script>
-</body>
-</html>
-)rawliteral";
         AsyncWebServerResponse *response = request->beginResponse(200, "text/html", page);
         response->addHeader("Cache-Control", "no-store");
         request->send(response);
@@ -1597,109 +598,15 @@ void setup() {
         String number = prefs.getString("number", "");
         prefs.end();
 
-        String page = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head>
-    <title>TR-064 Setup</title>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="/style.css">
-</head>
-<body>
-    <div class="dark-mode-toggle">
-        <label class="switch">
-            <input type="checkbox" id="darkModeToggle">
-            <span class="slider"></span>
-        </label>
-        <span>Dark Mode</span>
-    </div>
-
-    <div class="container">
-        <h1>☎️ TR-064 Setup</h1>
-        <p>Configure FRITZ!Box credentials and the internal ring number.</p>
-        <div class="flash-stats">
-            <strong>FRITZ!Box TR-064 Setup (from AVM docs)</strong>
-            <p><strong>1) Enable TR-064 access</strong></p>
-            <ul>
-                <li>FRITZ!Box UI → Heimnetz → Heimnetzübersicht → Netzwerkeinstellungen</li>
-                <li>Enable: „Zugriff für Anwendungen zulassen“</li>
-                <li>TR-064 endpoints: http://fritz.box:49000 and https://fritz.box:49443</li>
-            </ul>
-            <p><strong>2) Create a user with TR-064 permissions</strong></p>
-            <ul>
-                <li>System → FRITZ!Box-Benutzer</li>
-                <li>Create a dedicated user (e.g., tr064-client)</li>
-                <li>Permissions: FRITZ!Box Einstellungen, Telefonie, Smart Home (if needed)</li>
-            </ul>
-        <p><strong>TR-064 uses HTTP Digest Auth</strong></p>
-        <p><strong>FRITZ!Box address:</strong> )rawliteral" + WiFi.gatewayIP().toString() + R"rawliteral(</p>
-        <p>Enter TR-064 credentials below.</p>
-        </div>
-
-        <h3>📡 TR-064 SOAP</h3>
-        <label><strong>TR-064 Username:</strong></label>
-        <input type="text" id="tr064_user" value=")rawliteral" + tr064_user + R"rawliteral(" placeholder="TR-064 app username">
-
-        <label><strong>TR-064 Password:</strong></label>
-        <input type="password" id="tr064_pass" value=")rawliteral" + tr064_pass + R"rawliteral(" placeholder="TR-064 app password">
-
-        <h3>📞 Ring Configuration</h3>
-        <label><strong>Internal Ring Number:</strong></label>
-        <input type="text" id="tr_number" value=")rawliteral" + number + R"rawliteral(" placeholder="e.g., **9 or **610">
-
-        <div>
-            <button class="button" onclick="saveTr064()">💾 Save</button>
-            <button class="button" onclick="testRingTr064()">🔔 Test TR-064 Ring</button>
-            <a class="button danger-btn" href="/">Back</a>
-        </div>
-    </div>
-
-    <script>
-        // Dark mode handling
-        const darkToggle = document.getElementById("darkModeToggle");
-        function setDarkMode(enabled) {
-            document.body.classList.toggle("dark-mode", enabled);
-            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        String page = loadUiTemplate("/tr064.html");
+        if (page.isEmpty()) {
+          request->send(500, "text/plain", "UI template missing");
+          return;
         }
-        // Initialize dark mode from localStorage (default: enabled)
-        const savedDarkMode = localStorage.getItem("darkMode");
-        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
-        darkToggle.checked = darkModeEnabled;
-        setDarkMode(darkModeEnabled);
-        darkToggle.addEventListener("change", () => {
-            setDarkMode(darkToggle.checked);
-        });
-
-        // Ensure emoji text renders correctly under UTF-8.
-        function saveTr064() {
-            let tr064_user = document.getElementById("tr064_user").value;
-            let tr064_pass = document.getElementById("tr064_pass").value;
-            let number = document.getElementById("tr_number").value;
-
-            fetch("/saveTR064", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
-                    "tr064_user": tr064_user, 
-                    "tr064_pass": tr064_pass, 
-                    "number": number 
-                })
-            }).then(r => r.text())
-              .then(t => alert(t))
-              .catch(e => alert("Save failed: " + e));
-        }
-
-        function testRingTr064() {
-            fetch("/ring/tr064")
-                .then(r => r.text())
-                .then(t => alert(t))
-                .catch(e => alert("TR-064 Ring failed: " + e));
-        }
-    </script>
-</body>
-</html>
-)rawliteral";
+        page.replace("{{GATEWAY_IP}}", WiFi.gatewayIP().toString());
+        page.replace("{{TR064_USER}}", tr064_user);
+        page.replace("{{TR064_PASS}}", tr064_pass);
+        page.replace("{{TR064_NUMBER}}", number);
         request->send(200, "text/html", page);
       });
 
@@ -1712,117 +619,16 @@ void setup() {
         String sip_target = prefs.getString("sip_target", "**610");
         prefs.end();
 
-        String page = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head>
-    <title>SIP Setup</title>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="/style.css">
-</head>
-<body>
-    <div class="dark-mode-toggle">
-        <label class="switch">
-            <input type="checkbox" id="darkModeToggle">
-            <span class="slider"></span>
-        </label>
-        <span>Dark Mode</span>
-    </div>
-
-    <div class="container full-width">
-        <h1>☎️ SIP Setup</h1>
-        <p>Configure FRITZ!Box SIP credentials to ring internal phones.</p>
-        <div class="flash-stats">
-            <strong>FRITZ!Box SIP Setup Instructions</strong>
-            <p><strong>1) Create an IP Phone in FRITZ!Box</strong></p>
-            <ul>
-                <li>FRITZ!Box UI → Telefonie → Telefoniegeräte</li>
-                <li>Click "Neues Gerät einrichten"</li>
-                <li>Select "Telefon (mit und ohne Anrufbeantworter)"</li>
-                <li>Select "LAN/WLAN (IP-Telefon)"</li>
-                <li>Enter username (e.g., 620) and password</li>
-                <li>Give it a name like "ESP32-Doorbell"</li>
-            </ul>
-            <p><strong>2) Note the credentials</strong></p>
-            <ul>
-                <li>Username (Benutzername): This is your SIP username</li>
-                <li>Password (Kennwort): This is your SIP password</li>
-            </ul>
-            <p><strong>3) Configure target number</strong></p>
-            <ul>
-                <li>Use **610 to ring all DECT phones</li>
-                <li>Use **9 plus extension to ring a specific phone</li>
-            </ul>
-        <p><strong>FRITZ!Box address:</strong> )rawliteral" + WiFi.gatewayIP().toString() + R"rawliteral(</p>
-        </div>
-
-        <h3>📡 SIP Credentials</h3>
-        <label><strong>SIP Username:</strong></label>
-        <input type="text" id="sip_user" value=")rawliteral" + sip_user + R"rawliteral(" placeholder="e.g., 620">
-
-        <label><strong>SIP Password:</strong></label>
-        <input type="password" id="sip_password" value=")rawliteral" + sip_password + R"rawliteral(" placeholder="IP phone password">
-
-        <label><strong>Display Name:</strong></label>
-        <input type="text" id="sip_displayname" value=")rawliteral" + sip_displayname + R"rawliteral(" placeholder="Doorbell">
-
-        <h3>📞 Ring Configuration</h3>
-        <label><strong>Target Number:</strong></label>
-        <input type="text" id="sip_target" value=")rawliteral" + sip_target + R"rawliteral(" placeholder="e.g., **610">
-
-        <div>
-            <button class="button" onclick="saveSip()">💾 Save</button>
-            <button class="button" onclick="testRingSip()">🔔 Test SIP Ring</button>
-            <a class="button danger-btn" href="/">Back</a>
-        </div>
-    </div>
-
-    <script>
-        // Dark mode handling
-        const darkToggle = document.getElementById("darkModeToggle");
-        function setDarkMode(enabled) {
-            document.body.classList.toggle("dark-mode", enabled);
-            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        String page = loadUiTemplate("/sip.html");
+        if (page.isEmpty()) {
+          request->send(500, "text/plain", "UI template missing");
+          return;
         }
-        const savedDarkMode = localStorage.getItem("darkMode");
-        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
-        darkToggle.checked = darkModeEnabled;
-        setDarkMode(darkModeEnabled);
-        darkToggle.addEventListener("change", () => {
-            setDarkMode(darkToggle.checked);
-        });
-
-        function saveSip() {
-            let sip_user = document.getElementById("sip_user").value;
-            let sip_password = document.getElementById("sip_password").value;
-            let sip_displayname = document.getElementById("sip_displayname").value;
-            let sip_target = document.getElementById("sip_target").value;
-
-            fetch("/saveSIP", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
-                    "sip_user": sip_user, 
-                    "sip_password": sip_password, 
-                    "sip_displayname": sip_displayname, 
-                    "sip_target": sip_target
-                })
-            }).then(r => r.text())
-              .then(t => alert(t))
-              .catch(e => alert("Save failed: " + e));
-        }
-
-        function testRingSip() {
-            fetch("/ring/sip")
-                .then(r => r.text())
-                .then(t => alert(t))
-                .catch(e => alert("SIP Ring failed: " + e));
-        }
-    </script>
-</body>
-</html>
-)rawliteral";
+        page.replace("{{GATEWAY_IP}}", WiFi.gatewayIP().toString());
+        page.replace("{{SIP_USER}}", sip_user);
+        page.replace("{{SIP_PASS}}", sip_password);
+        page.replace("{{SIP_DISPLAY}}", sip_displayname);
+        page.replace("{{SIP_TARGET}}", sip_target);
         request->send(200, "text/html", page);
       });
 
@@ -2127,7 +933,8 @@ void setup() {
         json += "\"last_frame_age_ms\":" + String(lastFrameAgeMs) + ",";
         json += "\"clients_list\":" + clientsJson + ",";
         json += "\"rtsp_sessions\":" + String(rtspSessions) + ",";
-        json += "\"rtsp_udp_endpacket_fail\":" + String(getRtspUdpEndPacketFailCount());
+        json += "\"rtsp_udp_endpacket_fail\":" + String(getRtspUdpEndPacketFailCount()) + ",";
+        json += "\"rtsp_udp_backoff_ms\":" + String(getRtspUdpBackoffRemainingMs());
         json += "}";
         request->send(200, "application/json", json);
       });
@@ -2143,6 +950,15 @@ void setup() {
       server.on("/clearLog", HTTP_POST, [](AsyncWebServerRequest *request) {
         clearEventLog();
         request->send(200, "text/plain", "Log cleared");
+      });
+
+      server.on("/resetRtspUdpFails", HTTP_POST, [](AsyncWebServerRequest *request) {
+        resetRtspUdpEndPacketFailCount();
+        request->send(200, "text/plain", "RTSP UDP fail count reset");
+      });
+      server.on("/resetRtspUdpBackoff", HTTP_POST, [](AsyncWebServerRequest *request) {
+        resetRtspUdpBackoffState();
+        request->send(200, "text/plain", "RTSP UDP backoff cleared");
       });
 
       server.on("/ring", HTTP_GET, [](AsyncWebServerRequest *request) {

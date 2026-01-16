@@ -6,6 +6,7 @@
 
 #include "wifi_ap.h"
 #include <ArduinoJson.h>
+#include <LittleFS.h>
 
 // Tracks whether the device is currently running in AP provisioning mode.
 static bool apMode = false;
@@ -78,136 +79,39 @@ void stopAPMode() {
     delay(500);
 }
 
+static String loadUiTemplate(const char *path) {
+    File file = LittleFS.open(path, "r");
+    if (!file) {
+        Serial.printf("❌ UI template missing: %s\n", path);
+        return String();
+    }
+    String content = file.readString();
+    file.close();
+    return content;
+}
+
+static String buildSsidOptions() {
+    String options;
+    for (size_t i = 0; i < cachedSSIDs.size(); i++) {
+        options += "            <option value='" + cachedSSIDs[i] + "'>" + cachedSSIDs[i] + "</option>\n";
+    }
+
+    if (cachedSSIDs.empty()) {
+        options += "            <option value=\"\" disabled>(scanning...) refresh in a few seconds</option>\n";
+    }
+
+    return options;
+}
+
 String generateWiFiSetupPage() {
     // Update the cached scan list without blocking the web request.
     refreshWiFiScanCache();
 
-    // Build HTML page with WiFi and TR-064 settings.
-    String page = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head>
-    <title>ESP32 Doorbell Setup</title>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="/style.css">
-    <script>
-        function connectWiFi() {
-            // Save WiFi credentials to NVS and reboot.
-            let ssid = document.getElementById("ssid").value;
-            let password = document.getElementById("password").value;
-
-            if (ssid === "") {
-                alert("⚠️ Please select or enter an SSID!");
-                return;
-            }
-
-            fetch("/saveWiFi", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ "ssid": ssid, "password": password })
-            }).then(response => response.text())
-              .then(text => {
-                  alert(text + "\nESP32 will restart now.");
-                  setTimeout(() => location.reload(), 3000);
-              })
-              .catch(error => {
-                  alert("Error saving WiFi credentials: " + error);
-              });
-        }
-
-        function saveTr064() {
-            // Save TR-064 credentials and ring number for FRITZ!Box.
-            let tr064_user = document.getElementById("tr064_user").value;
-            let tr064_pass = document.getElementById("tr064_pass").value;
-            let number = document.getElementById("tr_number").value;
-
-            fetch("/saveTR064", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
-                    "tr064_user": tr064_user, 
-                    "tr064_pass": tr064_pass, 
-                    "number": number 
-                })
-            }).then(response => response.text())
-              .then(text => {
-                  alert(text);
-              })
-              .catch(error => {
-                  alert("Error saving TR-064 settings: " + error);
-              });
-        }
-        function rescanWiFi() {
-            fetch("/scanWifi")
-                .then(response => response.text())
-                .then(text => {
-                    alert(text + "\nRefresh the page in a few seconds.");
-                })
-                .catch(error => {
-                    alert("Error starting WiFi scan: " + error);
-                });
-        }
-    </script>
-</head>
-<body>
-    <div class="wifi-setup-container">
-        <h1>🔔 ESP32 Doorbell Wi-Fi Setup</h1>
-        <p>Configure your doorbell's WiFi connection</p>
-        
-        <label><strong>Select Network:</strong></label>
-        <select id="ssid">
-            <option value="">-- Select WiFi Network --</option>
-)rawliteral";
-
-    // Add cached WiFi networks to dropdown.
-    for (size_t i = 0; i < cachedSSIDs.size(); i++) {
-        page += "            <option value='" + cachedSSIDs[i] + "'>" + cachedSSIDs[i] + "</option>\n";
+    String page = loadUiTemplate("/wifi-setup.html");
+    if (page.isEmpty()) {
+        return String();
     }
-
-    if (cachedSSIDs.empty()) {
-        page += "            <option value=\"\" disabled>(scanning...) refresh in a few seconds</option>\n";
-    }
-
-    page += R"rawliteral(
-        </select>
-        
-        <label><strong>Or Enter SSID Manually:</strong></label>
-        <input type="text" id="manual_ssid" placeholder="Enter SSID (if hidden)">
-        <script>
-            document.getElementById("manual_ssid").addEventListener("input", function() {
-                document.getElementById("ssid").value = this.value;
-            });
-        </script>
-        
-        <label><strong>Password:</strong></label>
-        <input type="password" id="password" placeholder="Enter Wi-Fi Password">
-        
-        <button onclick="connectWiFi()">💾 Save & Connect</button>
-        <button onclick="rescanWiFi()">🔄 Rescan WiFi</button>
-
-        <hr>
-
-        <h3>FRITZ!Box TR-064</h3>
-        <label><strong>TR-064 Username:</strong></label>
-        <input type="text" id="tr064_user" placeholder="TR-064 username">
-
-        <label><strong>TR-064 Password:</strong></label>
-        <input type="password" id="tr064_pass" placeholder="TR-064 password">
-
-        <label><strong>Internal Ring Number:</strong></label>
-        <input type="text" id="tr_number" placeholder="e.g., **9 or **610">
-
-        <button onclick="saveTr064()">💾 Save TR-064 Settings</button>
-        
-        <footer>
-            <p class="disclaimer">ESP32-S3 HomeKit Doorbell</p>
-        </footer>
-    </div>
-</body>
-</html>
-)rawliteral";
-
+    page.replace("{{SSID_OPTIONS}}", buildSsidOptions());
     return page;
 }
 
@@ -239,7 +143,12 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
 
     // WiFi + TR-064 setup page.
     server.on("/wifiSetup", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(200, "text/html", generateWiFiSetupPage());
+        String page = generateWiFiSetupPage();
+        if (page.isEmpty()) {
+            request->send(500, "text/plain", "UI template missing");
+            return;
+        }
+        request->send(200, "text/html", page);
     });
 
     // WiFi status endpoint for troubleshooting/UX.

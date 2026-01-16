@@ -37,6 +37,9 @@ All Phase 1 objectives have been successfully implemented and tested.
 - SIP credential configuration
 - Camera settings (resolution, quality)
 - Test buttons for all functions
+- Metrics card (RTSP sessions, UDP fail/backoff indicators)
+- Reset actions for RTSP UDP fail count and backoff state
+- Dedicated log pages for camera and doorbell events
 - WiFi provisioning via AP mode
 
 ✅ **Scrypted Ready**
@@ -114,6 +117,8 @@ After WiFi configuration, all services are available:
 - **MJPEG Stream:** http://DEVICE_IP:81/stream
 - **SIP Setup:** http://DEVICE_IP/sip
 - **Test Ring:** http://DEVICE_IP/ring/sip
+- **Camera Logs:** http://DEVICE_IP/logs/camera
+- **Doorbell Logs:** http://DEVICE_IP/logs/doorbell
 
 ## 📚 Documentation
 

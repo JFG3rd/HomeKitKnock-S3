@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ESP32 Doorbell</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body class="full-width-page">
+    <div class="dark-mode-toggle">
+        <label class="switch">
+            <input type="checkbox" id="darkModeToggle">
+            <span class="slider"></span>
+        </label>
+        <span>Dark Mode</span>
+    </div>
+
+    <div class="header-container">
+        <h1 class="main-title">🔔 ESP32-S3 Doorbell</h1>
+    </div>
+
+    <div class="dashboard">
+        <!-- System Information Card -->
+        <div class="container card">
+            <h3>📊 System Information</h3>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span class="info-label">Status:</span>
+                    <span class="info-value status-online">● Online</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">WiFi:</span>
+                    <span class="info-value">Connected</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">IP Address:</span>
+                    <span class="info-value">{{LOCAL_IP}}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Signal Strength:</span>
+                    <span class="info-value"><span id="rssi">--</span> dBm</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">System Uptime:</span>
+                    <span class="info-value" id="uptime">--</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">WiFi Connected:</span>
+                    <span class="info-value" id="wifiConnected">--</span>
+                </div>
+            </div>
+            <hr>
+            <button class="danger-btn" title="Clear saved WiFi credentials and reboot into AP mode." onclick="location.href='/forget';">Forget WiFi</button>
+            <div class="button-row" style="margin-top: 12px;">
+                <a class="button" href="/setup" title="Configure features, streams, and Scrypted options.">⚙️ Feature Setup</a>
+                <button class="button danger-btn" title="Reboot the ESP32 device." onclick="location.href='/restart';">🔄 Restart</button>
+            </div>
+        </div>
+
+        <!-- Camera Settings Card -->
+        <div class="container card">
+            <h3>📷 Camera Settings</h3>
+            <div class="flash-stats" id="cameraStatus">
+                <strong>Camera:</strong> loading...
+            </div>
+            <div class="flash-stats" id="streamStatus">
+                <strong>Stream:</strong> loading...
+            </div>
+            
+            <hr>
+            <div class="button-row">
+                <a class="button config-btn" href="/capture" target="_blank" title="Open a single JPEG snapshot.">📸 Snapshot</a>
+                <a class="button" href="http://{{LOCAL_IP}}:81/stream" target="_blank" title="Open the MJPEG live stream.">🎥 Live Stream</a>
+            </div>
+            <hr>
+            {{STREAM_INFO}}
+            <details class="flash-stats">
+                <summary><strong>📺 Scrypted Setup (Quick Steps)</strong></summary>
+                <ol style="margin: 8px 0 0 16px; padding: 0; font-size: 0.9em;">
+                    <li>Add a camera in Scrypted.</li>
+                    <li>Use <strong>HTTP Camera</strong> with <code>http://ESP32-IP:81/stream</code>, or <strong>RTSP Camera</strong> with <code>rtsp://ESP32-IP:8554/mjpeg/1</code>.</li>
+                    <li>If using FFmpeg Camera for HomeKit, set Output Prefix to: <code>-c:v libx264 -pix_fmt yuvj420p -preset ultrafast -bf 0 -g 60 -r 15 -b:v 500000 -bufsize 1000000 -maxrate 500000</code></li>
+                </ol>
+            </details>
+        </div>
+
+        <!-- SIP/TR-064 Card -->
+        <div class="container card">
+            <h3>☎️ SIP/TR-064</h3>
+            <p>FRITZ!Box SIP/TR-064 integration for doorbell notifications.</p>
+            <div class="flash-stats" id="tr064Status">
+                <strong>Status:</strong> loading...
+            </div>
+            <hr>
+            <div class="button-row">
+                <button class="button" title="Trigger a SIP ring test." onclick="testRingSip()">🔔 Test Ring (SIP)</button>
+                <a class="button config-btn" href="/sip" title="Configure SIP credentials and ring target.">⚙️ Setup</a>
+            </div>
+            <a class="button" href="/sipDebug" target="_blank" title="Open SIP debug JSON.">🐛 Debug JSON</a>
+        </div>
+
+        <!-- Metrics Card -->
+        <div class="container card">
+            <h3>📈 Metrics</h3>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span class="info-label" title="Active RTSP PLAY sessions (streaming).">RTSP Sessions:</span>
+                    <span class="info-value" id="metricRtspSessions">--</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" title="Active MJPEG HTTP stream clients.">HTTP Clients:</span>
+                    <span class="info-value" id="metricHttpClients">--</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" title="Count of RTSP UDP send failures since boot or last reset.">RTSP UDP endPacket fails:</span>
+                    <span class="info-value" id="metricRtspUdpFails">--</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" title="Backoff is ON when RTSP UDP sends are throttled to relieve WiFi buffers.">UDP backoff active:</span>
+                    <span class="info-value" id="metricRtspUdpBackoffActive">--</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" title="Max remaining backoff across active RTSP UDP sessions.">UDP backoff remaining:</span>
+                    <span class="info-value" id="metricRtspUdpBackoffMs">--</span>
+                </div>
+            </div>
+            <hr>
+            <div class="button-row">
+                <a class="button" href="/logs/camera" title="Open filtered camera/streaming logs.">📹 Camera Logs</a>
+                <a class="button" href="/logs/doorbell" title="Open filtered doorbell/SIP/TR-064 logs.">☎️ Doorbell Logs</a>
+                <button class="button danger-btn" title="Reset the RTSP UDP fail counter." onclick="resetRtspUdpFails()">♻️ Reset UDP Fail Count</button>
+                <button class="button danger-btn" title="Clear active RTSP UDP backoff state." onclick="resetRtspUdpBackoff()">🧹 Clear UDP Backoff</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const statusEl = document.getElementById("cameraStatus");
+        const trStatusEl = document.getElementById("tr064Status");
+        const darkToggle = document.getElementById("darkModeToggle");
+        const rssiEl = document.getElementById("rssi");
+        const uptimeEl = document.getElementById("uptime");
+        const wifiConnectedEl = document.getElementById("wifiConnected");
+        const streamStatusEl = document.getElementById("streamStatus");
+        const metricRtspSessionsEl = document.getElementById("metricRtspSessions");
+        const metricHttpClientsEl = document.getElementById("metricHttpClients");
+        const metricRtspUdpFailsEl = document.getElementById("metricRtspUdpFails");
+        const metricRtspUdpBackoffActiveEl = document.getElementById("metricRtspUdpBackoffActive");
+        const metricRtspUdpBackoffMsEl = document.getElementById("metricRtspUdpBackoffMs");
+        const wifiConnectTime = Date.now();
+
+        function setDarkMode(enabled) {
+            document.body.classList.toggle("dark-mode", enabled);
+            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        }
+
+        // Initialize dark mode from localStorage (default: enabled)
+        const savedDarkMode = localStorage.getItem("darkMode");
+        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
+        darkToggle.checked = darkModeEnabled;
+        setDarkMode(darkModeEnabled);
+
+        darkToggle.addEventListener("change", () => {
+            setDarkMode(darkToggle.checked);
+        });
+
+        function fetchStatus() {
+            fetch("/status")
+                .then(r => r.json())
+                .then(data => {
+                    statusEl.innerHTML = `<strong>Camera:</strong> ${data.PID || "Unknown"} | size=${data.framesize} | quality=${data.quality}`;
+                })
+                .catch(() => {
+                    statusEl.innerHTML = "<strong>Camera:</strong> unavailable";
+                });
+        }
+
+        function formatMs(ms) {
+            if (!ms || ms < 0) return "0s";
+            const sec = Math.floor(ms / 1000);
+            if (sec < 60) return `${sec}s`;
+            const min = Math.floor(sec / 60);
+            const rem = sec % 60;
+            return `${min}m ${rem}s`;
+        }
+
+        function fetchStreamInfo() {
+            fetch("/cameraStreamInfo")
+                .then(r => r.json())
+                .then(data => {
+                    const rtspSessions = data.rtsp_sessions || 0;
+                    const httpClients = data.clients || 0;
+                    const rtspUdpFails = data.rtsp_udp_endpacket_fail || 0;
+                    const rtspUdpBackoffMs = data.rtsp_udp_backoff_ms || 0;
+                    metricRtspSessionsEl.textContent = rtspSessions;
+                    metricHttpClientsEl.textContent = httpClients;
+                    metricRtspUdpFailsEl.textContent = rtspUdpFails;
+                    metricRtspUdpBackoffActiveEl.textContent = rtspUdpBackoffMs > 0 ? "ON" : "OFF";
+                    metricRtspUdpBackoffMsEl.textContent = `${rtspUdpBackoffMs}ms`;
+
+                    if (!data.running) {
+                        streamStatusEl.innerHTML = "<strong>Stream:</strong> server stopped";
+                        return;
+                    }
+                    
+                    // Build HTTP stream status
+                    let httpStatus = "";
+                    if (!data.active) {
+                        httpStatus = "HTTP: no clients";
+                    } else {
+                        const ip = data.client_ip || "unknown";
+                        const clients = data.clients || 0;
+                        const connectedFor = formatMs(data.connected_ms);
+                        const lastFrame = formatMs(data.last_frame_age_ms);
+                        const list = Array.isArray(data.clients_list) ? data.clients_list.join(", ") : "";
+                        const listText = list.length ? ` | ${list}` : "";
+                        httpStatus = `HTTP: ${clients} client(s)${listText} | connected ${connectedFor} | last frame ${lastFrame} ago`;
+                    }
+                    
+                    // Build RTSP stream status
+                    const rtspStatus = rtspSessions > 0 
+                        ? `RTSP: ${rtspSessions} session(s)` 
+                        : "RTSP: no sessions";
+                    
+                    streamStatusEl.innerHTML = `<strong>Stream:</strong> ${httpStatus}<br>${rtspStatus}`;
+                })
+                .catch(() => {
+                    streamStatusEl.innerHTML = "<strong>Stream:</strong> unavailable";
+                    metricRtspSessionsEl.textContent = "--";
+                    metricHttpClientsEl.textContent = "--";
+                    metricRtspUdpFailsEl.textContent = "--";
+                    metricRtspUdpBackoffActiveEl.textContent = "--";
+                    metricRtspUdpBackoffMsEl.textContent = "--";
+                });
+        }
+
+        function resetRtspUdpFails() {
+            fetch("/resetRtspUdpFails", { method: "POST" })
+                .then(r => r.text())
+                .then(() => {
+                    metricRtspUdpFailsEl.textContent = "0";
+                })
+                .catch(() => alert("Failed to reset UDP fail count"));
+        }
+
+        function resetRtspUdpBackoff() {
+            fetch("/resetRtspUdpBackoff", { method: "POST" })
+                .then(r => r.text())
+                .then(() => {
+                    metricRtspUdpBackoffActiveEl.textContent = "OFF";
+                    metricRtspUdpBackoffMsEl.textContent = "0ms";
+                })
+                .catch(() => alert("Failed to clear UDP backoff state"));
+        }
+
+        function formatUptime(seconds) {
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            
+            if (days > 0) {
+                return `${days}d ${hours}h ${minutes}m`;
+            } else if (hours > 0) {
+                return `${hours}h ${minutes}m ${secs}s`;
+            } else if (minutes > 0) {
+                return `${minutes}m ${secs}s`;
+            } else {
+                return `${secs}s`;
+            }
+        }
+
+        function formatDateTime(timestamp) {
+            const date = new Date(timestamp);
+            const day = String(date.getDate()).padStart(2, '0');
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const year = date.getFullYear();
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
+            return `${day}.${month}.${year} ${hours}:${minutes}:${seconds}`;
+        }
+
+        function fetchDeviceStatus() {
+            fetch("/deviceStatus")
+                .then(r => r.json())
+                .then(data => {
+                    rssiEl.textContent = data.rssi;
+                    uptimeEl.textContent = formatUptime(data.uptimeSeconds || 0);
+                    wifiConnectedEl.textContent = formatDateTime(wifiConnectTime);
+                })
+                .catch(() => {
+                    rssiEl.textContent = "--";
+                    uptimeEl.textContent = "--";
+                    wifiConnectedEl.textContent = "--";
+                });
+        }
+
+        async function testRingSip() {
+            try {
+                const response = await fetch("/ring/sip");
+                const text = await response.text();
+                if (!response.ok) {
+                    let details = text || "SIP Ring failed";
+                    try {
+                        const info = await fetch("/sipDebug").then(r => r.json());
+                        details += `\nSIP debug: user=${info.sip_user} target=${info.sip_target} has_sip_config=${info.has_sip_config}`;
+                    } catch (err) {
+                        details += "\nSIP debug unavailable";
+                    }
+                    alert(details);
+                    return;
+                }
+                alert(text || "SIP Ring triggered");
+            } catch (err) {
+                alert("Failed to trigger SIP ring");
+            }
+        }
+
+        function fetchSipStatus() {
+            fetch("/sipDebug")
+                .then(r => r.json())
+                .then(data => {
+                    const sipCfg = data.has_sip_config ? "✓" : "✗";
+                    trStatusEl.innerHTML = `<strong>Status:</strong> SIP ${sipCfg} | user=${data.sip_user || "-"} | target=${data.sip_target || "-"}`;
+                })
+                .catch(() => {
+                    trStatusEl.innerHTML = "<strong>Status:</strong> unavailable";
+                });
+        }
+
+        fetchStatus();
+        fetchStreamInfo();
+        fetchDeviceStatus();
+        fetchSipStatus();
+        setInterval(fetchDeviceStatus, 5000);
+        setInterval(fetchSipStatus, 10000);
+        setInterval(fetchStreamInfo, 3000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TR-064 Setup</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="dark-mode-toggle">
+        <label class="switch">
+            <input type="checkbox" id="darkModeToggle">
+            <span class="slider"></span>
+        </label>
+        <span>Dark Mode</span>
+    </div>
+
+    <div class="container">
+        <h1>☎️ TR-064 Setup</h1>
+        <p>Configure FRITZ!Box credentials and the internal ring number.</p>
+        <div class="flash-stats">
+            <strong>FRITZ!Box TR-064 Setup (from AVM docs)</strong>
+            <p><strong>1) Enable TR-064 access</strong></p>
+            <ul>
+                <li>FRITZ!Box UI → Heimnetz → Heimnetzübersicht → Netzwerkeinstellungen</li>
+                <li>Enable: „Zugriff für Anwendungen zulassen“</li>
+                <li>TR-064 endpoints: http://fritz.box:49000 and https://fritz.box:49443</li>
+            </ul>
+            <p><strong>2) Create a user with TR-064 permissions</strong></p>
+            <ul>
+                <li>System → FRITZ!Box-Benutzer</li>
+                <li>Create a dedicated user (e.g., tr064-client)</li>
+                <li>Permissions: FRITZ!Box Einstellungen, Telefonie, Smart Home (if needed)</li>
+            </ul>
+        <p><strong>TR-064 uses HTTP Digest Auth</strong></p>
+        <p><strong>FRITZ!Box address:</strong> {{GATEWAY_IP}}</p>
+        <p>Enter TR-064 credentials below.</p>
+        </div>
+
+        <h3>📡 TR-064 SOAP</h3>
+        <label><strong>TR-064 Username:</strong></label>
+        <input type="text" id="tr064_user" value="{{TR064_USER}}" placeholder="TR-064 app username">
+
+        <label><strong>TR-064 Password:</strong></label>
+        <input type="password" id="tr064_pass" value="{{TR064_PASS}}" placeholder="TR-064 app password">
+
+        <h3>📞 Ring Configuration</h3>
+        <label><strong>Internal Ring Number:</strong></label>
+        <input type="text" id="tr_number" value="{{TR064_NUMBER}}" placeholder="e.g., **9 or **610">
+
+        <div>
+            <button class="button" title="Save TR-064 credentials and ring number." onclick="saveTr064()">💾 Save</button>
+            <button class="button" title="Trigger a TR-064 ring test." onclick="testRingTr064()">🔔 Test TR-064 Ring</button>
+            <a class="button danger-btn" href="/" title="Return to the main dashboard.">Back</a>
+        </div>
+    </div>
+
+    <script>
+        // Dark mode handling
+        const darkToggle = document.getElementById("darkModeToggle");
+        function setDarkMode(enabled) {
+            document.body.classList.toggle("dark-mode", enabled);
+            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        }
+        // Initialize dark mode from localStorage (default: enabled)
+        const savedDarkMode = localStorage.getItem("darkMode");
+        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
+        darkToggle.checked = darkModeEnabled;
+        setDarkMode(darkModeEnabled);
+        darkToggle.addEventListener("change", () => {
+            setDarkMode(darkToggle.checked);
+        });
+
+        // Ensure emoji text renders correctly under UTF-8.
+        function saveTr064() {
+            let tr064_user = document.getElementById("tr064_user").value;
+            let tr064_pass = document.getElementById("tr064_pass").value;
+            let number = document.getElementById("tr_number").value;
+
+            fetch("/saveTR064", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ 
+                    "tr064_user": tr064_user, 
+                    "tr064_pass": tr064_pass, 
+                    "number": number 
+                })
+            }).then(r => r.text())
+              .then(t => alert(t))
+              .catch(e => alert("Save failed: " + e));
+        }
+
+        function testRingTr064() {
+            fetch("/ring/tr064")
+                .then(r => r.text())
+                .then(t => alert(t))
+                .catch(e => alert("TR-064 Ring failed: " + e));
+        }
+    </script>
+</body>
+</html>

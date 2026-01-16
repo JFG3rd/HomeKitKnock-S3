@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Feature Setup</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="dark-mode-toggle">
+        <label class="switch">
+            <input type="checkbox" id="darkModeToggle">
+            <span class="slider"></span>
+        </label>
+        <span>Dark Mode</span>
+    </div>
+
+    <div class="header-container">
+        <h1 class="main-title">⚙️ Feature Setup</h1>
+        <p>Enable or disable individual features for your doorbell.</p>
+    </div>
+
+    <div class="dashboard">
+        <div class="container card setup-card">
+            <h3>🔧 Core Features</h3>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span><strong>🌍 Timezone</strong></span>
+                </div>
+                <select id="timezone" style="grid-column: 1 / -1; margin-bottom: 12px;">
+                    <option value="PST8PDT,M3.2.0,M11.1.0">🇺🇸 Pacific Time (US & Canada)</option>
+                    <option value="MST7MDT,M3.2.0,M11.1.0">🇺🇸 Mountain Time (US & Canada)</option>
+                    <option value="CST6CDT,M3.2.0,M11.1.0">🇺🇸 Central Time (US & Canada)</option>
+                    <option value="EST5EDT,M3.2.0,M11.1.0">🇺🇸 Eastern Time (US & Canada)</option>
+                    <option value="AKST9AKDT,M3.2.0,M11.1.0">🇺🇸 Alaska Time</option>
+                    <option value="HST10">🇺🇸 Hawaii-Aleutian Time (No DST)</option>
+                    <option value="GMT0BST,M3.5.0/1,M10.5.0">🇬🇧 UK Time (GMT/BST)</option>
+                    <option value="CET-1CEST,M3.5.0,M10.5.0/3">🇪🇺 Central European Time</option>
+                    <option value="EET-2EEST,M3.5.0,M10.5.0/3">🇪🇺 Eastern European Time</option>
+                    <option value="WET0WEST,M3.5.0/1,M10.5.0">🇪🇺 Western European Time</option>
+                    <option value="JST-9">🇯🇵 Japan Standard Time (No DST)</option>
+                    <option value="CST-8">🇨🇳 China Standard Time (No DST)</option>
+                    <option value="AEST-10AEDT,M10.1.0,M4.1.0/3">🇦🇺 Australian Eastern Time</option>
+                    <option value="ACST-9:30ACDT,M10.1.0,M4.1.0/3">🇦🇺 Australian Central Time</option>
+                    <option value="AWST-8">🇦🇺 Australian Western Time (No DST)</option>
+                    <option value="NZST-12NZDT,M9.5.0,M4.1.0/3">🇳🇿 New Zealand Time</option>
+                </select>
+                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666; grid-column: 1 / -1;">
+                    Automatically handles daylight saving time transitions for your region.
+                </div>
+                <div class="info-item">
+                    <span><strong>☎️ SIP Phone Ringing</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="sip_enabled" {{SIP_ENABLED_CHECKED}}>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                    Ring FRITZ!Box phones when doorbell is pressed via SIP protocol.
+                </div>
+
+                <div class="info-item">
+                    <span><strong>📡 TR-064 Integration</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="tr064_enabled" {{TR064_ENABLED_CHECKED}}>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                    Enable TR-064 SOAP protocol for advanced FRITZ!Box control.
+                </div>
+
+                <div class="info-item">
+                    <span><strong>📹 HTTP Camera Streaming</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="http_cam_enabled" {{HTTP_CAM_ENABLED_CHECKED}}>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                    MJPEG stream at http://ESP32-IP:81/stream and snapshot endpoint.
+                </div>
+                <div class="info-item">
+                    <span><strong>👥 Max MJPEG Clients</strong></span>
+                    <input type="number" id="http_cam_max_clients" min="1" max="4" value="{{HTTP_CAM_MAX_CLIENTS}}" style="width: 80px;">
+                </div>
+                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                    Limit simultaneous HTTP stream clients (e.g., Scrypted + FRITZ!Box).
+                </div>
+
+                <div class="info-item">
+                    <span><strong>🎥 RTSP Camera Streaming</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="rtsp_enabled" {{RTSP_ENABLED_CHECKED}}>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                    RTSP stream at rtsp://ESP32-IP:8554/mjpeg/1 (experimental, use HTTP for Scrypted).
+                </div>
+
+                <div class="info-item">
+                    <span><strong>🔊 Audio Out (Gong)</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="audio_out_enabled" {{AUDIO_OUT_ENABLED_CHECKED}}>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                    Local gong playback via MAX98357A I2S DAC.
+                </div>
+                <div class="info-item">
+                    <span><strong>🔇 Audio Out Mute</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="audio_out_muted" {{AUDIO_OUT_MUTED_CHECKED}}>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="info-item">
+                    <span><strong>🔊 Audio Out Volume</strong></span>
+                    <input type="range" id="audio_out_volume" min="0" max="100" value="{{AUDIO_OUT_VOLUME}}">
+                    <span id="audioOutVolumeValue">{{AUDIO_OUT_VOLUME}}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="container card setup-card">
+            <h3>📷 Camera Quality</h3>
+            <div class="flash-stats" id="cameraSetupStatus">
+                <strong>Camera:</strong> loading...
+            </div>
+
+            <label><strong>Frame Size</strong></label>
+            <select id="framesize">
+                <option value="5">QVGA (320x240)</option>
+                <option value="6">CIF (400x296)</option>
+                <option value="7">HVGA (480x320)</option>
+                <option value="8">VGA (640x480)</option>
+            </select>
+
+            <label><strong>JPEG Quality</strong></label>
+            <input type="range" id="quality" min="4" max="63" value="10">
+            <span id="qualityValue">10</span>
+
+            <label><strong>Brightness</strong></label>
+            <input type="range" id="brightness" min="-2" max="2" step="1" value="0">
+            <span id="brightnessValue">0</span>
+
+            <label><strong>Contrast</strong></label>
+            <input type="range" id="contrast" min="-2" max="2" step="1" value="0">
+            <span id="contrastValue">0</span>
+
+            <div style="margin-top: 12px;">
+                <button class="button" title="Apply frame size, JPEG quality, brightness, and contrast." onclick="applyCameraSettings()">Apply Camera Settings</button>
+            </div>
+        </div>
+
+        <div class="container card setup-card">
+            <h3>📺 Scrypted Stream Options</h3>
+            <div class="flash-stats" id="scryptedStatus">
+                <strong>Status:</strong> loading...
+            </div>
+
+            <label><strong>Source Type</strong></label>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span>HTTP MJPEG</span>
+                    <input type="radio" name="scrypted_source" id="scrypted_source_http" value="http" {{SCRYPTED_SOURCE_HTTP_CHECKED}}>
+                </div>
+                <div class="info-item">
+                    <span>RTSP MJPEG</span>
+                    <input type="radio" name="scrypted_source" id="scrypted_source_rtsp" value="rtsp" {{SCRYPTED_SOURCE_RTSP_CHECKED}}>
+                </div>
+            </div>
+
+            <label style="margin-top: 12px;"><strong>Optimization</strong></label>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span>Low latency (short GOP)</span>
+                    <input type="checkbox" id="scrypted_low_latency" {{SCRYPTED_LOW_LATENCY_CHECKED}}>
+                </div>
+                <div class="info-item">
+                    <span>Reduce input buffering</span>
+                    <input type="checkbox" id="scrypted_low_buffer" {{SCRYPTED_LOW_BUFFER_CHECKED}}>
+                </div>
+                <div class="info-item">
+                    <span>Prefer RTSP UDP transport</span>
+                    <input type="checkbox" id="scrypted_rtsp_udp" {{SCRYPTED_RTSP_UDP_CHECKED}}>
+                </div>
+            </div>
+
+            <label style="margin-top: 12px;"><strong>Audio (Mic)</strong></label>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span>Mic enabled</span>
+                    <input type="checkbox" id="mic_enabled" {{MIC_ENABLED_CHECKED}}>
+                </div>
+                <div class="info-item">
+                    <span>Mic mute</span>
+                    <input type="checkbox" id="mic_muted" {{MIC_MUTED_CHECKED}}>
+                </div>
+            </div>
+            <label><strong>Mic Sensitivity</strong></label>
+            <input type="range" id="mic_sensitivity" min="0" max="100" value="{{MIC_SENSITIVITY}}">
+            <span id="micSensitivityValue">{{MIC_SENSITIVITY}}</span>
+            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                Preview mic capture at http://ESP32-IP/audio.wav (RTSP audio planned).
+            </div>
+
+            <label style="margin-top: 12px;"><strong>Doorbell Webhook (HomeKit)</strong></label>
+            <input type="text" id="scrypted_webhook" value="{{SCRYPTED_WEBHOOK}}" placeholder="http://scrypted-ip:11080/endpoint/your-id/public/">
+            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                Get this from Scrypted doorbell device settings. Leave empty to disable HomeKit ring.
+            </div>
+            <div class="button-row" style="margin-top: 8px;">
+                <button class="button" title="Trigger the doorbell flow without SIP ringing." onclick="testHomekitGong()">🔔 HomeKit Test Gong</button>
+            </div>
+
+            <div class="flash-stats" style="margin-top: 12px;">
+                <strong>Recommended Source URL:</strong>
+                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;" id="scrypted_source_url"></p>
+            </div>
+            <div class="flash-stats">
+                <strong>FFmpeg Input Args:</strong>
+                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;" id="scrypted_input_args"></p>
+            </div>
+            <div class="flash-stats">
+                <strong>FFmpeg Output Prefix:</strong>
+                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;" id="scrypted_output_prefix"></p>
+            </div>
+        </div>
+    </div>
+
+    <div class="button-row log-actions" style="margin-top: 20px;">
+        <button class="button" title="Save feature toggles and restart." onclick="saveFeatures()">💾 Save Features</button>
+        <button class="button danger-btn" title="Reboot the ESP32 device." onclick="location.href='/restart';">🔄 Restart</button>
+        <a class="button danger-btn" href="/" title="Return to the main dashboard.">Back</a>
+    </div>
+
+    <script>
+        const darkToggle = document.getElementById("darkModeToggle");
+        function setDarkMode(enabled) {
+            document.body.classList.toggle("dark-mode", enabled);
+            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        }
+        const savedDarkMode = localStorage.getItem("darkMode");
+        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
+        darkToggle.checked = darkModeEnabled;
+        setDarkMode(darkModeEnabled);
+        darkToggle.addEventListener("change", () => {
+            setDarkMode(darkToggle.checked);
+        });
+
+        function saveFeatures() {
+            const features = {
+                timezone: document.getElementById("timezone").value,
+                sip_enabled: document.getElementById("sip_enabled").checked,
+                tr064_enabled: document.getElementById("tr064_enabled").checked,
+                http_cam_enabled: document.getElementById("http_cam_enabled").checked,
+                rtsp_enabled: document.getElementById("rtsp_enabled").checked,
+                http_cam_max_clients: parseInt(document.getElementById("http_cam_max_clients").value || "2", 10),
+                scrypted_source: document.querySelector("input[name='scrypted_source']:checked")?.value || "http",
+                scrypted_webhook: document.getElementById("scrypted_webhook").value.trim(),
+                scrypted_low_latency: document.getElementById("scrypted_low_latency").checked,
+                scrypted_low_buffer: document.getElementById("scrypted_low_buffer").checked,
+                scrypted_rtsp_udp: document.getElementById("scrypted_rtsp_udp").checked,
+                mic_enabled: document.getElementById("mic_enabled").checked,
+                mic_muted: document.getElementById("mic_muted").checked,
+                mic_sensitivity: parseInt(document.getElementById("mic_sensitivity").value || "70", 10),
+                audio_out_enabled: document.getElementById("audio_out_enabled").checked,
+                audio_out_muted: document.getElementById("audio_out_muted").checked,
+                audio_out_volume: parseInt(document.getElementById("audio_out_volume").value || "70", 10)
+            };
+
+            if (!validateScryptedOptions()) {
+                alert("Scrypted options are invalid. Enable the required stream type.");
+                return;
+            }
+
+            fetch("/saveFeatures", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(features)
+            }).then(r => r.text())
+              .then(t => {
+                  alert(t);
+                  setTimeout(() => window.location.reload(), 1000);
+              })
+              .catch(e => alert("Save failed: " + e));
+        }
+
+        function testHomekitGong() {
+            fetch("/ring/homekit")
+                .then(r => r.text())
+                .then(t => alert(t))
+                .catch(e => alert("HomeKit test failed: " + e));
+        }
+
+        const cameraSetupStatusEl = document.getElementById("cameraSetupStatus");
+        const qualityValueEl = document.getElementById("qualityValue");
+        const brightnessValueEl = document.getElementById("brightnessValue");
+        const contrastValueEl = document.getElementById("contrastValue");
+        const scryptedStatusEl = document.getElementById("scryptedStatus");
+        const scryptedSourceUrlEl = document.getElementById("scrypted_source_url");
+        const scryptedInputArgsEl = document.getElementById("scrypted_input_args");
+        const scryptedOutputPrefixEl = document.getElementById("scrypted_output_prefix");
+        const micSensitivityValueEl = document.getElementById("micSensitivityValue");
+        const audioOutVolumeValueEl = document.getElementById("audioOutVolumeValue");
+
+        function fetchCameraSetupStatus() {
+            fetch("/status")
+                .then(r => r.json())
+                .then(data => {
+                    cameraSetupStatusEl.innerHTML = `<strong>Camera:</strong> ${data.PID || "Unknown"} | size=${data.framesize} | quality=${data.quality}`;
+                    if (data.framesize !== undefined) {
+                        document.getElementById("framesize").value = data.framesize;
+                    }
+                    if (data.quality !== undefined) {
+                        document.getElementById("quality").value = data.quality;
+                        qualityValueEl.textContent = data.quality;
+                    }
+                    if (data.brightness !== undefined) {
+                        document.getElementById("brightness").value = data.brightness;
+                        brightnessValueEl.textContent = data.brightness;
+                    }
+                    if (data.contrast !== undefined) {
+                        document.getElementById("contrast").value = data.contrast;
+                        contrastValueEl.textContent = data.contrast;
+                    }
+                })
+                .catch(() => {
+                    cameraSetupStatusEl.innerHTML = "<strong>Camera:</strong> unavailable";
+                });
+        }
+
+        function applyCameraSettings() {
+            const fs = document.getElementById("framesize").value;
+            const q = document.getElementById("quality").value;
+            const b = document.getElementById("brightness").value;
+            const c = document.getElementById("contrast").value;
+            Promise.all([
+                fetch(`/control?var=framesize&val=${fs}`),
+                fetch(`/control?var=quality&val=${q}`),
+                fetch(`/control?var=brightness&val=${b}`),
+                fetch(`/control?var=contrast&val=${c}`)
+            ]).then(() => {
+                alert(`Applied camera settings: framesize=${fs}, quality=${q}, brightness=${b}, contrast=${c}`);
+                fetchCameraSetupStatus();
+            }).catch(() => alert("Failed to apply camera settings"));
+        }
+
+        document.getElementById("quality").addEventListener("input", (e) => {
+            qualityValueEl.textContent = e.target.value;
+        });
+        document.getElementById("brightness").addEventListener("input", (e) => {
+            brightnessValueEl.textContent = e.target.value;
+        });
+        document.getElementById("contrast").addEventListener("input", (e) => {
+            contrastValueEl.textContent = e.target.value;
+        });
+        document.getElementById("mic_sensitivity").addEventListener("input", (e) => {
+            micSensitivityValueEl.textContent = e.target.value;
+        });
+        document.getElementById("audio_out_volume").addEventListener("input", (e) => {
+            audioOutVolumeValueEl.textContent = e.target.value;
+        });
+
+        function updateAudioUi() {
+            const micEnabled = document.getElementById("mic_enabled").checked;
+            document.getElementById("mic_muted").disabled = !micEnabled;
+            document.getElementById("mic_sensitivity").disabled = !micEnabled;
+
+            const audioOutEnabled = document.getElementById("audio_out_enabled").checked;
+            document.getElementById("audio_out_muted").disabled = !audioOutEnabled;
+            document.getElementById("audio_out_volume").disabled = !audioOutEnabled;
+        }
+
+        function getScryptedSource() {
+            const selected = document.querySelector("input[name='scrypted_source']:checked");
+            return selected ? selected.value : "http";
+        }
+
+        function buildScryptedOutputPrefix() {
+            const lowLatency = document.getElementById("scrypted_low_latency").checked;
+            const gop = lowLatency ? 30 : 60;
+            return `-c:v libx264 -pix_fmt yuvj420p -preset ultrafast -bf 0 -g ${gop} -r 15 -b:v 500000 -bufsize 1000000 -maxrate 500000`;
+        }
+
+        function buildScryptedInputArgs() {
+            const source = getScryptedSource();
+            const lowBuffer = document.getElementById("scrypted_low_buffer").checked;
+            const preferUdp = document.getElementById("scrypted_rtsp_udp").checked;
+            const args = [];
+            if (source === "rtsp") {
+                args.push(`-rtsp_transport ${preferUdp ? "udp" : "tcp"}`);
+            }
+            if (lowBuffer) {
+                args.push("-fflags nobuffer -flags low_delay -analyzeduration 0 -probesize 32");
+            }
+            return args.length ? args.join(" ") : "(none)";
+        }
+
+        function updateScryptedUi() {
+            const httpRadio = document.getElementById("scrypted_source_http");
+            const rtspRadio = document.getElementById("scrypted_source_rtsp");
+            const rtspEnabled = document.getElementById("rtsp_enabled").checked;
+            const httpEnabled = document.getElementById("http_cam_enabled").checked;
+
+            httpRadio.disabled = !httpEnabled;
+            rtspRadio.disabled = !rtspEnabled;
+
+            if (!httpEnabled && rtspEnabled) {
+                rtspRadio.checked = true;
+            } else if (!rtspEnabled && httpEnabled) {
+                httpRadio.checked = true;
+            }
+
+            const source = getScryptedSource();
+            const ip = "{{LOCAL_IP}}";
+            const sourceUrl = source === "rtsp"
+                ? `rtsp://${ip}:8554/mjpeg/1`
+                : `http://${ip}:81/stream`;
+            scryptedSourceUrlEl.textContent = sourceUrl;
+            scryptedInputArgsEl.textContent = buildScryptedInputArgs();
+            scryptedOutputPrefixEl.textContent = buildScryptedOutputPrefix();
+
+            const rtspUdpEl = document.getElementById("scrypted_rtsp_udp");
+            rtspUdpEl.disabled = source !== "rtsp";
+
+            let status = "OK";
+            if (!httpEnabled && !rtspEnabled) {
+                status = "Enable HTTP or RTSP streaming to use Scrypted.";
+            } else if (source === "rtsp" && !rtspEnabled) {
+                status = "Enable RTSP streaming to use RTSP source.";
+            } else if (source === "http" && !httpEnabled) {
+                status = "Enable HTTP streaming to use HTTP source.";
+            }
+            scryptedStatusEl.innerHTML = `<strong>Status:</strong> ${status}`;
+        }
+
+        function validateScryptedOptions() {
+            const source = getScryptedSource();
+            const rtspEnabled = document.getElementById("rtsp_enabled").checked;
+            const httpEnabled = document.getElementById("http_cam_enabled").checked;
+            if (source === "rtsp" && !rtspEnabled) {
+                return false;
+            }
+            if (source === "http" && !httpEnabled) {
+                return false;
+            }
+            return true;
+        }
+
+        document.querySelectorAll("input[name='scrypted_source']").forEach((el) => {
+            el.addEventListener("change", updateScryptedUi);
+        });
+        document.getElementById("scrypted_low_latency").addEventListener("change", updateScryptedUi);
+        document.getElementById("scrypted_low_buffer").addEventListener("change", updateScryptedUi);
+        document.getElementById("scrypted_rtsp_udp").addEventListener("change", updateScryptedUi);
+        document.getElementById("rtsp_enabled").addEventListener("change", updateScryptedUi);
+        document.getElementById("http_cam_enabled").addEventListener("change", updateScryptedUi);
+        document.getElementById("mic_enabled").addEventListener("change", updateAudioUi);
+        document.getElementById("audio_out_enabled").addEventListener("change", updateAudioUi);
+        // Set selected timezone
+        document.getElementById("timezone").value = "{{TIMEZONE}}";
+
+        fetchCameraSetupStatus();
+        updateScryptedUi();
+        updateAudioUi();
+    </script>
+</body>
+</html>

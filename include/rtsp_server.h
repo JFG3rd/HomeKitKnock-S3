@@ -32,6 +32,15 @@ int getRtspActiveSessionCount();
 // Count of RTSP UDP endPacket failures (video + audio).
 uint32_t getRtspUdpEndPacketFailCount();
 
+// Reset RTSP UDP endPacket failure counter.
+void resetRtspUdpEndPacketFailCount();
+
+// Clear RTSP UDP backoff state across active sessions.
+void resetRtspUdpBackoffState();
+
+// Max remaining backoff (ms) across active UDP RTSP sessions.
+uint32_t getRtspUdpBackoffRemainingMs();
+
 // Allow or disallow RTSP UDP sessions (TCP interleaved still allowed).
 void setRtspAllowUdp(bool allow);
 

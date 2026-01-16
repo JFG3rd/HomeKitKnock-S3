@@ -96,6 +96,8 @@ static size_t findJpegScanData(const uint8_t* jpeg, size_t len, uint8_t &type, u
 #define RTSP_PORT 8554
 
 static uint32_t rtspUdpEndPacketFailCount = 0;
+static const unsigned long kUdpBackoffBaseMs = 50;
+static const unsigned long kUdpBackoffMaxMs = 500;
 
 // RTSP session state
 struct RtspSession {
@@ -124,6 +126,8 @@ struct RtspSession {
   unsigned long lastFrameMs;
   unsigned long lastAudioMs;
   unsigned long lastActivityMs;  // Track last client activity for timeout detection
+  unsigned long udpBackoffUntilMs;
+  uint8_t udpFailStreak;
   
   // TCP interleaved mode (RTP over RTSP TCP connection)
   bool useTcpInterleaved;
@@ -399,6 +403,8 @@ static void handleSetup(WiFiClient &client, int cseq, String request, String tra
     session->lastFrameMs = 0;
     session->lastAudioMs = 0;
     session->lastActivityMs = millis();
+    session->udpBackoffUntilMs = 0;
+    session->udpFailStreak = 0;
     session->useTcpInterleaved = false;
     session->interleavedRtpChannel = 0;
     session->interleavedRtcpChannel = 1;
@@ -608,8 +614,26 @@ static void sendRtpJpegTcp(RtspSession* session, camera_fb_t* fb) {
 
 // Send RTP JPEG packet over UDP (legacy mode)
 // Implements RFC 2435 - RTP Payload Format for JPEG-compressed Video
+static void applyUdpBackoff(RtspSession* session) {
+  // Ramp backoff after UDP send failures to relieve WiFi buffer pressure.
+  uint8_t streak = session->udpFailStreak;
+  if (streak < 10) {
+    streak++;
+  }
+  session->udpFailStreak = streak;
+  unsigned long backoffMs = kUdpBackoffBaseMs * streak;
+  if (backoffMs > kUdpBackoffMaxMs) {
+    backoffMs = kUdpBackoffMaxMs;
+  }
+  session->udpBackoffUntilMs = millis() + backoffMs;
+}
+
 static void sendRtpJpegUdp(RtspSession* session, camera_fb_t* fb) {
   if (!session || !fb || !session->isPlaying) {
+    return;
+  }
+  unsigned long nowMs = millis();
+  if (session->udpBackoffUntilMs > nowMs) {
     return;
   }
 
@@ -691,12 +715,14 @@ static void sendRtpJpegUdp(RtspSession* session, camera_fb_t* fb) {
     // Send via UDP with error checking
     size_t packetLen = 20 + chunkSize;
     if (!session->rtpSocket.beginPacket(session->clientIP, session->rtpPort)) {
+      applyUdpBackoff(session);
       logEvent(LOG_WARN, "⚠️ RTSP UDP beginPacket failed");
       return;
     }
     
     size_t written = session->rtpSocket.write(rtpPacket, packetLen);
     if (written != packetLen) {
+      applyUdpBackoff(session);
       logEvent(LOG_WARN, "⚠️ RTSP UDP write incomplete: " + String(written) + "/" + String(packetLen));
       session->rtpSocket.endPacket();  // Clean up failed packet
       return;
@@ -704,6 +730,7 @@ static void sendRtpJpegUdp(RtspSession* session, camera_fb_t* fb) {
     
     int result = session->rtpSocket.endPacket();
     if (result == 0) {
+      applyUdpBackoff(session);
       rtspUdpEndPacketFailCount++;
       logEvent(LOG_WARN, "⚠️ RTSP UDP endPacket failed");
       return;
@@ -720,6 +747,7 @@ static void sendRtpJpegUdp(RtspSession* session, camera_fb_t* fb) {
       delayMicroseconds(1500);  // 1.5ms between packets
     }
   }
+  session->udpFailStreak = 0;
   
   // Timestamp increment handled by scheduler to match actual frame cadence.
 }
@@ -855,6 +883,9 @@ static void sendRtpAudio(RtspSession* session) {
       return;
     }
   } else {
+    if (session->udpBackoffUntilMs > millis()) {
+      return;
+    }
     if (session->audioRtpPort == 0) {
       return;
     }
@@ -863,17 +894,20 @@ static void sendRtpAudio(RtspSession* session) {
       session->audioSocketInitialized = true;
     }
     if (!session->audioRtpSocket.beginPacket(session->clientIP, session->audioRtpPort)) {
+      applyUdpBackoff(session);
       logEvent(LOG_WARN, "⚠️ RTSP audio UDP beginPacket failed");
       return;
     }
     size_t written = session->audioRtpSocket.write(rtpPacket, packetLen);
     if (written != packetLen) {
+      applyUdpBackoff(session);
       logEvent(LOG_WARN, "⚠️ RTSP audio UDP write incomplete: " + String(written) + "/" + String(packetLen));
       session->audioRtpSocket.endPacket();
       return;
     }
     int result = session->audioRtpSocket.endPacket();
     if (result == 0) {
+      applyUdpBackoff(session);
       rtspUdpEndPacketFailCount++;
       logEvent(LOG_WARN, "⚠️ RTSP audio UDP endPacket failed");
       return;
@@ -986,6 +1020,39 @@ int getRtspActiveSessionCount() {
 
 uint32_t getRtspUdpEndPacketFailCount() {
   return rtspUdpEndPacketFailCount;
+}
+
+void resetRtspUdpEndPacketFailCount() {
+  rtspUdpEndPacketFailCount = 0;
+}
+
+void resetRtspUdpBackoffState() {
+  for (int i = 0; i < MAX_SESSIONS; i++) {
+    RtspSession* session = activeSessions[i];
+    if (!session) {
+      continue;
+    }
+    session->udpBackoffUntilMs = 0;
+    session->udpFailStreak = 0;
+  }
+}
+
+uint32_t getRtspUdpBackoffRemainingMs() {
+  unsigned long now = millis();
+  uint32_t maxRemaining = 0;
+  for (int i = 0; i < MAX_SESSIONS; i++) {
+    RtspSession* session = activeSessions[i];
+    if (!session) {
+      continue;
+    }
+    if (session->udpBackoffUntilMs > now) {
+      uint32_t remaining = static_cast<uint32_t>(session->udpBackoffUntilMs - now);
+      if (remaining > maxRemaining) {
+        maxRemaining = remaining;
+      }
+    }
+  }
+  return maxRemaining;
 }
 
 void setRtspAllowUdp(bool allow) {
@@ -1192,6 +1259,9 @@ bool isRtspServerRunning() { return false; }
 bool isRtspTaskRunning() { return false; }
 String getRtspUrl() { return ""; }
 uint32_t getRtspUdpEndPacketFailCount() { return 0; }
+void resetRtspUdpEndPacketFailCount() {}
+void resetRtspUdpBackoffState() {}
+uint32_t getRtspUdpBackoffRemainingMs() { return 0; }
 void setRtspAllowUdp(bool allow) { (void)allow; }
 void handleRtspClient() {}
 
