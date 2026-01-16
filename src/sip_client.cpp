@@ -40,15 +40,24 @@ struct PendingInvite {
   bool active = false;
   bool authSent = false;
   bool canCancel = false;
+  bool answered = false;
+  bool ackSent = false;
+  bool byeSent = false;
   String callID;
   String fromTag;
+  String toTag;
   uint32_t cseq = 0;
   String branch;
+  String target;
+  unsigned long inviteStartMs = 0;
+  unsigned long answeredMs = 0;
   SipConfig config;
 };
 
 static PendingInvite pendingInvite;
 static unsigned long lastSipNetWarnMs = 0;
+static const unsigned long kSipRingDurationMs = 10000;  // Let phones ring before cancel.
+static const unsigned long kSipInCallHoldMs = 1500;     // Short hold after answer (no RTP yet).
 
 // Guard SIP traffic when Wi-Fi is down or the socket is not ready.
 // This prevents DNS/UDP failures from crashing the SIP task.
@@ -104,6 +113,61 @@ static String md5(const String& input) {
   md5builder.add(input);
   md5builder.calculate();
   return md5builder.toString();
+}
+
+// Extract the status code from a SIP response line.
+static int getSipStatusCode(const String& response) {
+  int lineEnd = response.indexOf('\n');
+  String statusLine = lineEnd >= 0 ? response.substring(0, lineEnd) : response;
+  statusLine.trim();
+  if (!statusLine.startsWith("SIP/2.0")) {
+    return -1;
+  }
+  int firstSpace = statusLine.indexOf(' ');
+  if (firstSpace < 0) {
+    return -1;
+  }
+  int secondSpace = statusLine.indexOf(' ', firstSpace + 1);
+  String codeStr = secondSpace > 0
+    ? statusLine.substring(firstSpace + 1, secondSpace)
+    : statusLine.substring(firstSpace + 1);
+  return codeStr.toInt();
+}
+
+static String extractHeaderValue(const String& response, const char *headerName) {
+  String needle = String(headerName) + ":";
+  int pos = response.indexOf(needle);
+  if (pos < 0) {
+    return "";
+  }
+  int lineEnd = response.indexOf("\r\n", pos);
+  if (lineEnd < 0) {
+    lineEnd = response.indexOf('\n', pos);
+  }
+  if (lineEnd < 0) {
+    lineEnd = response.length();
+  }
+  String line = response.substring(pos + needle.length(), lineEnd);
+  line.trim();
+  return line;
+}
+
+// Pull the tag parameter from a To header (needed for ACK/BYE).
+static String extractToTag(const String& response) {
+  String toLine = extractHeaderValue(response, "To");
+  if (toLine.isEmpty()) {
+    toLine = extractHeaderValue(response, "t");
+  }
+  int tagPos = toLine.indexOf("tag=");
+  if (tagPos < 0) {
+    return "";
+  }
+  tagPos += 4;
+  int tagEnd = toLine.indexOf(';', tagPos);
+  if (tagEnd < 0) {
+    tagEnd = toLine.length();
+  }
+  return toLine.substring(tagPos, tagEnd);
 }
 
 // Parse authentication challenge from 401/407 response
@@ -185,6 +249,15 @@ static AuthChallenge parseAuthChallenge(const String& response) {
   
   challenge.valid = !challenge.realm.isEmpty() && !challenge.nonce.isEmpty();
   return challenge;
+}
+
+static String buildToHeader(const String& target, const String& toTag) {
+  String header = "To: <sip:" + target + ">";
+  if (!toTag.isEmpty()) {
+    header += ";tag=" + toTag;
+  }
+  header += "\r\n";
+  return header;
 }
 
 // Calculate digest response for authentication
@@ -275,7 +348,7 @@ bool loadSipConfig(SipConfig &config) {
   config.sip_user = prefs.getString("sip_user", "");
   config.sip_password = prefs.getString("sip_password", "");
   config.sip_displayname = prefs.getString("sip_displayname", "Doorbell");
-  config.sip_target = prefs.getString("sip_target", "**610");
+  config.sip_target = prefs.getString("sip_target", "**11");
   
   prefs.end();
   return true;
@@ -330,21 +403,23 @@ static String buildRegister(const SipConfig &config, const String& fromTag, cons
 static String buildInvite(const SipConfig &config, const String& fromTag, const String& callID, const String& branch, uint32_t cseq, bool withAuth = false) {
   IPAddress localIP = WiFi.localIP();
   String target = config.sip_target + "@" + String(SIP_DOMAIN);
-  String uri = "sip:" + target;
+  String requestUri = "sip:" + target;
+  String authUri = "sip:" + String(SIP_DOMAIN);
 
   String msg;
-  msg  = "INVITE " + uri + " SIP/2.0\r\n";
+  msg  = "INVITE " + requestUri + " SIP/2.0\r\n";
   msg += "Via: SIP/2.0/UDP " + localIP.toString() + ":" + String(LOCAL_SIP_PORT) + ";branch=" + branch + "\r\n";
   msg += "Max-Forwards: 70\r\n";
   msg += "From: \"" + config.sip_displayname + "\" <sip:" + config.sip_user + "@" + String(SIP_DOMAIN) + ">;tag=" + fromTag + "\r\n";
-  msg += "To: <sip:" + target + ">\r\n";
+  msg += buildToHeader(target, "");
   msg += "Call-ID: " + callID + "\r\n";
   msg += "CSeq: " + String(cseq) + " INVITE\r\n";
   msg += "Contact: <sip:" + config.sip_user + "@" + localIP.toString() + ":" + String(LOCAL_SIP_PORT) + ">\r\n";
   
   // Add authentication if we have a challenge
   if (withAuth && lastAuthChallenge.valid) {
-    msg += buildAuthHeader(config.sip_user, config.sip_password, "INVITE", uri, lastAuthChallenge);
+    // FRITZ!Box expects the digest URI to be the registrar, not the target.
+    msg += buildAuthHeader(config.sip_user, config.sip_password, "INVITE", authUri, lastAuthChallenge);
   }
   
   msg += "User-Agent: ESP32-Doorbell/1.0\r\n";
@@ -364,9 +439,51 @@ static String buildCancel(const SipConfig &config, const String& fromTag, const 
   msg += "Via: SIP/2.0/UDP " + localIP.toString() + ":" + String(LOCAL_SIP_PORT) + ";branch=" + branch + "\r\n";
   msg += "Max-Forwards: 70\r\n";
   msg += "From: \"" + config.sip_displayname + "\" <sip:" + config.sip_user + "@" + String(SIP_DOMAIN) + ">;tag=" + fromTag + "\r\n";
-  msg += "To: <sip:" + target + ">\r\n";
+  msg += buildToHeader(target, pendingInvite.toTag);
   msg += "Call-ID: " + callID + "\r\n";
   msg += "CSeq: " + String(cseq) + " CANCEL\r\n";
+  msg += "User-Agent: ESP32-Doorbell/1.0\r\n";
+  msg += "Content-Length: 0\r\n";
+  msg += "\r\n";
+  return msg;
+}
+
+static String buildAck(const SipConfig &config,
+                       const String& fromTag,
+                       const String& toTag,
+                       const String& callID,
+                       const String& target,
+                       uint32_t cseq) {
+  IPAddress localIP = WiFi.localIP();
+  String msg;
+  msg  = "ACK sip:" + target + " SIP/2.0\r\n";
+  msg += "Via: SIP/2.0/UDP " + localIP.toString() + ":" + String(LOCAL_SIP_PORT) + ";branch=" + generateBranch() + "\r\n";
+  msg += "Max-Forwards: 70\r\n";
+  msg += "From: \"" + config.sip_displayname + "\" <sip:" + config.sip_user + "@" + String(SIP_DOMAIN) + ">;tag=" + fromTag + "\r\n";
+  msg += buildToHeader(target, toTag);
+  msg += "Call-ID: " + callID + "\r\n";
+  msg += "CSeq: " + String(cseq) + " ACK\r\n";
+  msg += "User-Agent: ESP32-Doorbell/1.0\r\n";
+  msg += "Content-Length: 0\r\n";
+  msg += "\r\n";
+  return msg;
+}
+
+static String buildBye(const SipConfig &config,
+                       const String& fromTag,
+                       const String& toTag,
+                       const String& callID,
+                       const String& target,
+                       uint32_t cseq) {
+  IPAddress localIP = WiFi.localIP();
+  String msg;
+  msg  = "BYE sip:" + target + " SIP/2.0\r\n";
+  msg += "Via: SIP/2.0/UDP " + localIP.toString() + ":" + String(LOCAL_SIP_PORT) + ";branch=" + generateBranch() + "\r\n";
+  msg += "Max-Forwards: 70\r\n";
+  msg += "From: \"" + config.sip_displayname + "\" <sip:" + config.sip_user + "@" + String(SIP_DOMAIN) + ">;tag=" + fromTag + "\r\n";
+  msg += buildToHeader(target, toTag);
+  msg += "Call-ID: " + callID + "\r\n";
+  msg += "CSeq: " + String(cseq) + " BYE\r\n";
   msg += "User-Agent: ESP32-Doorbell/1.0\r\n";
   msg += "Content-Length: 0\r\n";
   msg += "\r\n";
@@ -510,7 +627,9 @@ void handleSipIncoming() {
     return;
   }
 
-  if (isAuthRequired(resp) && !pendingInvite.authSent) {
+  int statusCode = getSipStatusCode(resp);
+
+  if (statusCode == 401 && !pendingInvite.authSent) {
     logEvent(LOG_WARN, "🔐 INVITE needs authentication, resending...");
     AuthChallenge inviteChallenge = parseAuthChallenge(resp);
     if (inviteChallenge.valid) {
@@ -521,15 +640,29 @@ void handleSipIncoming() {
       pendingInvite.authSent = true;
       logEvent(LOG_DEBUG, "---- SIP INVITE (with auth) ----");
       logEvent(LOG_DEBUG, authInvite);
-      sipSend(authInvite);
+      if (!sipSend(authInvite)) {
+        pendingInvite.active = false;
+      }
     } else {
       logEvent(LOG_ERROR, "❌ Failed to parse INVITE auth challenge");
     }
     return;
   }
 
-  if (isProvisional(resp) || isSuccess(resp)) {
+  if (statusCode >= 100 && statusCode < 200) {
     pendingInvite.canCancel = true;
+    if (pendingInvite.toTag.isEmpty()) {
+      pendingInvite.toTag = extractToTag(resp);
+    }
+  } else if (statusCode >= 200 && statusCode < 300) {
+    pendingInvite.canCancel = false;
+    pendingInvite.answered = true;
+    if (pendingInvite.toTag.isEmpty()) {
+      pendingInvite.toTag = extractToTag(resp);
+    }
+  } else if (statusCode >= 300) {
+    logEvent(LOG_WARN, "⚠️ SIP INVITE failed with status " + String(statusCode));
+    pendingInvite.active = false;
   }
 }
 
@@ -622,6 +755,10 @@ bool triggerSipRing(const SipConfig &config) {
     logEvent(LOG_WARN, "⚠️ SIP ring skipped: network not ready");
     return false;
   }
+  if (config.sip_target.isEmpty()) {
+    logEvent(LOG_WARN, "⚠️ SIP target is empty, cannot ring");
+    return false;
+  }
 
   String tag = generateTag();
   String callID = generateCallID();
@@ -634,7 +771,7 @@ bool triggerSipRing(const SipConfig &config) {
     sipUdp.read(drainBuf, sizeof(drainBuf));
   }
 
-  // First INVITE attempt (may need auth)
+  // First INVITE attempt (may require 401 + digest).
   String invite = buildInvite(config, tag, callID, branch, cseq, false);
   logEvent(LOG_DEBUG, "---- SIP INVITE ----");
   logEvent(LOG_DEBUG, invite);
@@ -646,28 +783,58 @@ bool triggerSipRing(const SipConfig &config) {
   pendingInvite.active = true;
   pendingInvite.authSent = false;
   pendingInvite.canCancel = false;
+  pendingInvite.answered = false;
+  pendingInvite.ackSent = false;
+  pendingInvite.byeSent = false;
   pendingInvite.callID = callID;
   pendingInvite.fromTag = tag;
+  pendingInvite.toTag = "";
   pendingInvite.cseq = cseq;
   pendingInvite.branch = branch;
+  pendingInvite.target = config.sip_target + "@" + String(SIP_DOMAIN);
+  pendingInvite.inviteStartMs = millis();
+  pendingInvite.answeredMs = 0;
   pendingInvite.config = config;
 
-  // Ring for 2.5 seconds while processing responses
-  const unsigned long ringDurationMs = 2500;
-  unsigned long start = millis();
-  while (millis() - start < ringDurationMs) {
+  // Ring window: wait for 100/180/183 or 200 OK while still allowing auth retry.
+  while (millis() - pendingInvite.inviteStartMs < kSipRingDurationMs) {
     handleSipIncoming();
+    if (pendingInvite.answered && !pendingInvite.ackSent) {
+      String ack = buildAck(config,
+                            pendingInvite.fromTag,
+                            pendingInvite.toTag,
+                            pendingInvite.callID,
+                            pendingInvite.target,
+                            pendingInvite.cseq);
+      logEvent(LOG_DEBUG, "---- SIP ACK ----");
+      logEvent(LOG_DEBUG, ack);
+      pendingInvite.ackSent = sipSend(ack);
+      pendingInvite.answeredMs = millis();
+    }
+    if (pendingInvite.ackSent && !pendingInvite.byeSent &&
+        (millis() - pendingInvite.answeredMs > kSipInCallHoldMs)) {
+      String bye = buildBye(config,
+                            pendingInvite.fromTag,
+                            pendingInvite.toTag,
+                            pendingInvite.callID,
+                            pendingInvite.target,
+                            pendingInvite.cseq + 1);
+      logEvent(LOG_DEBUG, "---- SIP BYE ----");
+      logEvent(LOG_DEBUG, bye);
+      pendingInvite.byeSent = sipSend(bye);
+      break;
+    }
     delay(10);
   }
 
   // Send CANCEL to stop ringing (must match last INVITE branch + CSeq).
-  if (pendingInvite.canCancel) {
+  if (!pendingInvite.answered && pendingInvite.canCancel) {
     String cancel = buildCancel(config, pendingInvite.fromTag, pendingInvite.callID, pendingInvite.branch, pendingInvite.cseq);
     logEvent(LOG_DEBUG, "---- SIP CANCEL ----");
     logEvent(LOG_DEBUG, cancel);
     sipSend(cancel);
   } else {
-    logEvent(LOG_WARN, "⚠️ Skipping CANCEL (no provisional response received)");
+    logEvent(LOG_INFO, "ℹ️ Skipping CANCEL (no provisional response or call answered)");
   }
   pendingInvite.active = false;
 

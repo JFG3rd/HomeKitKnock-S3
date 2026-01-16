@@ -616,7 +616,7 @@ void setup() {
         String sip_user = prefs.getString("sip_user", "");
         String sip_password = prefs.getString("sip_password", "");
         String sip_displayname = prefs.getString("sip_displayname", "Doorbell");
-        String sip_target = prefs.getString("sip_target", "**610");
+        String sip_target = prefs.getString("sip_target", "**11");
         prefs.end();
 
         String page = loadUiTemplate("/sip.html");
