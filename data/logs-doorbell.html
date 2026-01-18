@@ -20,6 +20,14 @@
         <p>Ring events, SIP, TR-064, and webhook activity.</p>
     </div>
 
+    <div class="log-toolbar">
+        <label class="switch">
+            <input type="checkbox" id="wrapToggle">
+            <span class="slider"></span>
+        </label>
+        <span>Word Wrap</span>
+    </div>
+
     <div class="log-container log-size-md" id="logContainer"></div>
 
     <div class="button-row log-actions">
@@ -40,6 +48,7 @@
         const logContainerEl = document.getElementById("logContainer");
         const logFontSizeEl = document.getElementById("logFontSize");
         const darkToggle = document.getElementById("darkModeToggle");
+        const wrapToggle = document.getElementById("wrapToggle");
         let lastEventId = 0;
 
         const doorbellKeywords = ["SIP", "TR-064", "FRITZ", "Ring", "Doorbell", "☎️", "📞", "🔔", "🔐"];
@@ -104,6 +113,16 @@
         darkToggle.checked = darkModeEnabled;
         setDarkMode(darkModeEnabled);
         darkToggle.addEventListener("change", () => setDarkMode(darkToggle.checked));
+
+        function setLogWrap(enabled) {
+            logContainerEl.classList.toggle("log-wrap", enabled);
+            localStorage.setItem("logWrap", enabled ? "enabled" : "disabled");
+        }
+        const savedLogWrap = localStorage.getItem("logWrap");
+        const logWrapEnabled = savedLogWrap === null ? true : savedLogWrap === "enabled";
+        wrapToggle.checked = logWrapEnabled;
+        setLogWrap(logWrapEnabled);
+        wrapToggle.addEventListener("change", () => setLogWrap(wrapToggle.checked));
 
         function fetchEventLog() {
             fetch(`/eventLog?since=${lastEventId}`)

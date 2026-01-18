@@ -71,6 +71,8 @@ uint8_t audioOutVolume = DEFAULT_AUDIO_OUT_VOLUME;
 String timezone = "PST8PDT,M3.2.0,M11.1.0";
 bool lastButtonPressed = false;
 unsigned long lastButtonChangeMs = 0;
+volatile bool sipRingQueued = false;
+volatile bool sipRingInProgress = false;
 
 bool initFileSystem(AsyncWebServer &server) {
   // Mount LittleFS and expose static assets for the UI.
@@ -133,6 +135,21 @@ static void updateStatusLed() {
   }
 }
 
+// Queue SIP rings from async handlers to avoid blocking async_tcp and tripping the WDT.
+static bool queueSipRing(const char *source) {
+  if (!sipEnabled) {
+    logEvent(LOG_INFO, "ℹ️ SIP disabled - cannot queue ring");
+    return false;
+  }
+  if (sipRingInProgress || sipRingQueued) {
+    logEvent(LOG_INFO, "ℹ️ SIP ring already queued or in progress");
+    return false;
+  }
+  sipRingQueued = true;
+  logEvent(LOG_INFO, "📞 SIP ring queued (" + String(source) + ")");
+  return true;
+}
+
 static void triggerDoorbellEvent(bool includeSip) {
   // Sequence: local gong first, then external notifications.
   playGongAsync();
@@ -158,14 +175,8 @@ static void triggerDoorbellEvent(bool includeSip) {
   }
 
   // Ring FRITZ!Box internal phones (only if SIP enabled).
-  if (sipEnabled) {
-    if (triggerSipRing(sipConfig)) {
-      logEvent(LOG_INFO, "📞 FRITZ!Box ring triggered via SIP");
-    } else {
-      logEvent(LOG_WARN, "⚠️ SIP ring failed - check SIP configuration");
-    }
-  } else {
-    logEvent(LOG_INFO, "ℹ️ SIP disabled - skipping phone ring");
+  if (!queueSipRing("doorbell")) {
+    logEvent(LOG_INFO, "ℹ️ SIP ring not queued for doorbell event");
   }
 }
 
@@ -421,8 +432,10 @@ void setup() {
           request->send(500, "text/plain", "UI template missing");
           return;
         }
+        String buildInfo = String(__DATE__) + " " + String(__TIME__);
         page.replace("{{LOCAL_IP}}", WiFi.localIP().toString());
         page.replace("{{STREAM_INFO}}", streamInfo);
+        page.replace("{{BUILD_INFO}}", buildInfo);
 
         AsyncWebServerResponse *response = request->beginResponse(200, "text/html", page);
         response->addHeader("Cache-Control", "no-store");
@@ -962,8 +975,12 @@ void setup() {
       });
 
       server.on("/ring", HTTP_GET, [](AsyncWebServerRequest *request) {
-        if (sipEnabled && triggerSipRing(sipConfig)) {
-          request->send(200, "text/plain", "Ring triggered via SIP");
+        if (sipEnabled) {
+          if (queueSipRing("/ring")) {
+            request->send(200, "text/plain", "SIP ring queued");
+          } else {
+            request->send(200, "text/plain", "SIP ring already queued");
+          }
           return;
         }
         if (!tr064Enabled) {
@@ -994,10 +1011,10 @@ void setup() {
           request->send(503, "text/plain", "SIP ring disabled");
           return;
         }
-        if (triggerSipRing(sipConfig)) {
-          request->send(200, "text/plain", "SIP ring triggered");
+        if (queueSipRing("/ring/sip")) {
+          request->send(200, "text/plain", "SIP ring queued");
         } else {
-          request->send(500, "text/plain", "SIP ring failed - check configuration");
+          request->send(200, "text/plain", "SIP ring already queued");
         }
       });
 
@@ -1121,9 +1138,23 @@ void loop() {
   
   // Send periodic SIP REGISTER to maintain registration with FRITZ!Box (only if enabled)
   if (sipEnabled) {
-    sendRegisterIfNeeded(sipConfig);
-    // Handle any incoming SIP responses
-    handleSipIncoming();
+    if (!sipRingInProgress && sipRingQueued) {
+      sipRingQueued = false;
+      sipRingInProgress = true;
+      bool ringOk = triggerSipRing(sipConfig);
+      if (ringOk) {
+        logEvent(LOG_INFO, "📞 FRITZ!Box ring triggered via SIP");
+      } else {
+        logEvent(LOG_WARN, "⚠️ SIP ring failed - check SIP configuration");
+      }
+      sipRingInProgress = false;
+    }
+
+    if (!sipRingInProgress) {
+      sendRegisterIfNeeded(sipConfig);
+      // Handle any incoming SIP responses
+      handleSipIncoming();
+    }
   }
   
   // Simple debounce: detect stable press, then wait for release.

@@ -4,16 +4,34 @@
 		{
 			"label": "PlatformIO: Build",
 			"type": "shell",
-			"command": "platformio run",
+			"command": "/Users/jessegreene/.platformio/penv/bin/platformio run",
 			"problemMatcher": [
 				"$platformio"
 			],
 			"group": "build"
 		},
 		{
-			"label": "PlatformIO: Build",
+			"label": "PlatformIO: Upload",
 			"type": "shell",
-			"command": "platformio run",
+			"command": "/Users/jessegreene/.platformio/penv/bin/platformio run -t upload -e seeed_xiao_esp32s3",
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO: Monitor",
+			"type": "shell",
+			"command": "/Users/jessegreene/.platformio/penv/bin/platformio device monitor -e seeed_xiao_esp32s3",
+			"problemMatcher": [
+				"$platformio"
+			],
+			"group": "build"
+		},
+		{
+			"label": "PlatformIO: Upload and Monitor",
+			"type": "shell",
+			"command": "/Users/jessegreene/.platformio/penv/bin/platformio run -t upload -t monitor -e seeed_xiao_esp32s3",
 			"problemMatcher": [
 				"$platformio"
 			],
