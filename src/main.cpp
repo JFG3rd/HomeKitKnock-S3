@@ -21,11 +21,14 @@
 #include "rtsp_server.h"
 #include "audio.h"
 #include "logger.h"
+#include "ota_update.h"
+#include "version_info.h"
 
 // Global objects shared across setup/loop.
 AsyncWebServer server(80);
 DNSServer dnsServer;
 Preferences preferences;
+OtaUpdate otaUpdate;
 
 String wifiSSID, wifiPassword;
 Tr064Config tr064Config;
@@ -432,10 +435,10 @@ void setup() {
           request->send(500, "text/plain", "UI template missing");
           return;
         }
-        String buildInfo = String(__DATE__) + " " + String(__TIME__);
         page.replace("{{LOCAL_IP}}", WiFi.localIP().toString());
         page.replace("{{STREAM_INFO}}", streamInfo);
-        page.replace("{{BUILD_INFO}}", buildInfo);
+        page.replace("{{FW_VERSION}}", String(FW_VERSION));
+        page.replace("{{FW_BUILD_TIME}}", String(FW_BUILD_TIME));
 
         AsyncWebServerResponse *response = request->beginResponse(200, "text/html", page);
         response->addHeader("Cache-Control", "no-store");
@@ -597,6 +600,8 @@ void setup() {
         page.replace("{{SCRYPTED_WEBHOOK}}", scrypted_webhook);
         page.replace("{{LOCAL_IP}}", WiFi.localIP().toString());
         page.replace("{{TIMEZONE}}", timezone);
+        page.replace("{{FW_VERSION}}", String(FW_VERSION));
+        page.replace("{{FW_BUILD_TIME}}", String(FW_BUILD_TIME));
 
         AsyncWebServerResponse *response = request->beginResponse(200, "text/html", page);
         response->addHeader("Cache-Control", "no-store");
@@ -1045,6 +1050,7 @@ void setup() {
         ESP.restart();
       });
 
+      otaUpdate.begin(server);
       server.begin();
       logEvent(LOG_INFO, "✅ Web server started");
     } else {
@@ -1174,5 +1180,6 @@ void loop() {
     lastButtonChangeMs = millis();
   }
 
+  otaUpdate.loop();
   delay(10);
 }

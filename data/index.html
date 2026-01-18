@@ -14,7 +14,10 @@
         </label>
         <span>Dark Mode</span>
     </div>
-    <div class="version-info">Build: {{BUILD_INFO}}</div>
+    <div class="version-info">
+        <div>Version {{FW_VERSION}}</div>
+        <div>Build {{FW_BUILD_TIME}}</div>
+    </div>
 
     <div class="header-container">
         <h1 class="main-title">🔔 ESP32-S3 Doorbell</h1>
@@ -36,6 +39,14 @@
                 <div class="info-item">
                     <span class="info-label">IP Address:</span>
                     <span class="info-value">{{LOCAL_IP}}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Version:</span>
+                    <span class="info-value">{{FW_VERSION}}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Build:</span>
+                    <span class="info-value">{{FW_BUILD_TIME}}</span>
                 </div>
                 <div class="info-item">
                     <span class="info-label">Signal Strength:</span>

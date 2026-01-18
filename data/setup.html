@@ -14,6 +14,10 @@
         </label>
         <span>Dark Mode</span>
     </div>
+    <div class="version-info">
+        <div>Version {{FW_VERSION}}</div>
+        <div>Build {{FW_BUILD_TIME}}</div>
+    </div>
 
     <div class="header-container">
         <h1 class="main-title">⚙️ Feature Setup</h1>
@@ -229,6 +233,34 @@
                 <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;" id="scrypted_output_prefix"></p>
             </div>
         </div>
+
+        <div class="container card setup-card">
+            <h3>⬆️ OTA Updates</h3>
+            <div class="flash-stats" id="otaStatus">
+                <strong>Status:</strong> loading...
+            </div>
+
+            <label><strong>OTA Username</strong></label>
+            <input type="text" id="ota_user" placeholder="admin">
+
+            <label><strong>Current Password</strong></label>
+            <input type="password" id="ota_current_pass" placeholder="Required to update credentials">
+
+            <label><strong>New Password</strong></label>
+            <input type="password" id="ota_pass" placeholder="Strong password">
+
+            <label><strong>Confirm New Password</strong></label>
+            <input type="password" id="ota_pass_confirm" placeholder="Re-enter new password">
+
+            <div class="button-row" style="margin-top: 12px;">
+                <button class="button" title="Save or update OTA credentials." onclick="saveOtaConfig()">Save OTA Credentials</button>
+                <button class="button" title="Enable OTA uploads for 5 minutes." onclick="enableOta()">Enable OTA (5 min)</button>
+                <a class="button" href="/ota" target="_blank" title="Open the OTA upload page.">Open OTA Page</a>
+            </div>
+            <div class="ota-note">
+                OTA uploads are local-network only and require the credentials above.
+            </div>
+        </div>
     </div>
 
     <div class="button-row log-actions" style="margin-top: 20px;">
@@ -306,6 +338,124 @@
         const scryptedOutputPrefixEl = document.getElementById("scrypted_output_prefix");
         const micSensitivityValueEl = document.getElementById("micSensitivityValue");
         const audioOutVolumeValueEl = document.getElementById("audioOutVolumeValue");
+        const otaStatusEl = document.getElementById("otaStatus");
+        const otaUserEl = document.getElementById("ota_user");
+        const otaCurrentPassEl = document.getElementById("ota_current_pass");
+        const otaPassEl = document.getElementById("ota_pass");
+        const otaPassConfirmEl = document.getElementById("ota_pass_confirm");
+        let otaKnownUser = "";
+
+        function formatMs(ms) {
+            if (!ms || ms <= 0) return "0s";
+            const sec = Math.floor(ms / 1000);
+            if (sec < 60) return `${sec}s`;
+            const min = Math.floor(sec / 60);
+            const rem = sec % 60;
+            return `${min}m ${rem}s`;
+        }
+
+        function isStrongPassword(password) {
+            return password.length >= 12 &&
+                   /[a-z]/.test(password) &&
+                   /[A-Z]/.test(password) &&
+                   /[0-9]/.test(password) &&
+                   /[^A-Za-z0-9]/.test(password);
+        }
+
+        function buildOtaAuthHeader() {
+            const user = otaKnownUser || otaUserEl.value.trim();
+            const pass = otaCurrentPassEl.value;
+            if (!user || !pass) return null;
+            return "Basic " + btoa(`${user}:${pass}`);
+        }
+
+        function fetchOtaStatus() {
+            fetch("/ota/status", { credentials: "include" })
+                .then(r => {
+                    if (r.status === 401) {
+                        otaStatusEl.innerHTML = "<strong>Status:</strong> enter OTA credentials to view status";
+                        return null;
+                    }
+                    if (!r.ok) {
+                        otaStatusEl.innerHTML = "<strong>Status:</strong> unavailable";
+                        return null;
+                    }
+                    return r.json();
+                })
+                .then(data => {
+                    if (!data) return;
+                    otaKnownUser = data.username || otaKnownUser;
+                    if (data.username) {
+                        otaUserEl.value = data.username;
+                    }
+                    const configured = data.configured ? "configured" : "not configured";
+                    const enabled = data.enabled
+                        ? `enabled (${formatMs(data.remaining_ms)})`
+                        : "disabled";
+                    otaStatusEl.innerHTML = `<strong>Status:</strong> ${configured} | ${enabled}`;
+                })
+                .catch(() => {
+                    otaStatusEl.innerHTML = "<strong>Status:</strong> unavailable";
+                });
+        }
+
+        function saveOtaConfig() {
+            const username = otaUserEl.value.trim();
+            const password = otaPassEl.value;
+            const confirm = otaPassConfirmEl.value;
+
+            if (!username) {
+                alert("OTA username is required.");
+                return;
+            }
+            if (password !== confirm) {
+                alert("New passwords do not match.");
+                return;
+            }
+            if (!isStrongPassword(password)) {
+                alert("Password must be at least 12 characters and include upper, lower, digit, and symbol.");
+                return;
+            }
+
+            const headers = { "Content-Type": "application/json" };
+            const authHeader = buildOtaAuthHeader();
+            if (authHeader) {
+                headers["Authorization"] = authHeader;
+            }
+
+            fetch("/ota/config", {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ username, password })
+            }).then(r => r.text())
+              .then(t => {
+                  alert(t);
+                  otaCurrentPassEl.value = "";
+                  fetchOtaStatus();
+              })
+              .catch(e => alert("OTA save failed: " + e));
+        }
+
+        function enableOta() {
+            const headers = {};
+            const authHeader = buildOtaAuthHeader();
+            if (authHeader) {
+                headers["Authorization"] = authHeader;
+            } else {
+                alert("Enter current OTA password to enable OTA.");
+                return;
+            }
+
+            fetch("/ota/enable", {
+                method: "POST",
+                headers
+            }).then(r => r.text())
+              .then(t => {
+                  alert(t);
+                  fetchOtaStatus();
+              })
+              .catch(e => alert("OTA enable failed: " + e));
+        }
 
         function fetchCameraSetupStatus() {
             fetch("/status")
@@ -467,6 +617,7 @@
         fetchCameraSetupStatus();
         updateScryptedUi();
         updateAudioUi();
+        fetchOtaStatus();
     </script>
 </body>
 </html>

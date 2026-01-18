@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OTA Update</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="dark-mode-toggle">
+        <label class="switch">
+            <input type="checkbox" id="darkModeToggle">
+            <span class="slider"></span>
+        </label>
+        <span>Dark Mode</span>
+    </div>
+    <div class="version-info">
+        <div>Version {{FW_VERSION}}</div>
+        <div>Build {{FW_BUILD_TIME}}</div>
+    </div>
+
+    <div class="header-container">
+        <h1 class="main-title">OTA Update</h1>
+        <p>Enable OTA from the setup page before uploading new images.</p>
+    </div>
+
+    <div class="dashboard">
+        <div class="container card setup-card">
+            <h3>OTA Status</h3>
+            <div class="flash-stats" id="otaStatus">
+                <strong>Status:</strong> loading...
+            </div>
+            <div class="ota-note">
+                Uploads are restricted to the local network and a time-limited OTA window.
+            </div>
+            <div class="button-row" style="margin-top: 12px;">
+                <a class="button" href="/setup">Back to Setup</a>
+            </div>
+        </div>
+
+        <div class="container card setup-card">
+            <h3>Firmware Update</h3>
+            <form id="fwForm" method="POST" action="/ota/update" enctype="multipart/form-data">
+                <input type="file" name="update" accept=".bin" required>
+                <button class="button" type="submit">Upload Firmware</button>
+            </form>
+        </div>
+
+        <div class="container card setup-card">
+            <h3>Filesystem Update (LittleFS)</h3>
+            <form id="fsForm" method="POST" action="/ota/fs" enctype="multipart/form-data">
+                <input type="file" name="update" accept=".bin" required>
+                <button class="button" type="submit">Upload Filesystem</button>
+            </form>
+            <div class="ota-note">
+                Use the LittleFS image built by PlatformIO (Upload File System Image).
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const darkToggle = document.getElementById("darkModeToggle");
+        const otaStatusEl = document.getElementById("otaStatus");
+        const fwInputs = document.querySelectorAll("#fwForm input, #fwForm button");
+        const fsInputs = document.querySelectorAll("#fsForm input, #fsForm button");
+
+        function setDarkMode(enabled) {
+            document.body.classList.toggle("dark-mode", enabled);
+            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        }
+
+        const savedDarkMode = localStorage.getItem("darkMode");
+        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
+        darkToggle.checked = darkModeEnabled;
+        setDarkMode(darkModeEnabled);
+        darkToggle.addEventListener("change", () => {
+            setDarkMode(darkToggle.checked);
+        });
+
+        function formatMs(ms) {
+            if (!ms || ms <= 0) return "0s";
+            const sec = Math.floor(ms / 1000);
+            if (sec < 60) return `${sec}s`;
+            const min = Math.floor(sec / 60);
+            const rem = sec % 60;
+            return `${min}m ${rem}s`;
+        }
+
+        function setFormsEnabled(enabled) {
+            fwInputs.forEach(el => el.disabled = !enabled);
+            fsInputs.forEach(el => el.disabled = !enabled);
+        }
+
+        function fetchOtaStatus() {
+            fetch("/ota/status", { credentials: "include" })
+                .then(r => {
+                    if (r.status === 401) {
+                        otaStatusEl.innerHTML = "<strong>Status:</strong> authentication required";
+                        setFormsEnabled(false);
+                        return null;
+                    }
+                    if (!r.ok) {
+                        otaStatusEl.innerHTML = "<strong>Status:</strong> unavailable";
+                        setFormsEnabled(false);
+                        return null;
+                    }
+                    return r.json();
+                })
+                .then(data => {
+                    if (!data) return;
+                    const configured = data.configured ? "configured" : "not configured";
+                    const enabled = data.enabled
+                        ? `enabled (${formatMs(data.remaining_ms)})`
+                        : "disabled";
+                    otaStatusEl.innerHTML = `<strong>Status:</strong> ${configured} | ${enabled}`;
+                    setFormsEnabled(data.enabled);
+                })
+                .catch(() => {
+                    otaStatusEl.innerHTML = "<strong>Status:</strong> unavailable";
+                    setFormsEnabled(false);
+                });
+        }
+
+        fetchOtaStatus();
+        setInterval(fetchOtaStatus, 10000);
+    </script>
+</body>
+</html>
