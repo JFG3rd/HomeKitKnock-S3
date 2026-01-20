@@ -10,6 +10,7 @@
 
 #include <LittleFS.h>
 #include <driver/i2s.h>
+#include <freertos/semphr.h>
 #include <math.h>
 #include <limits.h>
 #include <string.h>
@@ -21,6 +22,7 @@ static bool micEnabled = false;
 static bool micMuted = false;
 static uint8_t micSensitivity = DEFAULT_MIC_SENSITIVITY;
 static bool micI2sReady = false;
+static SemaphoreHandle_t micMutex = nullptr;
 
 static bool audioOutEnabled = false;
 static bool audioOutMuted = false;
@@ -28,6 +30,25 @@ static uint8_t audioOutVolume = DEFAULT_AUDIO_OUT_VOLUME;
 static bool audioOutI2sReady = false;
 
 static bool gongTaskRunning = false;
+
+static void ensureMicMutex() {
+  if (!micMutex) {
+    micMutex = xSemaphoreCreateMutex();
+  }
+}
+
+static bool lockMic(uint32_t timeoutMs) {
+  if (!micMutex) {
+    return true;
+  }
+  return xSemaphoreTake(micMutex, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+}
+
+static void unlockMic() {
+  if (micMutex) {
+    xSemaphoreGive(micMutex);
+  }
+}
 
 static int16_t scaleSample(int16_t sample, uint8_t percent) {
   if (percent >= 100) {
@@ -140,6 +161,7 @@ void configureAudio(bool micEnable,
                     uint8_t audioOutVolumeValue) {
   // Apply runtime toggles and only keep I2S drivers installed when needed.
   // This avoids keeping the mic/DAC powered when the feature is disabled.
+  ensureMicMutex();
   micEnabled = micEnable;
   micMuted = micMute;
   micSensitivity = micSensitivityValue;
@@ -147,10 +169,13 @@ void configureAudio(bool micEnable,
   audioOutMuted = audioOutMuteValue;
   audioOutVolume = audioOutVolumeValue;
 
-  if (micEnabled && !micI2sReady) {
-    initMicI2s();
-  } else if (!micEnabled && micI2sReady) {
-    deinitMicI2s();
+  if (lockMic(250)) {
+    if (micEnabled && !micI2sReady) {
+      initMicI2s();
+    } else if (!micEnabled && micI2sReady) {
+      deinitMicI2s();
+    }
+    unlockMic();
   }
 
   if (audioOutEnabled && !audioOutI2sReady) {
@@ -196,13 +221,20 @@ bool captureMicSamples(int16_t *buffer, size_t sampleCount, uint32_t timeoutMs) 
     memset(buffer, 0, sampleCount * sizeof(int16_t));
     return true;
   }
+  ensureMicMutex();
+  if (!lockMic(timeoutMs)) {
+    memset(buffer, 0, sampleCount * sizeof(int16_t));
+    return false;
+  }
   if (!micI2sReady && !initMicI2s()) {
+    unlockMic();
     return false;
   }
 
   size_t bytesNeeded = sampleCount * sizeof(int16_t);
   size_t bytesRead = 0;
   esp_err_t err = i2s_read(I2S_NUM_0, buffer, bytesNeeded, &bytesRead, pdMS_TO_TICKS(timeoutMs));
+  unlockMic();
   if (err != ESP_OK || bytesRead == 0) {
     memset(buffer, 0, bytesNeeded);
     return false;

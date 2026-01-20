@@ -32,5 +32,8 @@ bool getCameraStreamClientInfo(String &clientIp,
                                uint32_t &lastFrameAgeMs,
                                String &clientsJson);
 
+// Return the count of active HTTP audio stream clients (port 81).
+uint32_t getCameraStreamAudioClientCount();
+
 #endif // CAMERA
 #endif // CAMERA_STREAM_H

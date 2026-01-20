@@ -10,6 +10,13 @@ This directory contains static files that can be served by the ESP32-S3 web serv
 
 ## Files
 
+### HTML templates
+- `index.html` - Main dashboard UI
+- `live.html` - MJPEG + WAV audio viewer page
+- `setup.html`, `sip.html`, `tr064.html`, `wifi-setup.html` - Configuration pages
+- `logs-camera.html`, `logs-doorbell.html` - Log viewers
+- `ota.html` - OTA update UI
+
 ### style.css
 Main stylesheet for the web interface. Includes:
 - Responsive design for mobile and desktop

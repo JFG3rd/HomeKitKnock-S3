@@ -39,6 +39,12 @@ rtsp://192.168.178.188:8554/mjpeg/1
 
 You can find this URL in the web UI under **Camera Settings** → **RTSP Stream (for Scrypted)**.
 
+## Audio Support
+
+- The RTSP stream advertises **PCMU/8000** audio when the mic feature is enabled in **Feature Setup**.
+- If the mic is disabled, the audio track is not advertised.
+- HTTP MJPEG remains video-only for Scrypted; a companion WAV audio stream is available at `http://ESP32-IP:81/audio` for browser testing.
+
 ## Scrypted Setup Instructions
 
 ### 1. Install FFmpeg Camera Plugin

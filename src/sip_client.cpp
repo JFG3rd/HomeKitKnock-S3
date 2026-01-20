@@ -21,6 +21,9 @@ static const uint16_t SIP_RTP_PORT = 40000;
 static WiFiUDP sipUdp;
 static bool sipUdpReady = false;
 static unsigned long lastRegisterTime = 0;
+static unsigned long lastRegisterAttemptMs = 0;
+static unsigned long lastRegisterOkMs = 0;
+static bool lastRegisterSuccessful = false;
 static const unsigned long REGISTER_INTERVAL_MS = 60UL * 1000; // 60 seconds
 
 // Authentication state
@@ -54,14 +57,37 @@ struct PendingInvite {
   String remoteTarget;
   unsigned long inviteStartMs = 0;
   unsigned long answeredMs = 0;
+  unsigned long cancelStartMs = 0;
   SipConfig config;
 };
 
 static PendingInvite pendingInvite;
+static SipRingTickCallback ringTickCallback = nullptr;
 static unsigned long lastSipNetWarnMs = 0;
 static const unsigned long kSipRingDurationMs = 20000;  // Let phones ring before cancel.
 static const unsigned long kSipInCallHoldMs = 20000;    // Hold after answer so phones have time to ring.
 static const unsigned long kSipCancelWaitMs = 3000;     // Wait for 487 after CANCEL.
+
+static String buildCancel(const SipConfig &config,
+                          const String& fromTag,
+                          const String& callID,
+                          const String& branch,
+                          uint32_t cseq);
+static String buildAck(const SipConfig &config,
+                       const String& fromTag,
+                       const String& toTag,
+                       const String& callID,
+                       const String& requestUri,
+                       const String& target,
+                       uint32_t cseq);
+static String buildBye(const SipConfig &config,
+                       const String& fromTag,
+                       const String& toTag,
+                       const String& callID,
+                       const String& requestUri,
+                       const String& target,
+                       uint32_t cseq);
+static bool sipSend(const String& msg);
 
 // Guard SIP traffic when Wi-Fi is down or the socket is not ready.
 // This prevents DNS/UDP failures from crashing the SIP task.
@@ -117,6 +143,94 @@ static String md5(const String& input) {
   md5builder.add(input);
   md5builder.calculate();
   return md5builder.toString();
+}
+
+void setSipRingTickCallback(SipRingTickCallback callback) {
+  ringTickCallback = callback;
+}
+
+static void serviceRingTick() {
+  if (ringTickCallback) {
+    ringTickCallback();
+  }
+}
+
+bool isSipRingActive() {
+  return pendingInvite.active;
+}
+
+void processSipRing() {
+  if (!pendingInvite.active) {
+    return;
+  }
+
+  unsigned long now = millis();
+  serviceRingTick();
+
+  if (pendingInvite.answered) {
+    if (!pendingInvite.ackSent) {
+      String requestUri = pendingInvite.remoteTarget.isEmpty()
+        ? pendingInvite.target
+        : pendingInvite.remoteTarget;
+      String ack = buildAck(pendingInvite.config,
+                            pendingInvite.fromTag,
+                            pendingInvite.toTag,
+                            pendingInvite.callID,
+                            requestUri,
+                            pendingInvite.target,
+                            pendingInvite.cseq);
+      logEvent(LOG_DEBUG, "---- SIP ACK ----");
+      logEvent(LOG_DEBUG, ack);
+      pendingInvite.ackSent = sipSend(ack);
+      pendingInvite.answeredMs = now;
+      if (!pendingInvite.ackSent) {
+        pendingInvite.active = false;
+      }
+    } else if (!pendingInvite.byeSent &&
+               (now - pendingInvite.answeredMs > kSipInCallHoldMs)) {
+      String requestUri = pendingInvite.remoteTarget.isEmpty()
+        ? pendingInvite.target
+        : pendingInvite.remoteTarget;
+      String bye = buildBye(pendingInvite.config,
+                            pendingInvite.fromTag,
+                            pendingInvite.toTag,
+                            pendingInvite.callID,
+                            requestUri,
+                            pendingInvite.target,
+                            pendingInvite.cseq + 1);
+      logEvent(LOG_DEBUG, "---- SIP BYE ----");
+      logEvent(LOG_DEBUG, bye);
+      pendingInvite.byeSent = sipSend(bye);
+      pendingInvite.active = false;
+    }
+    return;
+  }
+
+  if (now - pendingInvite.inviteStartMs >= kSipRingDurationMs) {
+    if (pendingInvite.canCancel && !pendingInvite.cancelSent) {
+      String cancel = buildCancel(pendingInvite.config,
+                                  pendingInvite.fromTag,
+                                  pendingInvite.callID,
+                                  pendingInvite.branch,
+                                  pendingInvite.cseq);
+      logEvent(LOG_DEBUG, "---- SIP CANCEL ----");
+      logEvent(LOG_DEBUG, cancel);
+      pendingInvite.cancelSent = sipSend(cancel);
+      pendingInvite.cancelStartMs = now;
+      if (!pendingInvite.cancelSent) {
+        pendingInvite.active = false;
+      }
+    } else if (!pendingInvite.canCancel && !pendingInvite.cancelSent) {
+      logEvent(LOG_INFO, "ℹ️ Skipping CANCEL (no provisional response or call answered)");
+      pendingInvite.active = false;
+      return;
+    }
+  }
+
+  if (pendingInvite.cancelSent && pendingInvite.cancelStartMs > 0 &&
+      (now - pendingInvite.cancelStartMs > kSipCancelWaitMs)) {
+    pendingInvite.active = false;
+  }
 }
 
 // Extract the status code from a SIP response line.
@@ -923,6 +1037,9 @@ void sendSipRegister(const SipConfig &config) {
     return;
   }
 
+  lastRegisterAttemptMs = millis();
+  lastRegisterSuccessful = false;
+
   String tag = generateTag();
   String callID = generateCallID();
   uint32_t cseq = 1;
@@ -968,6 +1085,8 @@ void sendSipRegister(const SipConfig &config) {
           
           if (isSuccess(authResponse)) {
             logEvent(LOG_INFO, "✅ SIP registration successful!");
+            lastRegisterSuccessful = true;
+            lastRegisterOkMs = millis();
           } else {
             logEvent(LOG_ERROR, "❌ SIP registration failed");
           }
@@ -977,6 +1096,8 @@ void sendSipRegister(const SipConfig &config) {
       }
     } else if (isSuccess(response)) {
       logEvent(LOG_INFO, "✅ SIP registration successful (no auth required)!");
+      lastRegisterSuccessful = true;
+      lastRegisterOkMs = millis();
     } else {
       logEvent(LOG_ERROR, "❌ SIP registration failed");
     }
@@ -1007,6 +1128,10 @@ bool triggerSipRing(const SipConfig &config) {
   }
   if (config.sip_target.isEmpty()) {
     logEvent(LOG_WARN, "⚠️ SIP target is empty, cannot ring");
+    return false;
+  }
+  if (pendingInvite.active) {
+    logEvent(LOG_INFO, "ℹ️ SIP ring already active");
     return false;
   }
 
@@ -1046,69 +1171,27 @@ bool triggerSipRing(const SipConfig &config) {
   pendingInvite.remoteTarget = "";
   pendingInvite.inviteStartMs = millis();
   pendingInvite.answeredMs = 0;
+  pendingInvite.cancelStartMs = 0;
   pendingInvite.config = config;
 
-  // Ring window: wait for 100/180/183 or 200 OK while still allowing auth retry.
-  while (millis() - pendingInvite.inviteStartMs < kSipRingDurationMs) {
-    handleSipIncoming();
-    if (!pendingInvite.active) {
-      break;
-    }
-    if (pendingInvite.answered && !pendingInvite.ackSent) {
-      String requestUri = pendingInvite.remoteTarget.isEmpty()
-        ? pendingInvite.target
-        : pendingInvite.remoteTarget;
-      String ack = buildAck(config,
-                            pendingInvite.fromTag,
-                            pendingInvite.toTag,
-                            pendingInvite.callID,
-                            requestUri,
-                            pendingInvite.target,
-                            pendingInvite.cseq);
-      logEvent(LOG_DEBUG, "---- SIP ACK ----");
-      logEvent(LOG_DEBUG, ack);
-      pendingInvite.ackSent = sipSend(ack);
-      pendingInvite.answeredMs = millis();
-    }
-    if (pendingInvite.ackSent && !pendingInvite.byeSent &&
-        (millis() - pendingInvite.answeredMs > kSipInCallHoldMs)) {
-      String requestUri = pendingInvite.remoteTarget.isEmpty()
-        ? pendingInvite.target
-        : pendingInvite.remoteTarget;
-      String bye = buildBye(config,
-                            pendingInvite.fromTag,
-                            pendingInvite.toTag,
-                            pendingInvite.callID,
-                            requestUri,
-                            pendingInvite.target,
-                            pendingInvite.cseq + 1);
-      logEvent(LOG_DEBUG, "---- SIP BYE ----");
-      logEvent(LOG_DEBUG, bye);
-      pendingInvite.byeSent = sipSend(bye);
-      break;
-    }
-    delay(10);
-  }
-
-  // Send CANCEL to stop ringing (must match last INVITE branch + CSeq).
-  if (pendingInvite.active && !pendingInvite.answered && pendingInvite.canCancel) {
-    String cancel = buildCancel(config, pendingInvite.fromTag, pendingInvite.callID, pendingInvite.branch, pendingInvite.cseq);
-    logEvent(LOG_DEBUG, "---- SIP CANCEL ----");
-    logEvent(LOG_DEBUG, cancel);
-    sipSend(cancel);
-    pendingInvite.cancelSent = true;
-    unsigned long cancelStart = millis();
-    while (millis() - cancelStart < kSipCancelWaitMs) {
-      handleSipIncoming();
-      if (!pendingInvite.active) {
-        break;
-      }
-      delay(10);
-    }
-  } else {
-    logEvent(LOG_INFO, "ℹ️ Skipping CANCEL (no provisional response or call answered)");
-  }
-  pendingInvite.active = false;
-
   return true;
+}
+
+bool isSipRegistrationOk() {
+  if (!lastRegisterSuccessful) {
+    return false;
+  }
+  if (lastRegisterAttemptMs == 0) {
+    return false;
+  }
+  unsigned long now = millis();
+  return (now - lastRegisterOkMs) <= (REGISTER_INTERVAL_MS * 2);
+}
+
+unsigned long getSipLastRegisterOkMs() {
+  return lastRegisterOkMs;
+}
+
+unsigned long getSipLastRegisterAttemptMs() {
+  return lastRegisterAttemptMs;
 }

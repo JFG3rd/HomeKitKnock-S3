@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ESP32 Live Stream</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body class="full-width-page">
+    <div class="dark-mode-toggle">
+        <label class="switch">
+            <input type="checkbox" id="darkModeToggle">
+            <span class="slider"></span>
+        </label>
+        <span>Dark Mode</span>
+    </div>
+    <div class="version-info">
+        <div>Version {{FW_VERSION}}</div>
+        <div>Build {{FW_BUILD_TIME}}</div>
+    </div>
+
+    <div class="header-container">
+        <h1 class="main-title">Live Stream + Audio</h1>
+        <p>MJPEG video with the companion WAV audio stream.</p>
+    </div>
+
+    <div class="container full-width">
+        <div class="flash-stats">
+            <strong>Video:</strong> http://{{LOCAL_IP}}:81/stream<br>
+            <strong>Audio:</strong> http://{{LOCAL_IP}}:81/audio<br>
+            <span style="font-size: 0.85em;">Audio playback requires a click to comply with browser autoplay rules.</span>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 12px; align-items: center;">
+            <img src="http://{{LOCAL_IP}}:81/stream" alt="Live MJPEG stream" style="max-width: 100%; border-radius: 10px; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);">
+            <audio id="liveAudio" controls></audio>
+            <div class="button-row" style="width: 100%; justify-content: center;">
+                <button class="button" id="startAudio">Start Audio</button>
+                <button class="button danger-btn" id="stopAudio">Stop Audio</button>
+                <a class="button" href="/" title="Return to the main dashboard.">Back</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const darkToggle = document.getElementById("darkModeToggle");
+        const audioEl = document.getElementById("liveAudio");
+        const startAudioBtn = document.getElementById("startAudio");
+        const stopAudioBtn = document.getElementById("stopAudio");
+        const audioUrl = "http://{{LOCAL_IP}}:81/audio";
+
+        function setDarkMode(enabled) {
+            document.body.classList.toggle("dark-mode", enabled);
+            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        }
+
+        const savedDarkMode = localStorage.getItem("darkMode");
+        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
+        darkToggle.checked = darkModeEnabled;
+        setDarkMode(darkModeEnabled);
+        darkToggle.addEventListener("change", () => setDarkMode(darkToggle.checked));
+
+        startAudioBtn.addEventListener("click", () => {
+            audioEl.src = audioUrl;
+            audioEl.play().catch(() => {
+                alert("Audio playback blocked. Click again to enable audio.");
+            });
+        });
+
+        stopAudioBtn.addEventListener("click", () => {
+            audioEl.pause();
+            audioEl.removeAttribute("src");
+            audioEl.load();
+        });
+    </script>
+</body>
+</html>

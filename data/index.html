@@ -83,6 +83,7 @@
             <div class="button-row">
                 <a class="button config-btn" href="/capture" target="_blank" title="Open a single JPEG snapshot.">📸 Snapshot</a>
                 <a class="button" href="http://{{LOCAL_IP}}:81/stream" target="_blank" title="Open the MJPEG live stream.">🎥 Live Stream</a>
+                <a class="button" href="/live" target="_blank" title="Open MJPEG with the companion audio stream.">🎧 Live + Audio</a>
             </div>
             <hr>
             {{STREAM_INFO}}
@@ -120,8 +121,12 @@
                     <span class="info-value" id="metricRtspSessions">--</span>
                 </div>
                 <div class="info-item">
-                    <span class="info-label" title="Active MJPEG HTTP stream clients.">HTTP Clients:</span>
+                    <span class="info-label" title="Active MJPEG HTTP stream clients.">HTTP MJPEG Clients:</span>
                     <span class="info-value" id="metricHttpClients">--</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" title="Active HTTP audio stream clients (WAV).">HTTP Audio Clients:</span>
+                    <span class="info-value" id="metricHttpAudioClients">--</span>
                 </div>
                 <div class="info-item">
                     <span class="info-label" title="Count of RTSP UDP send failures since boot or last reset.">RTSP UDP endPacket fails:</span>
@@ -156,6 +161,7 @@
         const streamStatusEl = document.getElementById("streamStatus");
         const metricRtspSessionsEl = document.getElementById("metricRtspSessions");
         const metricHttpClientsEl = document.getElementById("metricHttpClients");
+        const metricHttpAudioClientsEl = document.getElementById("metricHttpAudioClients");
         const metricRtspUdpFailsEl = document.getElementById("metricRtspUdpFails");
         const metricRtspUdpBackoffActiveEl = document.getElementById("metricRtspUdpBackoffActive");
         const metricRtspUdpBackoffMsEl = document.getElementById("metricRtspUdpBackoffMs");
@@ -202,10 +208,12 @@
                 .then(data => {
                     const rtspSessions = data.rtsp_sessions || 0;
                     const httpClients = data.clients || 0;
+                    const httpAudioClients = data.audio_clients || 0;
                     const rtspUdpFails = data.rtsp_udp_endpacket_fail || 0;
                     const rtspUdpBackoffMs = data.rtsp_udp_backoff_ms || 0;
                     metricRtspSessionsEl.textContent = rtspSessions;
                     metricHttpClientsEl.textContent = httpClients;
+                    metricHttpAudioClientsEl.textContent = httpAudioClients;
                     metricRtspUdpFailsEl.textContent = rtspUdpFails;
                     metricRtspUdpBackoffActiveEl.textContent = rtspUdpBackoffMs > 0 ? "ON" : "OFF";
                     metricRtspUdpBackoffMsEl.textContent = `${rtspUdpBackoffMs}ms`;
@@ -234,12 +242,16 @@
                         ? `RTSP: ${rtspSessions} session(s)` 
                         : "RTSP: no sessions";
                     
-                    streamStatusEl.innerHTML = `<strong>Stream:</strong> ${httpStatus}<br>${rtspStatus}`;
+                    const audioStatus = httpAudioClients > 0
+                        ? `HTTP Audio: ${httpAudioClients} client(s)`
+                        : "HTTP Audio: idle";
+                    streamStatusEl.innerHTML = `<strong>Stream:</strong> ${httpStatus}<br>${audioStatus}<br>${rtspStatus}`;
                 })
                 .catch(() => {
                     streamStatusEl.innerHTML = "<strong>Stream:</strong> unavailable";
                     metricRtspSessionsEl.textContent = "--";
                     metricHttpClientsEl.textContent = "--";
+                    metricHttpAudioClientsEl.textContent = "--";
                     metricRtspUdpFailsEl.textContent = "--";
                     metricRtspUdpBackoffActiveEl.textContent = "--";
                     metricRtspUdpBackoffMsEl.textContent = "--";

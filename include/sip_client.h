@@ -34,10 +34,29 @@ void sendSipRegister(const SipConfig &config);
 // Returns true if SIP messages were sent successfully
 bool triggerSipRing(const SipConfig &config);
 
+// Optional hook invoked while the SIP ring loop is running (e.g., to keep LEDs animating).
+typedef void (*SipRingTickCallback)();
+void setSipRingTickCallback(SipRingTickCallback callback);
+
+// True when a SIP ring transaction is active (INVITE in progress).
+bool isSipRingActive();
+
+// Advance the SIP ring state machine (non-blocking).
+void processSipRing();
+
 // Handle incoming SIP responses (call in loop())
 void handleSipIncoming();
 
 // Check if it's time to send another REGISTER
 void sendRegisterIfNeeded(const SipConfig &config);
+
+// True when a recent REGISTER succeeded (used for status LED).
+bool isSipRegistrationOk();
+
+// Timestamp of the last successful REGISTER (milliseconds since boot).
+unsigned long getSipLastRegisterOkMs();
+
+// Timestamp of the last REGISTER attempt (milliseconds since boot).
+unsigned long getSipLastRegisterAttemptMs();
 
 #endif // SIP_CLIENT_H

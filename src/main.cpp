@@ -74,8 +74,8 @@ uint8_t audioOutVolume = DEFAULT_AUDIO_OUT_VOLUME;
 String timezone = "PST8PDT,M3.2.0,M11.1.0";
 bool lastButtonPressed = false;
 unsigned long lastButtonChangeMs = 0;
+bool doorbellLatched = false;
 volatile bool sipRingQueued = false;
-volatile bool sipRingInProgress = false;
 
 bool initFileSystem(AsyncWebServer &server) {
   // Mount LittleFS and expose static assets for the UI.
@@ -125,17 +125,121 @@ static void writeWavHeader(AsyncResponseStream *response,
   response->write(reinterpret_cast<const uint8_t *>(&dataBytes), 4);
 }
 
-static void setStatusLed(bool on) {
-  digitalWrite(STATUS_LED_PIN, STATUS_LED_ACTIVE_LOW ? !on : on);
+static const uint32_t kRingLedDurationMs = 6000;
+static const uint32_t kLedDoubleBlinkPeriodMs = 1000;
+static const uint32_t kLedWifiBlinkPeriodMs = 500;   // 2 Hz blink
+static const uint32_t kLedSipPulsePeriodMs = 2000;   // Slow pulse
+static const uint32_t kLedRingPulsePeriodMs = 1400;  // Breathing ring pulse
+static const uint32_t kLedRtspTickPeriodMs = 2000;
+static const uint32_t kLedRtspTickOnMs = 80;
+
+static const uint8_t kLedDutyLow = 24;
+static const uint8_t kLedDutyPulseMax = 180;
+static const uint8_t kLedDutyPulseMin = 8;
+static const uint8_t kLedDutyBlink = 200;
+static const uint8_t kLedDutyRingMax = 220;
+static const uint8_t kLedDutyRtspTick = 200;
+
+static const int kStatusLedcChannel = 0;
+static const int kStatusLedcFreq = 5000;
+static const int kStatusLedcResolution = 8;
+static const uint8_t kStatusLedcMaxDuty = (1 << kStatusLedcResolution) - 1;
+static uint8_t lastLedDuty = 255;
+static uint32_t ringLedUntilMs = 0;
+
+static void initStatusLed() {
+  ledcSetup(kStatusLedcChannel, kStatusLedcFreq, kStatusLedcResolution);
+  ledcAttachPin(STATUS_LED_PIN, kStatusLedcChannel);
+  ledcWrite(kStatusLedcChannel, STATUS_LED_ACTIVE_LOW ? kStatusLedcMaxDuty : 0);
+}
+
+static void setStatusLedDuty(uint8_t duty) {
+  if (duty > kStatusLedcMaxDuty) {
+    duty = kStatusLedcMaxDuty;
+  }
+  if (STATUS_LED_ACTIVE_LOW) {
+    duty = kStatusLedcMaxDuty - duty;
+  }
+  if (duty == lastLedDuty) {
+    return;
+  }
+  ledcWrite(kStatusLedcChannel, duty);
+  lastLedDuty = duty;
+}
+
+static void markRingLed() {
+  uint32_t now = millis();
+  ringLedUntilMs = now + kRingLedDurationMs;
+}
+
+static bool isRingLedActive(uint32_t now) {
+  return static_cast<int32_t>(ringLedUntilMs - now) > 0;
+}
+
+static uint8_t triangleWave(uint32_t now, uint32_t periodMs, uint8_t minDuty, uint8_t maxDuty) {
+  if (periodMs == 0 || maxDuty <= minDuty) {
+    return maxDuty;
+  }
+  uint32_t phase = now % periodMs;
+  uint32_t half = periodMs / 2;
+  uint32_t span = maxDuty - minDuty;
+  if (phase < half) {
+    return static_cast<uint8_t>(minDuty + (span * phase) / half);
+  }
+  return static_cast<uint8_t>(maxDuty - (span * (phase - half)) / half);
+}
+
+static uint8_t doubleBlink(uint32_t now) {
+  uint32_t phase = now % kLedDoubleBlinkPeriodMs;
+  bool on = (phase < 80) || (phase >= 160 && phase < 240);
+  return on ? kLedDutyBlink : 0;
+}
+
+static uint8_t blink(uint32_t now, uint32_t periodMs) {
+  uint32_t phase = now % periodMs;
+  return (phase < (periodMs / 2)) ? kLedDutyBlink : 0;
+}
+
+static uint8_t rtspTick(uint32_t now) {
+  uint32_t phase = now % kLedRtspTickPeriodMs;
+  return (phase < kLedRtspTickOnMs) ? kLedDutyRtspTick : 0;
 }
 
 static void updateStatusLed() {
-  static bool lastReady = false;
-  bool ready = (WiFi.status() == WL_CONNECTED) && !isAPModeActive();
-  if (ready != lastReady) {
-    setStatusLed(ready);
-    lastReady = ready;
+  uint32_t now = millis();
+  uint8_t duty = 0;
+
+  // Priority: Ringing > AP mode > Wi-Fi connecting > SIP error > SIP ok > RTSP active.
+  if (isRingLedActive(now)) {
+    duty = triangleWave(now, kLedRingPulsePeriodMs, kLedDutyPulseMin, kLedDutyRingMax);
+  } else if (isAPModeActive()) {
+    duty = doubleBlink(now);
+  } else if (WiFi.status() != WL_CONNECTED) {
+    duty = blink(now, kLedWifiBlinkPeriodMs);
+  } else {
+    bool sipConfigured = sipEnabled && hasSipConfig(sipConfig);
+    bool sipOk = sipConfigured && isSipRegistrationOk();
+    bool sipError = false;
+    if (sipConfigured && !sipOk) {
+      unsigned long lastAttempt = getSipLastRegisterAttemptMs();
+      sipError = lastAttempt > 0 && (now - lastAttempt > 5000);
+    }
+    if (sipError) {
+      duty = triangleWave(now, kLedSipPulsePeriodMs, 0, kLedDutyPulseMax);
+    } else if (sipOk) {
+      duty = kLedDutyLow;
+    } else if (rtspEnabled && getRtspActiveSessionCount() > 0) {
+      duty = rtspTick(now);
+    } else {
+      duty = 0;
+    }
   }
+
+  setStatusLedDuty(duty);
+}
+
+static void sipRingLedTick() {
+  updateStatusLed();
 }
 
 // Queue SIP rings from async handlers to avoid blocking async_tcp and tripping the WDT.
@@ -144,8 +248,8 @@ static bool queueSipRing(const char *source) {
     logEvent(LOG_INFO, "ℹ️ SIP disabled - cannot queue ring");
     return false;
   }
-  if (sipRingInProgress || sipRingQueued) {
-    logEvent(LOG_INFO, "ℹ️ SIP ring already queued or in progress");
+  if (isSipRingActive() || sipRingQueued) {
+    logEvent(LOG_INFO, "ℹ️ SIP ring already queued or active");
     return false;
   }
   sipRingQueued = true;
@@ -154,6 +258,8 @@ static bool queueSipRing(const char *source) {
 }
 
 static void triggerDoorbellEvent(bool includeSip) {
+  // Show the ring animation regardless of which downstream notifications are enabled.
+  markRingLed();
   // Sequence: local gong first, then external notifications.
   playGongAsync();
 
@@ -351,9 +457,9 @@ void setup() {
   #endif
   configureAudio(micEnabled, micMuted, micSensitivity, audioOutEnabled, audioOutMuted, audioOutVolume);
 
-  // Initialize status LED (off until WiFi is ready).
-  pinMode(STATUS_LED_PIN, OUTPUT);
-  setStatusLed(false);
+  // Initialize status LED PWM (off until state machine runs).
+  initStatusLed();
+  setSipRingTickCallback(sipRingLedTick);
 
   // Configure doorbell GPIO based on active-low setting.
   pinMode(DOORBELL_BUTTON_PIN, DOORBELL_BUTTON_ACTIVE_LOW ? INPUT_PULLUP : INPUT);
@@ -409,6 +515,21 @@ void setup() {
                         "Use this URL for MJPEG clients (Scrypted HTTP camera, FRITZ!Box)."
                         "</p>"
                         "</div>";
+          if (micEnabled) {
+            streamInfo += "<div class=\"flash-stats\">"
+                          "<strong>🎧 HTTP Audio (WAV):</strong>"
+                          "<p style=\"font-family: monospace; font-size: 0.9em; word-break: break-all;\">"
+                          "http://" + WiFi.localIP().toString() + ":81/audio"
+                          "</p>"
+                          "<p style=\"font-size: 0.85em; color: #666;\">"
+                          "Companion audio stream for MJPEG. For browser A/V, open <code>/live</code>."
+                          "</p>"
+                          "</div>";
+          } else {
+            streamInfo += "<div class=\"flash-stats\">"
+                          "<strong>🎧 HTTP Audio:</strong> disabled (mic off)"
+                          "</div>";
+          }
         } else {
           streamInfo += "<div class=\"flash-stats\">"
                         "<strong>📹 HTTP Stream:</strong> disabled"
@@ -440,6 +561,20 @@ void setup() {
         page.replace("{{FW_VERSION}}", String(FW_VERSION));
         page.replace("{{FW_BUILD_TIME}}", String(FW_BUILD_TIME));
 
+        AsyncWebServerResponse *response = request->beginResponse(200, "text/html", page);
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
+      });
+
+      server.on("/live", HTTP_GET, [](AsyncWebServerRequest *request) {
+        String page = loadUiTemplate("/live.html");
+        if (page.isEmpty()) {
+          request->send(500, "text/plain", "UI template missing");
+          return;
+        }
+        page.replace("{{LOCAL_IP}}", WiFi.localIP().toString());
+        page.replace("{{FW_VERSION}}", String(FW_VERSION));
+        page.replace("{{FW_BUILD_TIME}}", String(FW_BUILD_TIME));
         AsyncWebServerResponse *response = request->beginResponse(200, "text/html", page);
         response->addHeader("Cache-Control", "no-store");
         request->send(response);
@@ -938,6 +1073,7 @@ void setup() {
         uint32_t lastFrameAgeMs = 0;
         String clientsJson = "[]";
         bool active = getCameraStreamClientInfo(clientIp, clients, connectedMs, lastFrameAgeMs, clientsJson);
+        uint32_t audioClients = getCameraStreamAudioClientCount();
 
         // Get RTSP session count
         int rtspSessions = getRtspActiveSessionCount();
@@ -946,6 +1082,7 @@ void setup() {
         json += "\"running\":" + String(running ? "true" : "false") + ",";
         json += "\"active\":" + String(active ? "true" : "false") + ",";
         json += "\"clients\":" + String(clients) + ",";
+        json += "\"audio_clients\":" + String(audioClients) + ",";
         json += "\"client_ip\":\"" + clientIp + "\",";
         json += "\"connected_ms\":" + String(connectedMs) + ",";
         json += "\"last_frame_age_ms\":" + String(lastFrameAgeMs) + ",";
@@ -980,6 +1117,7 @@ void setup() {
       });
 
       server.on("/ring", HTTP_GET, [](AsyncWebServerRequest *request) {
+        markRingLed();
         if (sipEnabled) {
           if (queueSipRing("/ring")) {
             request->send(200, "text/plain", "SIP ring queued");
@@ -1000,6 +1138,7 @@ void setup() {
       });
 
       server.on("/ring/tr064", HTTP_GET, [](AsyncWebServerRequest *request) {
+        markRingLed();
         if (!tr064Enabled) {
           request->send(503, "text/plain", "TR-064 ring disabled");
           return;
@@ -1012,6 +1151,7 @@ void setup() {
       });
 
       server.on("/ring/sip", HTTP_GET, [](AsyncWebServerRequest *request) {
+        markRingLed();
         if (!sipEnabled) {
           request->send(503, "text/plain", "SIP ring disabled");
           return;
@@ -1144,22 +1284,20 @@ void loop() {
   
   // Send periodic SIP REGISTER to maintain registration with FRITZ!Box (only if enabled)
   if (sipEnabled) {
-    if (!sipRingInProgress && sipRingQueued) {
+    if (sipRingQueued && !isSipRingActive()) {
       sipRingQueued = false;
-      sipRingInProgress = true;
       bool ringOk = triggerSipRing(sipConfig);
       if (ringOk) {
-        logEvent(LOG_INFO, "📞 FRITZ!Box ring triggered via SIP");
+        logEvent(LOG_INFO, "📞 FRITZ!Box ring started via SIP");
       } else {
         logEvent(LOG_WARN, "⚠️ SIP ring failed - check SIP configuration");
       }
-      sipRingInProgress = false;
     }
 
-    if (!sipRingInProgress) {
+    handleSipIncoming();
+    processSipRing();
+    if (!isSipRingActive()) {
       sendRegisterIfNeeded(sipConfig);
-      // Handle any incoming SIP responses
-      handleSipIncoming();
     }
   }
   
@@ -1171,13 +1309,11 @@ void loop() {
     lastButtonPressed = pressed;
   }
 
-  if (pressed && (nowMs - lastButtonChangeMs) > DOORBELL_DEBOUNCE_MS) {
+  if (pressed && !doorbellLatched && (nowMs - lastButtonChangeMs) > DOORBELL_DEBOUNCE_MS) {
     handleDoorbellPress();
-    while (isDoorbellPressed()) {
-      delay(10);
-    }
-    lastButtonPressed = false;
-    lastButtonChangeMs = millis();
+    doorbellLatched = true;
+  } else if (!pressed && doorbellLatched && (nowMs - lastButtonChangeMs) > DOORBELL_DEBOUNCE_MS) {
+    doorbellLatched = false;
   }
 
   otaUpdate.loop();

@@ -8,6 +8,20 @@
 
 This document outlines the plan to integrate the Seeed XIAO ESP32-S3 Sense onboard microphone into the HTTP and RTSP video streams.
 
+## Current Implementation (v1.3.1)
+
+- **RTSP audio**: PCMU/8000 is advertised only when the mic feature is enabled.
+- **HTTP audio preview**: `/audio.wav` returns a short WAV clip for browser testing.
+- **Continuous HTTP audio**: `http://ESP32-IP:81/audio` streams 16 kHz mono WAV as a companion to MJPEG.
+- **Browser A/V page**: `http://ESP32-IP/live` pairs MJPEG + WAV (click-to-play audio).
+- **Audio out**: MAX98357A I2S DAC plays gong/tone clips when enabled.
+- **HTTP client limit**: MJPEG and WAV streams share the same max client cap.
+- **Mic sharing**: RTSP and HTTP audio share the same mic capture path; avoid running both if audio stutters.
+- **HTTP dependency**: WAV streaming is available only when HTTP camera streaming is enabled.
+- **Compatibility**:
+  - **Scrypted/HomeKit**: prefer RTSP for A/V (Scrypted can transcode).
+  - **FRITZ!Box**: SIP is used for ringing only; HTTP audio is not consumed by the intercom.
+
 ## Hardware
 
 **Microphone**: MSM261S4030H0R (Pulse Density Modulation - PDM)
@@ -228,15 +242,26 @@ uint8_t linear2ulaw(int16_t pcm) {
 
 HTTP MJPEG streams don't natively support audio. Options:
 
-#### Option A: Separate Audio Stream
-- Provide separate endpoint `/audio.wav` (PCM WAV) or `/audio` (raw G.711/PCM)
+#### Option A: Separate Audio Stream (Implemented)
+- Continuous WAV stream at `http://ESP32-IP:81/audio`
+- Short WAV preview at `http://ESP32-IP/audio.wav`
+- MJPEG remains at `http://ESP32-IP:81/stream` (pair manually or use `/live`)
 - Clients must sync audio/video manually
-- Not ideal for browser playback
 
-#### Option B: WebRTC/HLS
+#### Option B: WebRTC/HLS (Planned)
 - Use WebRTC or HLS for combined A/V streaming
 - Requires significant architectural changes
-- Better browser compatibility
+- Better browser compatibility and A/V sync
+
+### Streaming WAV vs WebRTC (Pros/Cons)
+
+**Streaming WAV (current approach)**
+- **Pros**: Simple, low CPU, easy to debug, works for local browsers and tools
+- **Cons**: No A/V sync, no NAT traversal, limited client support for continuous WAV
+
+**WebRTC**
+- **Pros**: Built-in A/V sync, low latency, NAT traversal, broad HomeKit/Scrypted compatibility
+- **Cons**: Higher complexity, more CPU/RAM, requires STUN/TURN for remote access
 
 **Recommendation**: Keep HTTP as video-only, use RTSP for audio+video.
 

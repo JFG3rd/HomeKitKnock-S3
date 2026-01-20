@@ -8,9 +8,9 @@
 
 [View full implementation details in this document]
 
-## ✅ Project Status: Phase 1 Complete
+## ✅ Project Status: Phase 1 Complete (Audio Companion Stream Added)
 
-All Phase 1 objectives have been successfully implemented and tested.
+All Phase 1 objectives have been implemented, including RTSP audio and a continuous HTTP WAV companion stream.
 
 ### What's Working Now
 
@@ -18,6 +18,11 @@ All Phase 1 objectives have been successfully implemented and tested.
 - RTSP server (port 8554) for Scrypted integration  
 - MJPEG HTTP stream (port 81) for browser viewing
 - Snapshot capture endpoint
+
+✅ **Audio Streaming**
+- RTSP audio (G.711 PCMU) from onboard mic when enabled
+- HTTP WAV preview (`/audio.wav`) plus continuous stream (`http://DEVICE_IP:81/audio`)
+- MAX98357A I2S audio out for gong playback (optional)
 
 ✅ **SIP Integration**
 - Full SIP client implementation (RFC 3261)
@@ -41,6 +46,8 @@ All Phase 1 objectives have been successfully implemented and tested.
 - Reset actions for RTSP UDP fail count and backoff state
 - Dedicated log pages for camera and doorbell events
 - WiFi provisioning via AP mode
+- OTA update page with local-only auth controls
+- Version/build info displayed across UI pages
 
 ✅ **Scrypted Ready**
 - RTSP URL displayed in web UI
@@ -59,7 +66,7 @@ All Phase 1 objectives have been successfully implemented and tested.
 **Protocols:**
 - RTSP (RFC 2326) on port 8554
 - SIP (RFC 3261) on port 5062
-- HTTP on port 80, 81
+- HTTP on port 80 (UI/API) and 81 (MJPEG + WAV audio)
 
 **Libraries:**
 - Micro-RTSP 0.1.6 - RTSP server
@@ -103,6 +110,9 @@ platformio device monitor
 | `src/main.cpp` | Main application, web UI |
 | `src/sip_client.cpp` | SIP protocol implementation |
 | `src/rtsp_server.cpp` | RTSP streaming server |
+| `src/cameraStream.cpp` | MJPEG + WAV HTTP streaming (port 81) |
+| `src/audio.cpp` | Mic capture + MAX98357A audio out |
+| `src/ota_update.cpp` | OTA update flow + auth |
 | `include/config.h` | Pin definitions, constants |
 | `docs/SCRYPTED_RTSP_SETUP.md` | Scrypted integration guide |
 | `docs/SIP_INTEGRATION.md` | SIP configuration guide |
@@ -115,10 +125,13 @@ After WiFi configuration, all services are available:
 - **Web UI:** http://DEVICE_IP/
 - **RTSP Stream:** rtsp://DEVICE_IP:8554/mjpeg/1
 - **MJPEG Stream:** http://DEVICE_IP:81/stream
+- **MJPEG Audio (WAV):** http://DEVICE_IP:81/audio
+- **Live A/V Page:** http://DEVICE_IP/live
 - **SIP Setup:** http://DEVICE_IP/sip
 - **Test Ring:** http://DEVICE_IP/ring/sip
 - **Camera Logs:** http://DEVICE_IP/logs/camera
 - **Doorbell Logs:** http://DEVICE_IP/logs/doorbell
+- **OTA Update:** http://DEVICE_IP/ota (local-only)
 
 ## 📚 Documentation
 
@@ -135,6 +148,7 @@ Complete documentation available in `/docs`:
 
 All core functionality implemented:
 - ✅ Video streaming (RTSP + MJPEG)
+- ✅ Audio streaming (RTSP PCMU + HTTP WAV)
 - ✅ Doorbell button detection
 - ✅ FRITZ!Box phone ringing (SIP)
 - ✅ Scrypted camera integration
@@ -142,7 +156,7 @@ All core functionality implemented:
 - ✅ Web-based configuration
 - ✅ Professional documentation
 
-**Next:** Phase 2 - Audio streaming with I2S microphone
+**Next:** Phase 2 - Advanced A/V sync, H.264/WebRTC, and two-way audio
 
 ## 🤝 Contributing
 
