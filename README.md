@@ -159,6 +159,9 @@ If Scrypted shows an ffmpeg error about “Unable to choose an output format for
 The UI stylesheet is served from LittleFS. After editing `data/style.css`, run:
 `pio run -t uploadfs`
 
+### OTA Update Files
+See `docs/OTA_UPDATE_FILE.md` for creating the OTA firmware and filesystem `.bin` files.
+
 ---
 
 ## ⚙️ PlatformIO Configuration
