@@ -9,6 +9,10 @@
 #include <WiFi.h>
 #include <MD5Builder.h>
 #include "logger.h"
+#include "audio.h"
+#include "config.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 // FRITZ!Box SIP settings
 static const char* SIP_DOMAIN = "fritz.box";
@@ -20,11 +24,21 @@ static const uint16_t LOCAL_SIP_PORT = 5062;
 static const uint16_t SIP_RTP_PORT = 40000;
 static WiFiUDP sipUdp;
 static bool sipUdpReady = false;
+static WiFiUDP sipRtpUdp;
+static bool sipRtpReady = false;
 static unsigned long lastRegisterTime = 0;
 static unsigned long lastRegisterAttemptMs = 0;
 static unsigned long lastRegisterOkMs = 0;
 static bool lastRegisterSuccessful = false;
 static const unsigned long REGISTER_INTERVAL_MS = 60UL * 1000; // 60 seconds
+static const uint32_t kSipAudioSampleRate = 8000;
+static const size_t kSipRtpSamplesPerPacket = 160;  // 20ms at 8kHz
+static const size_t kSipMicSamplesPerPacket =
+  (AUDIO_SAMPLE_RATE / kSipAudioSampleRate) * kSipRtpSamplesPerPacket;
+static const unsigned long kSipRtpFrameMs = 20;
+static const uint32_t kSipMicReadTimeoutMs = 25;
+static const unsigned long kSipMaxCallMs = 60000;
+static const uint8_t kSipDefaultDtmfPayload = 101;
 
 // Authentication state
 struct AuthChallenge {
@@ -39,6 +53,17 @@ struct AuthChallenge {
 
 static AuthChallenge lastAuthChallenge;
 static uint32_t nonceCount = 1;
+
+struct SipMediaInfo {
+  IPAddress remoteIp;
+  uint16_t remotePort = 0;
+  bool hasPcmu = false;
+  bool hasPcma = false;
+  uint8_t preferredAudioPayload = 0xFF;
+  uint8_t dtmfPayload = kSipDefaultDtmfPayload;
+  bool remoteSends = true;
+  bool remoteReceives = true;
+};
 
 struct PendingInvite {
   bool active = false;
@@ -58,14 +83,55 @@ struct PendingInvite {
   unsigned long inviteStartMs = 0;
   unsigned long answeredMs = 0;
   unsigned long cancelStartMs = 0;
+  bool mediaReady = false;
+  SipMediaInfo media;
+  SipConfig config;
+};
+
+struct SipCallSession {
+  bool active = false;
+  bool inbound = false;
+  bool awaitingAck = false;
+  bool acked = false;
+  bool byeSent = false;
+  String callID;
+  String localTag;
+  String remoteTag;
+  String remoteContact;
+  String remoteUri;
+  String requestUri;
+  uint32_t localCseq = 1;
+  uint32_t remoteCseq = 0;
+  IPAddress sipRemoteIp;
+  uint16_t sipRemotePort = 0;
+  IPAddress rtpRemoteIp;
+  uint16_t rtpRemotePort = 0;
+  uint8_t audioPayload = 0;
+  uint8_t dtmfPayload = kSipDefaultDtmfPayload;
+  bool remoteSends = true;
+  bool remoteReceives = true;
+  bool localSends = true;
+  bool localReceives = true;
+  unsigned long startMs = 0;
+  unsigned long lastRtpSendMs = 0;
+  unsigned long lastRtpRecvMs = 0;
+  uint16_t rtpSeq = 0;
+  uint32_t rtpTimestamp = 0;
+  uint32_t rtpSsrc = 0;
+  uint8_t lastDtmfEvent = 0xFF;
+  unsigned long lastDtmfEndMs = 0;
   SipConfig config;
 };
 
 static PendingInvite pendingInvite;
+static SipCallSession sipCall;
 static SipRingTickCallback ringTickCallback = nullptr;
+static SipDtmfCallback dtmfCallback = nullptr;
 static unsigned long lastSipNetWarnMs = 0;
-static const unsigned long kSipRingDurationMs = 20000;  // Let phones ring before cancel.
-static const unsigned long kSipInCallHoldMs = 20000;    // Hold after answer so phones have time to ring.
+static TaskHandle_t sipRtpTxTaskHandle = nullptr;
+static bool sipRtpTxTaskRunning = false;
+static const unsigned long kSipRingDurationMs = 30000;  // Let phones ring before cancel.
+static const unsigned long kSipInCallHoldMs = 60000;    // Hold after answer for intercom audio.
 static const unsigned long kSipCancelWaitMs = 3000;     // Wait for 487 after CANCEL.
 
 static String buildCancel(const SipConfig &config,
@@ -88,6 +154,7 @@ static String buildBye(const SipConfig &config,
                        const String& target,
                        uint32_t cseq);
 static bool sipSend(const String& msg);
+static bool sendSipRtpFrame();
 
 // Guard SIP traffic when Wi-Fi is down or the socket is not ready.
 // This prevents DNS/UDP failures from crashing the SIP task.
@@ -149,10 +216,93 @@ void setSipRingTickCallback(SipRingTickCallback callback) {
   ringTickCallback = callback;
 }
 
+void setSipDtmfCallback(SipDtmfCallback callback) {
+  dtmfCallback = callback;
+}
+
 static void serviceRingTick() {
   if (ringTickCallback) {
     ringTickCallback();
   }
+}
+
+static void resetSipCall() {
+  sipCall = SipCallSession();
+}
+
+static void sipRtpTxTask(void *param) {
+  const TickType_t interval = pdMS_TO_TICKS(kSipRtpFrameMs);
+  TickType_t lastWake = xTaskGetTickCount();
+  while (sipCall.active && sipCall.acked) {
+    if (sendSipRtpFrame()) {
+      sipCall.lastRtpSendMs = millis();
+    }
+    vTaskDelayUntil(&lastWake, interval);
+  }
+  sipRtpTxTaskRunning = false;
+  sipRtpTxTaskHandle = nullptr;
+  vTaskDelete(nullptr);
+}
+
+static void ensureSipRtpTxTask() {
+  if (sipRtpTxTaskRunning || !sipCall.active || !sipCall.acked) {
+    return;
+  }
+  sipRtpTxTaskRunning = true;
+  BaseType_t result = xTaskCreatePinnedToCore(
+      sipRtpTxTask,
+      "sip_rtp_tx",
+      4096,
+      nullptr,
+      1,
+      &sipRtpTxTaskHandle,
+      STREAM_TASK_CORE);
+  if (result != pdPASS) {
+    sipRtpTxTaskRunning = false;
+    sipRtpTxTaskHandle = nullptr;
+    logEvent(LOG_ERROR, "❌ Failed to start SIP RTP TX task");
+  }
+}
+
+static void startOutboundSipCall() {
+  if (sipCall.active) {
+    return;
+  }
+  if (!pendingInvite.mediaReady || pendingInvite.media.remotePort == 0) {
+    logEvent(LOG_WARN, "⚠️ SIP media missing SDP details; skipping RTP");
+    return;
+  }
+  sipCall.active = true;
+  sipCall.inbound = false;
+  sipCall.awaitingAck = false;
+  sipCall.acked = true;
+  sipCall.callID = pendingInvite.callID;
+  sipCall.localTag = pendingInvite.fromTag;
+  sipCall.remoteTag = pendingInvite.toTag;
+  sipCall.remoteContact = pendingInvite.remoteTarget;
+  sipCall.remoteUri = "sip:" + pendingInvite.target;
+  sipCall.requestUri = "sip:" + pendingInvite.target;
+  if (sipCall.remoteContact.isEmpty()) {
+    sipCall.remoteContact = sipCall.remoteUri;
+  }
+  sipCall.rtpRemoteIp = pendingInvite.media.remoteIp;
+  sipCall.rtpRemotePort = pendingInvite.media.remotePort;
+  sipCall.remoteSends = pendingInvite.media.remoteSends;
+  sipCall.remoteReceives = pendingInvite.media.remoteReceives;
+  if (pendingInvite.media.preferredAudioPayload != 0xFF) {
+    sipCall.audioPayload = pendingInvite.media.preferredAudioPayload;
+  } else {
+    sipCall.audioPayload = pendingInvite.media.hasPcmu ? 0 : (pendingInvite.media.hasPcma ? 8 : 0);
+  }
+  sipCall.dtmfPayload = pendingInvite.media.dtmfPayload;
+  sipCall.startMs = millis();
+  sipCall.lastRtpSendMs = sipCall.startMs;
+  sipCall.rtpSeq = static_cast<uint16_t>(esp_random());
+  sipCall.rtpTimestamp = static_cast<uint32_t>(esp_random());
+  sipCall.rtpSsrc = static_cast<uint32_t>(esp_random());
+  sipCall.config = pendingInvite.config;
+  sipCall.localCseq = pendingInvite.cseq + 1;
+  ensureSipRtpTxTask();
 }
 
 bool isSipRingActive() {
@@ -185,7 +335,10 @@ void processSipRing() {
       pendingInvite.answeredMs = now;
       if (!pendingInvite.ackSent) {
         pendingInvite.active = false;
+        resetSipCall();
+        return;
       }
+      startOutboundSipCall();
     } else if (!pendingInvite.byeSent &&
                (now - pendingInvite.answeredMs > kSipInCallHoldMs)) {
       String requestUri = pendingInvite.remoteTarget.isEmpty()
@@ -202,6 +355,7 @@ void processSipRing() {
       logEvent(LOG_DEBUG, bye);
       pendingInvite.byeSent = sipSend(bye);
       pendingInvite.active = false;
+      resetSipCall();
     }
     return;
   }
@@ -219,10 +373,12 @@ void processSipRing() {
       pendingInvite.cancelStartMs = now;
       if (!pendingInvite.cancelSent) {
         pendingInvite.active = false;
+        resetSipCall();
       }
     } else if (!pendingInvite.canCancel && !pendingInvite.cancelSent) {
       logEvent(LOG_INFO, "ℹ️ Skipping CANCEL (no provisional response or call answered)");
       pendingInvite.active = false;
+      resetSipCall();
       return;
     }
   }
@@ -230,6 +386,7 @@ void processSipRing() {
   if (pendingInvite.cancelSent && pendingInvite.cancelStartMs > 0 &&
       (now - pendingInvite.cancelStartMs > kSipCancelWaitMs)) {
     pendingInvite.active = false;
+    resetSipCall();
   }
 }
 
@@ -322,6 +479,21 @@ static String normalizeSipUri(const String& uri) {
   return "sip:" + normalized;
 }
 
+static String extractRequestUri(const String& request) {
+  int lineEnd = request.indexOf('\n');
+  String line = lineEnd >= 0 ? request.substring(0, lineEnd) : request;
+  line.trim();
+  int firstSpace = line.indexOf(' ');
+  if (firstSpace < 0) {
+    return "";
+  }
+  int secondSpace = line.indexOf(' ', firstSpace + 1);
+  if (secondSpace < 0) {
+    return "";
+  }
+  return line.substring(firstSpace + 1, secondSpace);
+}
+
 // Pull the tag parameter from a To header (needed for ACK/BYE).
 static String extractToTag(const String& response) {
   String toLine = extractHeaderValue(response, "To");
@@ -338,6 +510,19 @@ static String extractToTag(const String& response) {
     tagEnd = toLine.length();
   }
   return toLine.substring(tagPos, tagEnd);
+}
+
+static String extractHeaderTag(const String& headerValue) {
+  int tagPos = headerValue.indexOf("tag=");
+  if (tagPos < 0) {
+    return "";
+  }
+  tagPos += 4;
+  int tagEnd = headerValue.indexOf(';', tagPos);
+  if (tagEnd < 0) {
+    tagEnd = headerValue.length();
+  }
+  return headerValue.substring(tagPos, tagEnd);
 }
 
 static String extractContactUri(const String& response) {
@@ -362,6 +547,130 @@ static String extractContactUri(const String& response) {
   String uri = contactLine.substring(sipPos, endPos);
   uri.trim();
   return uri;
+}
+
+static String extractSipUriFromHeader(const String& headerValue) {
+  String line = headerValue;
+  int sipPos = line.indexOf("sip:");
+  if (sipPos < 0) {
+    return "";
+  }
+  int endPos = line.indexOf('>', sipPos);
+  if (endPos < 0) {
+    endPos = line.indexOf(';', sipPos);
+  }
+  if (endPos < 0) {
+    endPos = line.length();
+  }
+  String uri = line.substring(sipPos, endPos);
+  uri.trim();
+  return uri;
+}
+
+static String stripSipPrefix(const String& uri) {
+  if (uri.startsWith("sip:")) {
+    return uri.substring(4);
+  }
+  return uri;
+}
+
+static String extractSdpBody(const String& message) {
+  int bodyPos = message.indexOf("\r\n\r\n");
+  if (bodyPos < 0) {
+    return "";
+  }
+  return message.substring(bodyPos + 4);
+}
+
+static SipMediaInfo parseSdpMedia(const String& sdp, const IPAddress& fallbackIp) {
+  SipMediaInfo info;
+  info.remoteIp = fallbackIp;
+  int lineStart = 0;
+  while (lineStart < sdp.length()) {
+    int lineEnd = sdp.indexOf('\n', lineStart);
+    if (lineEnd < 0) {
+      lineEnd = sdp.length();
+    }
+    String line = sdp.substring(lineStart, lineEnd);
+    line.replace("\r", "");
+    line.trim();
+    lineStart = lineEnd + 1;
+
+    if (line.startsWith("c=")) {
+      int ipPos = line.indexOf("IN IP4");
+      if (ipPos >= 0) {
+        String ipStr = line.substring(ipPos + 6);
+        ipStr.trim();
+        IPAddress ip;
+        if (ip.fromString(ipStr)) {
+          info.remoteIp = ip;
+        }
+      }
+    } else if (line.startsWith("m=audio")) {
+      int firstSpace = line.indexOf(' ');
+      int secondSpace = line.indexOf(' ', firstSpace + 1);
+      if (firstSpace > 0 && secondSpace > firstSpace) {
+        String portStr = line.substring(firstSpace + 1, secondSpace);
+        info.remotePort = static_cast<uint16_t>(portStr.toInt());
+        int payloadPos = line.indexOf(' ', secondSpace + 1);
+        if (payloadPos > 0) {
+          String payloads = line.substring(payloadPos + 1);
+          payloads.trim();
+          int start = 0;
+          while (start < payloads.length()) {
+            int end = payloads.indexOf(' ', start);
+            if (end < 0) {
+              end = payloads.length();
+            }
+            String token = payloads.substring(start, end);
+            token.trim();
+            if (token == "0") {
+              info.hasPcmu = true;
+              if (info.preferredAudioPayload == 0xFF) {
+                info.preferredAudioPayload = 0;
+              }
+            } else if (token == "8") {
+              info.hasPcma = true;
+              if (info.preferredAudioPayload == 0xFF) {
+                info.preferredAudioPayload = 8;
+              }
+            }
+            start = end + 1;
+          }
+        }
+      }
+    } else if (line.startsWith("a=rtpmap:")) {
+      int colon = line.indexOf(':');
+      int space = line.indexOf(' ', colon + 1);
+      if (colon > 0 && space > colon) {
+        String ptStr = line.substring(colon + 1, space);
+        uint8_t payloadType = static_cast<uint8_t>(ptStr.toInt());
+        String codec = line.substring(space + 1);
+        codec.trim();
+        codec.toLowerCase();
+        if (codec.startsWith("pcmu/8000")) {
+          info.hasPcmu = true;
+        } else if (codec.startsWith("pcma/8000")) {
+          info.hasPcma = true;
+        } else if (codec.startsWith("telephone-event/8000")) {
+          info.dtmfPayload = payloadType;
+        }
+      }
+    } else if (line == "a=sendonly") {
+      info.remoteSends = true;
+      info.remoteReceives = false;
+    } else if (line == "a=recvonly") {
+      info.remoteSends = false;
+      info.remoteReceives = true;
+    } else if (line == "a=inactive") {
+      info.remoteSends = false;
+      info.remoteReceives = false;
+    } else if (line == "a=sendrecv") {
+      info.remoteSends = true;
+      info.remoteReceives = true;
+    }
+  }
+  return info;
 }
 
 // Parse authentication challenge from 401/407 response
@@ -452,6 +761,21 @@ static String buildToHeader(const String& target, const String& toTag) {
   }
   header += "\r\n";
   return header;
+}
+
+static String getSdpDirection() {
+  bool canSend = isMicEnabled() && !isMicMuted();
+  bool canReceive = isAudioOutEnabled() && !isAudioOutMuted();
+  if (canSend && canReceive) {
+    return "sendrecv";
+  }
+  if (canSend) {
+    return "sendonly";
+  }
+  if (canReceive) {
+    return "recvonly";
+  }
+  return "inactive";
 }
 
 // Calculate digest response for authentication
@@ -562,6 +886,11 @@ bool initSipClient() {
     return false;
   }
   sipUdpReady = true;
+  if (!sipRtpUdp.begin(SIP_RTP_PORT)) {
+    logEvent(LOG_ERROR, "❌ Failed to bind RTP port " + String(SIP_RTP_PORT));
+  } else {
+    sipRtpReady = true;
+  }
   logEvent(LOG_INFO, "✅ SIP UDP bound to port " + String(LOCAL_SIP_PORT));
   return true;
 }
@@ -600,9 +929,9 @@ static String buildInvite(const SipConfig &config, const String& fromTag, const 
   String requestUri = "sip:" + target;
   String authUri = "sip:" + String(SIP_DOMAIN);
   String sdp;
-  // Offer minimal audio so FRITZ!Box treats INVITE as a proper call setup.
-  // We declare recvonly G.711 even though RTP streaming is not implemented yet.
+  // Offer G.711 audio so FRITZ!Box treats INVITE as a proper intercom call.
   if (localIP != IPAddress(0, 0, 0, 0)) {
+    String direction = getSdpDirection();
     sdp  = "v=0\r\n";
     sdp += "o=- 0 0 IN IP4 " + localIP.toString() + "\r\n";
     sdp += "s=ESP32 Doorbell\r\n";
@@ -613,7 +942,8 @@ static String buildInvite(const SipConfig &config, const String& fromTag, const 
     sdp += "a=rtpmap:8 PCMA/8000\r\n";
     sdp += "a=rtpmap:101 telephone-event/8000\r\n";
     sdp += "a=fmtp:101 0-15\r\n";
-    sdp += "a=recvonly\r\n";
+    sdp += "a=ptime:20\r\n";
+    sdp += "a=" + direction + "\r\n";
   }
 
   String msg;
@@ -642,6 +972,27 @@ static String buildInvite(const SipConfig &config, const String& fromTag, const 
     msg += sdp;
   }
   return msg;
+}
+
+static String buildSdpBody(const IPAddress& localIP) {
+  if (localIP == IPAddress(0, 0, 0, 0)) {
+    return "";
+  }
+  String direction = getSdpDirection();
+  String sdp;
+  sdp  = "v=0\r\n";
+  sdp += "o=- 0 0 IN IP4 " + localIP.toString() + "\r\n";
+  sdp += "s=ESP32 Doorbell\r\n";
+  sdp += "c=IN IP4 " + localIP.toString() + "\r\n";
+  sdp += "t=0 0\r\n";
+  sdp += "m=audio " + String(SIP_RTP_PORT) + " RTP/AVP 0 8 101\r\n";
+  sdp += "a=rtpmap:0 PCMU/8000\r\n";
+  sdp += "a=rtpmap:8 PCMA/8000\r\n";
+  sdp += "a=rtpmap:101 telephone-event/8000\r\n";
+  sdp += "a=fmtp:101 0-15\r\n";
+  sdp += "a=ptime:20\r\n";
+  sdp += "a=" + direction + "\r\n";
+  return sdp;
 }
 
 // Build SIP CANCEL message
@@ -800,6 +1151,43 @@ static String buildOkResponse(const String& request) {
   return msg;
 }
 
+static String buildResponse(const String& request,
+                            const String& status,
+                            const String& toTag,
+                            const String& extraHeaders,
+                            const String& contentType,
+                            const String& body) {
+  String via = extractHeaderValue(request, "Via");
+  String from = extractHeaderValue(request, "From");
+  String to = extractHeaderValue(request, "To");
+  String callID = extractHeaderValue(request, "Call-ID");
+  String cseq = extractHeaderValue(request, "CSeq");
+  if (via.isEmpty() || from.isEmpty() || to.isEmpty() || callID.isEmpty() || cseq.isEmpty()) {
+    return "";
+  }
+  if (!toTag.isEmpty() && to.indexOf("tag=") < 0) {
+    to += ";tag=" + toTag;
+  }
+  String msg = "SIP/2.0 " + status + "\r\n";
+  msg += "Via: " + via + "\r\n";
+  msg += "From: " + from + "\r\n";
+  msg += "To: " + to + "\r\n";
+  msg += "Call-ID: " + callID + "\r\n";
+  msg += "CSeq: " + cseq + "\r\n";
+  if (!extraHeaders.isEmpty()) {
+    msg += extraHeaders;
+  }
+  if (!contentType.isEmpty() && !body.isEmpty()) {
+    msg += "Content-Type: " + contentType + "\r\n";
+  }
+  msg += "Content-Length: " + String(body.length()) + "\r\n";
+  msg += "\r\n";
+  if (!body.isEmpty()) {
+    msg += body;
+  }
+  return msg;
+}
+
 // Wait for and parse SIP response with timeout
 static String waitForSipResponse(unsigned long timeoutMs = 2000) {
   unsigned long start = millis();
@@ -881,6 +1269,393 @@ static bool isProvisional(const String& response) {
   return response.startsWith("SIP/2.0 1");
 }
 
+static uint8_t linear2ulaw(int16_t pcm) {
+  static const int16_t seg_end[8] = {0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF, 0x3FFF, 0x7FFF};
+  int16_t mask;
+  int16_t seg;
+  uint8_t uval;
+
+  if (pcm < 0) {
+    pcm = -pcm;
+    mask = 0x7F;
+  } else {
+    mask = 0xFF;
+  }
+
+  if (pcm > 0x3FFF) {
+    pcm = 0x3FFF;
+  }
+
+  pcm += 0x84;
+  for (seg = 0; seg < 8; seg++) {
+    if (pcm <= seg_end[seg]) {
+      break;
+    }
+  }
+
+  if (seg >= 8) {
+    return static_cast<uint8_t>(0x7F ^ mask);
+  }
+
+  uval = (seg << 4) | ((pcm >> (seg + 3)) & 0x0F);
+  return static_cast<uint8_t>(uval ^ mask);
+}
+
+static uint8_t linear2alaw(int16_t pcm) {
+  static const int16_t seg_end[8] = {0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF, 0x3FFF, 0x7FFF};
+  int16_t mask;
+  int16_t seg;
+  uint8_t aval;
+
+  if (pcm >= 0) {
+    mask = 0xD5;
+  } else {
+    mask = 0x55;
+    pcm = -pcm - 1;
+  }
+
+  if (pcm > 0x7FFF) {
+    pcm = 0x7FFF;
+  }
+
+  for (seg = 0; seg < 8; seg++) {
+    if (pcm <= seg_end[seg]) {
+      break;
+    }
+  }
+
+  if (seg >= 8) {
+    return static_cast<uint8_t>(0x7F ^ mask);
+  }
+
+  aval = static_cast<uint8_t>(seg << 4);
+  if (seg < 2) {
+    aval |= (pcm >> 4) & 0x0F;
+  } else {
+    aval |= (pcm >> (seg + 3)) & 0x0F;
+  }
+  return static_cast<uint8_t>(aval ^ mask);
+}
+
+static int16_t ulaw2linear(uint8_t uval) {
+  uval = ~uval;
+  int t = ((uval & 0x0F) << 3) + 0x84;
+  t <<= (uval & 0x70) >> 4;
+  return (uval & 0x80) ? (0x84 - t) : (t - 0x84);
+}
+
+static int16_t alaw2linear(uint8_t aval) {
+  aval ^= 0x55;
+  int t = (aval & 0x0F) << 4;
+  int seg = (aval & 0x70) >> 4;
+  switch (seg) {
+    case 0:
+      t += 8;
+      break;
+    case 1:
+      t += 0x108;
+      break;
+    default:
+      t += 0x108;
+      t <<= seg - 1;
+      break;
+  }
+  return (aval & 0x80) ? t : -t;
+}
+
+static void downsampleTo8k(const int16_t *in, size_t inSamples, int16_t *out, size_t outSamples) {
+  if (AUDIO_SAMPLE_RATE == kSipAudioSampleRate) {
+    size_t samplesToCopy = min(inSamples, outSamples);
+    memcpy(out, in, samplesToCopy * sizeof(int16_t));
+    if (samplesToCopy < outSamples) {
+      memset(out + samplesToCopy, 0, (outSamples - samplesToCopy) * sizeof(int16_t));
+    }
+    return;
+  }
+  size_t step = AUDIO_SAMPLE_RATE / kSipAudioSampleRate;
+  if (step < 1) {
+    step = 1;
+  }
+  for (size_t i = 0; i < outSamples; i++) {
+    size_t start = i * step;
+    if (start >= inSamples) {
+      out[i] = 0;
+      continue;
+    }
+    int32_t sum = 0;
+    size_t count = 0;
+    for (size_t j = 0; j < step && (start + j) < inSamples; j++) {
+      sum += in[start + j];
+      count++;
+    }
+    out[i] = count > 0 ? static_cast<int16_t>(sum / static_cast<int32_t>(count)) : 0;
+  }
+}
+
+static void upsampleToOutput(const int16_t *in, size_t inSamples, int16_t *out, size_t outSamples) {
+  if (AUDIO_SAMPLE_RATE == kSipAudioSampleRate) {
+    size_t samplesToCopy = min(inSamples, outSamples);
+    memcpy(out, in, samplesToCopy * sizeof(int16_t));
+    if (samplesToCopy < outSamples) {
+      memset(out + samplesToCopy, 0, (outSamples - samplesToCopy) * sizeof(int16_t));
+    }
+    return;
+  }
+  size_t step = AUDIO_SAMPLE_RATE / kSipAudioSampleRate;
+  if (step < 1) {
+    step = 1;
+  }
+  size_t outIdx = 0;
+  for (size_t i = 0; i < inSamples && outIdx < outSamples; i++) {
+    for (size_t j = 0; j < step && outIdx < outSamples; j++) {
+      out[outIdx++] = in[i];
+    }
+  }
+  while (outIdx < outSamples) {
+    out[outIdx++] = 0;
+  }
+}
+
+static void encodeG711(const int16_t *pcm, size_t samples, uint8_t *encoded, uint8_t payloadType) {
+  for (size_t i = 0; i < samples; i++) {
+    encoded[i] = (payloadType == 8) ? linear2alaw(pcm[i]) : linear2ulaw(pcm[i]);
+  }
+}
+
+static void decodeG711(const uint8_t *encoded, size_t samples, int16_t *pcm, uint8_t payloadType) {
+  for (size_t i = 0; i < samples; i++) {
+    pcm[i] = (payloadType == 8) ? alaw2linear(encoded[i]) : ulaw2linear(encoded[i]);
+  }
+}
+
+static char dtmfEventToChar(uint8_t event) {
+  if (event <= 9) {
+    return static_cast<char>('0' + event);
+  }
+  if (event == 10) {
+    return '*';
+  }
+  if (event == 11) {
+    return '#';
+  }
+  if (event >= 12 && event <= 15) {
+    return static_cast<char>('A' + (event - 12));
+  }
+  return '\0';
+}
+
+static uint8_t g711SilenceByte(uint8_t payloadType) {
+  return (payloadType == 8) ? 0xD5 : 0xFF;
+}
+
+static void handleSipDtmfEvent(uint8_t event, bool end) {
+  if (!end) {
+    return;
+  }
+  unsigned long now = millis();
+  if (event == sipCall.lastDtmfEvent && (now - sipCall.lastDtmfEndMs) < 250) {
+    return;
+  }
+  char digit = dtmfEventToChar(event);
+  if (digit != '\0' && dtmfCallback) {
+    dtmfCallback(digit);
+  }
+  sipCall.lastDtmfEvent = event;
+  sipCall.lastDtmfEndMs = now;
+}
+
+static void handleSipRtpPacket(const uint8_t *data, size_t len, const IPAddress &remoteIp) {
+  if (!sipCall.active || !sipCall.acked) {
+    return;
+  }
+  if (!sipCall.remoteSends) {
+    return;
+  }
+  if (sipCall.rtpRemoteIp != IPAddress(0, 0, 0, 0) && remoteIp != sipCall.rtpRemoteIp) {
+    return;
+  }
+  if (len < 12) {
+    return;
+  }
+
+  uint8_t vpxcc = data[0];
+  if ((vpxcc >> 6) != 2) {
+    return;
+  }
+  bool hasExtension = (vpxcc & 0x10) != 0;
+  uint8_t csrcCount = vpxcc & 0x0F;
+  size_t headerLen = 12 + (csrcCount * 4);
+  if (len < headerLen) {
+    return;
+  }
+  if (hasExtension) {
+    if (len < headerLen + 4) {
+      return;
+    }
+    uint16_t extLenWords = (data[headerLen + 2] << 8) | data[headerLen + 3];
+    headerLen += 4 + (extLenWords * 4);
+    if (len < headerLen) {
+      return;
+    }
+  }
+
+  uint8_t payloadType = data[1] & 0x7F;
+  const uint8_t *payload = data + headerLen;
+  size_t payloadLen = len - headerLen;
+  if (payloadLen == 0) {
+    return;
+  }
+
+  if (payloadType == sipCall.dtmfPayload) {
+    if (payloadLen >= 4) {
+      uint8_t event = payload[0];
+      bool end = (payload[1] & 0x80) != 0;
+      handleSipDtmfEvent(event, end);
+    }
+    return;
+  }
+
+  if (payloadType != 0 && payloadType != 8) {
+    return;
+  }
+  if (!isAudioOutEnabled() || isAudioOutMuted()) {
+    return;
+  }
+
+  size_t samples = min(payloadLen, kSipRtpSamplesPerPacket);
+  int16_t pcm[kSipRtpSamplesPerPacket];
+  decodeG711(payload, samples, pcm, payloadType);
+
+  const size_t outSamples = (AUDIO_SAMPLE_RATE / kSipAudioSampleRate) * kSipRtpSamplesPerPacket;
+  int16_t outBuffer[outSamples];
+  upsampleToOutput(pcm, samples, outBuffer, outSamples);
+  playAudioSamples(outBuffer, outSamples, 5);
+  sipCall.lastRtpRecvMs = millis();
+}
+
+static bool sendSipRtpFrame() {
+  if (!sipCall.active || !sipCall.acked) {
+    return false;
+  }
+  if (!sipRtpReady || sipCall.rtpRemotePort == 0 || sipCall.rtpRemoteIp == IPAddress(0, 0, 0, 0)) {
+    return false;
+  }
+  if (!sipCall.remoteReceives) {
+    return false;
+  }
+  if (!isMicEnabled()) {
+    return false;
+  }
+
+  int16_t micBuffer[kSipMicSamplesPerPacket];
+  int16_t audioBuffer[kSipRtpSamplesPerPacket];
+  uint8_t encoded[kSipRtpSamplesPerPacket];
+
+  bool hasMic = !isMicMuted() && captureMicSamples(micBuffer, kSipMicSamplesPerPacket, kSipMicReadTimeoutMs);
+  if (hasMic) {
+    downsampleTo8k(micBuffer, kSipMicSamplesPerPacket, audioBuffer, kSipRtpSamplesPerPacket);
+    encodeG711(audioBuffer, kSipRtpSamplesPerPacket, encoded, sipCall.audioPayload);
+  } else {
+    memset(encoded, g711SilenceByte(sipCall.audioPayload), sizeof(encoded));
+  }
+
+  if (sipCall.rtpSsrc == 0) {
+    sipCall.rtpSsrc = static_cast<uint32_t>(esp_random());
+  }
+
+  uint8_t packet[12 + kSipRtpSamplesPerPacket];
+  packet[0] = 0x80;
+  packet[1] = sipCall.audioPayload;
+  packet[2] = (sipCall.rtpSeq >> 8) & 0xFF;
+  packet[3] = sipCall.rtpSeq & 0xFF;
+  packet[4] = (sipCall.rtpTimestamp >> 24) & 0xFF;
+  packet[5] = (sipCall.rtpTimestamp >> 16) & 0xFF;
+  packet[6] = (sipCall.rtpTimestamp >> 8) & 0xFF;
+  packet[7] = sipCall.rtpTimestamp & 0xFF;
+  packet[8] = (sipCall.rtpSsrc >> 24) & 0xFF;
+  packet[9] = (sipCall.rtpSsrc >> 16) & 0xFF;
+  packet[10] = (sipCall.rtpSsrc >> 8) & 0xFF;
+  packet[11] = sipCall.rtpSsrc & 0xFF;
+  memcpy(packet + 12, encoded, kSipRtpSamplesPerPacket);
+
+  if (!sipRtpUdp.beginPacket(sipCall.rtpRemoteIp, sipCall.rtpRemotePort)) {
+    return false;
+  }
+  size_t written = sipRtpUdp.write(packet, sizeof(packet));
+  if (written != sizeof(packet)) {
+    sipRtpUdp.endPacket();
+    return false;
+  }
+  if (!sipRtpUdp.endPacket()) {
+    return false;
+  }
+
+  sipCall.rtpSeq++;
+  sipCall.rtpTimestamp += kSipRtpSamplesPerPacket;
+  return true;
+}
+
+static bool sendSipBye() {
+  if (!sipCall.active || sipCall.byeSent) {
+    return false;
+  }
+  String requestUri = sipCall.remoteContact.isEmpty() ? sipCall.requestUri : sipCall.remoteContact;
+  String toTarget = stripSipPrefix(sipCall.remoteUri.isEmpty() ? sipCall.requestUri : sipCall.remoteUri);
+  if (requestUri.isEmpty() || toTarget.isEmpty()) {
+    return false;
+  }
+  uint32_t cseq = sipCall.localCseq++;
+  String bye = buildBye(sipCall.config,
+                        sipCall.localTag,
+                        sipCall.remoteTag,
+                        sipCall.callID,
+                        requestUri,
+                        toTarget,
+                        cseq);
+  logEvent(LOG_DEBUG, "---- SIP BYE ----");
+  logEvent(LOG_DEBUG, bye);
+  bool sent = false;
+  if (sipCall.sipRemoteIp != IPAddress(0, 0, 0, 0) && sipCall.sipRemotePort != 0) {
+    sent = sipSendTo(sipCall.sipRemoteIp, sipCall.sipRemotePort, bye);
+  } else {
+    sent = sipSend(bye);
+  }
+  sipCall.byeSent = sent;
+  return sent;
+}
+
+void processSipMedia() {
+  // RTP receive loop for active SIP calls; TX runs in a dedicated task.
+  if (!sipCall.active || !sipCall.acked) {
+    return;
+  }
+  ensureSipRtpTxTask();
+  unsigned long now = millis();
+  if (sipCall.inbound && kSipMaxCallMs > 0 &&
+      (now - sipCall.startMs) > kSipMaxCallMs) {
+    sendSipBye();
+    resetSipCall();
+    return;
+  }
+
+  if (!sipRtpReady) {
+    return;
+  }
+  for (int i = 0; i < 4; i++) {
+    int packetSize = sipRtpUdp.parsePacket();
+    if (packetSize <= 0) {
+      break;
+    }
+    if (packetSize > 0) {
+      uint8_t buffer[512];
+      int len = sipRtpUdp.read(buffer, sizeof(buffer));
+      if (len > 0) {
+        handleSipRtpPacket(buffer, static_cast<size_t>(len), sipRtpUdp.remoteIP());
+      }
+    }
+  }
+}
+
 // Handle incoming SIP responses
 void handleSipIncoming() {
   if (!isSipNetworkReady()) {
@@ -906,6 +1681,114 @@ void handleSipIncoming() {
     int spacePos = firstLine.indexOf(' ');
     String method = spacePos > 0 ? firstLine.substring(0, spacePos) : firstLine;
     method.trim();
+    if (method.equalsIgnoreCase("OPTIONS")) {
+      String headers = "Allow: INVITE, ACK, BYE, CANCEL, OPTIONS\r\n";
+      String ok = buildResponse(resp, "200 OK", "", headers, "", "");
+      if (!ok.isEmpty()) {
+        logEvent(LOG_DEBUG, "---- SIP TX ----");
+        logEvent(LOG_DEBUG, ok);
+        sipSendResponse(ok);
+      }
+      return;
+    }
+    if (method.equalsIgnoreCase("INVITE")) {
+      // Incoming call: answer immediately with SDP so FRITZ!Box treats us as an intercom.
+      if (pendingInvite.active || sipCall.active) {
+        String busy = buildResponse(resp, "486 Busy Here", "", "", "", "");
+        if (!busy.isEmpty()) {
+          logEvent(LOG_DEBUG, "---- SIP TX ----");
+          logEvent(LOG_DEBUG, busy);
+          sipSendResponse(busy);
+        }
+        return;
+      }
+
+      String callId = extractHeaderValue(resp, "Call-ID");
+      callId.trim();
+      if (callId.isEmpty()) {
+        return;
+      }
+
+      uint32_t cseq = 0;
+      String cseqMethod;
+      parseCSeq(resp, &cseq, &cseqMethod);
+
+      String fromLine = extractHeaderValue(resp, "From");
+      String fromTag = extractHeaderTag(fromLine);
+      String requestUri = extractRequestUri(resp);
+      String remoteContact = extractContactUri(resp);
+      String remoteUri = extractSipUriFromHeader(fromLine);
+      if (remoteContact.isEmpty()) {
+        remoteContact = remoteUri;
+      }
+
+      String sdp = extractSdpBody(resp);
+      SipMediaInfo media = parseSdpMedia(sdp, sipUdp.remoteIP());
+
+      sipCall.active = true;
+      sipCall.inbound = true;
+      sipCall.awaitingAck = true;
+      sipCall.acked = false;
+      sipCall.callID = callId;
+      sipCall.localTag = generateTag();
+      sipCall.remoteTag = fromTag;
+      sipCall.remoteContact = remoteContact;
+      sipCall.remoteUri = remoteUri;
+      sipCall.requestUri = requestUri;
+      sipCall.remoteCseq = cseq;
+      sipCall.sipRemoteIp = sipUdp.remoteIP();
+      sipCall.sipRemotePort = sipUdp.remotePort();
+      sipCall.rtpRemoteIp = media.remoteIp;
+      sipCall.rtpRemotePort = media.remotePort;
+      sipCall.remoteSends = media.remoteSends;
+      sipCall.remoteReceives = media.remoteReceives;
+      if (media.preferredAudioPayload != 0xFF) {
+        sipCall.audioPayload = media.preferredAudioPayload;
+      } else {
+        sipCall.audioPayload = media.hasPcmu ? 0 : (media.hasPcma ? 8 : 0);
+      }
+      sipCall.dtmfPayload = media.dtmfPayload;
+      sipCall.startMs = millis();
+      sipCall.rtpSeq = static_cast<uint16_t>(esp_random());
+      sipCall.rtpTimestamp = static_cast<uint32_t>(esp_random());
+      sipCall.rtpSsrc = static_cast<uint32_t>(esp_random());
+      sipCall.localCseq = 1;
+      loadSipConfig(sipCall.config);
+      logEvent(LOG_INFO, "📞 SIP inbound INVITE received");
+
+      String trying = buildResponse(resp, "100 Trying", "", "", "", "");
+      if (!trying.isEmpty()) {
+        logEvent(LOG_DEBUG, "---- SIP TX ----");
+        logEvent(LOG_DEBUG, trying);
+        sipSendResponse(trying);
+      }
+
+      String sdpBody = buildSdpBody(WiFi.localIP());
+      String contactHeader;
+      IPAddress localIp = WiFi.localIP();
+      if (localIp != IPAddress(0, 0, 0, 0) && !sipCall.config.sip_user.isEmpty()) {
+        contactHeader = "Contact: <sip:" + sipCall.config.sip_user + "@" +
+                        localIp.toString() + ":" + String(LOCAL_SIP_PORT) + ">\r\n";
+      }
+      String ok = buildResponse(resp, "200 OK", sipCall.localTag, contactHeader, "application/sdp", sdpBody);
+      if (!ok.isEmpty()) {
+        logEvent(LOG_DEBUG, "---- SIP TX ----");
+        logEvent(LOG_DEBUG, ok);
+        sipSendResponse(ok);
+      }
+      return;
+    }
+    if (method.equalsIgnoreCase("ACK")) {
+      String callId = extractHeaderValue(resp, "Call-ID");
+      callId.trim();
+      if (sipCall.active && sipCall.inbound && callId.equalsIgnoreCase(sipCall.callID)) {
+        sipCall.acked = true;
+        sipCall.awaitingAck = false;
+        sipCall.startMs = millis();
+        ensureSipRtpTxTask();
+      }
+      return;
+    }
     if (method.equalsIgnoreCase("BYE") || method.equalsIgnoreCase("CANCEL")) {
       String ok = buildOkResponse(resp);
       if (!ok.isEmpty()) {
@@ -913,10 +1796,10 @@ void handleSipIncoming() {
         logEvent(LOG_DEBUG, ok);
         sipSendResponse(ok);
       }
-      if (method.equalsIgnoreCase("BYE")) {
-        pendingInvite.active = false;
-        pendingInvite.answered = false;
-      }
+      pendingInvite.active = false;
+      pendingInvite.answered = false;
+      resetSipCall();
+      return;
     }
     return;
   }
@@ -951,6 +1834,11 @@ void handleSipIncoming() {
     }
     if (!responseToTag.isEmpty()) {
       pendingInvite.toTag = responseToTag;
+    }
+    String sdp = extractSdpBody(resp);
+    if (!sdp.isEmpty()) {
+      pendingInvite.media = parseSdpMedia(sdp, sipUdp.remoteIP());
+      pendingInvite.mediaReady = pendingInvite.media.remotePort > 0;
     }
   }
 
@@ -1110,6 +1998,9 @@ void sendSipRegister(const SipConfig &config) {
 void sendRegisterIfNeeded(const SipConfig &config) {
   unsigned long now = millis();
   if (now - lastRegisterTime < REGISTER_INTERVAL_MS) return;
+  if (sipCall.active) {
+    return;
+  }
   if (!isSipNetworkReady()) {
     return;
   }
@@ -1132,6 +2023,10 @@ bool triggerSipRing(const SipConfig &config) {
   }
   if (pendingInvite.active) {
     logEvent(LOG_INFO, "ℹ️ SIP ring already active");
+    return false;
+  }
+  if (sipCall.active) {
+    logEvent(LOG_INFO, "ℹ️ SIP call already active");
     return false;
   }
 
@@ -1172,6 +2067,8 @@ bool triggerSipRing(const SipConfig &config) {
   pendingInvite.inviteStartMs = millis();
   pendingInvite.answeredMs = 0;
   pendingInvite.cancelStartMs = 0;
+  pendingInvite.mediaReady = false;
+  pendingInvite.media = SipMediaInfo();
   pendingInvite.config = config;
 
   return true;

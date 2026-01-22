@@ -29,11 +29,13 @@ All Phase 1 objectives have been implemented, including RTSP audio and a continu
 - Registers as IP phone with FRITZ!Box
 - Handles SIP Digest auth challenges (401/407)
 - Rings internal DECT phones (**610 group)
-- 2.5-second ring duration with INVITE/CANCEL flow
+- RTP audio (G.711 PCMU/PCMA) with DTMF door opener support
+- 30-second ring duration with INVITE/CANCEL flow
 
 ✅ **Doorbell Functionality**
 - GPIO button with debouncing
 - Triggers SIP ring to FRITZ!Box
+- DTMF door opener relay output (GPIO1)
 - Ready for Scrypted webhook integration
 - HomeKit notification support (via Scrypted)
 
@@ -66,6 +68,7 @@ All Phase 1 objectives have been implemented, including RTSP audio and a continu
 **Protocols:**
 - RTSP (RFC 2326) on port 8554
 - SIP (RFC 3261) on port 5062
+- SIP RTP (G.711 + DTMF) on port 40000
 - HTTP on port 80 (UI/API) and 81 (MJPEG + WAV audio)
 
 **Libraries:**

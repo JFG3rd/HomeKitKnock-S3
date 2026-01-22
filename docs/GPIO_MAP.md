@@ -26,6 +26,7 @@ Source mapping: PlatformIO XIAO_ESP32S3 variant (`pins_arduino.h`).
 ## Current Project Assignments
 - Doorbell button: GPIO4 (active-low, internal pull-up)
 - Status LED: GPIO2 (active-high, 330 ohm to LED)
+- Door opener relay: GPIO1 (active-high)
 - I2C (reserved): GPIO5 = SDA, GPIO6 = SCL
 - I2S DAC (audio out): GPIO7 = BCLK, GPIO8 = LRCLK/WS, GPIO9 = DIN
 - PDM mic (onboard): GPIO42 = CLK, GPIO41 = DATA
@@ -33,13 +34,12 @@ Source mapping: PlatformIO XIAO_ESP32S3 variant (`pins_arduino.h`).
 - Onboard LED (not on header): GPIO21 (variant default)
 
 ## Free Header GPIOs (with current wiring)
-- GPIO1 (D0/A0)
 - GPIO3 (D2/A2)
 - GPIO43 (D6) and GPIO44 (D7) if UART TX/RX is not needed
 
 ## Suggested Usage for Free GPIOs
-- Status RGB/WS2812 data line: GPIO1 or GPIO3
-- PIR / door contact sensor input: GPIO1 or GPIO3
+- Status RGB/WS2812 data line: GPIO3
+- PIR / door contact sensor input: GPIO3
 - External UART device: GPIO43/GPIO44 (if you are not using serial TX/RX)
 
 ## Notes

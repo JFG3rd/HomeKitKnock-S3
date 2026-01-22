@@ -108,6 +108,7 @@ Components:
 	•	✅ Button GPIO input (debounced)
 	•	✅ SIP client for FRITZ!Box IP-phone registration (Digest auth)
 	•	✅ SIP INVITE/CANCEL for ringing internal phones
+	•	✅ SIP RTP audio (PCMU/PCMA) with DTMF door opener support
 	•	✅ Configuration storage in NVS (WiFi, SIP, camera)
 	•	✅ Web UI for setup and testing
 
@@ -155,6 +156,7 @@ Notes:
 	•	HTTP audio preview: http://ESP32-IP/audio.wav
 	•	Continuous HTTP audio (MJPEG companion): http://ESP32-IP:81/audio
 	•	Browser A/V page: http://ESP32-IP/live
+	•	SIP intercom audio: RTP on UDP port 40000 (PCMU/PCMA + DTMF)
 	•	Local gong playback uses `/gong.pcm` from LittleFS when present
 
 ⸻
@@ -164,6 +166,7 @@ Notes:
 Pin assignments (current):
 	•	Doorbell button: GPIO4 (active-low, internal pull-up)
 	•	Status LED (online/ready): GPIO2 (active-high) + 330 ohm resistor
+	•	Door opener relay: GPIO1 (active-high, relay module or transistor driver)
 	•	I2C (reserved for sensors): GPIO5 = SDA, GPIO6 = SCL
 	•	MAX98357A I2S: GPIO7 = BCLK, GPIO8 = LRC/WS, GPIO9 = DIN
 	•	PDM mic: GPIO42 = CLK, GPIO41 = DATA
@@ -186,11 +189,14 @@ Build steps (soldering + wiring):
 	1.	Solder headers on the XIAO ESP32-S3 Sense and mount it securely.
 	2.	Doorbell switch: connect one leg to GPIO4 and the other to GND (internal pull-up is enabled in firmware).
 	3.	Status LED: connect GPIO2 → 330 ohm resistor → LED anode; LED cathode to GND.
-	4.	MAX98357A: wire LRC→GPIO8, BCLK→GPIO7, DIN→GPIO9, GND→GND, Vin→3V3.
-	5.	MAX98357A SC: tie to 3V3 for always-on.
-	6.	MAX98357A GAIN: leave floating for default gain (or strap per datasheet).
-	7.	Speaker: connect to MAX98357A L+ and L- (do not connect either side to GND).
-	8.	Reserve GPIO5/6 for future I2C sensors; add pull-ups when you install sensors.
+	4.	Door opener relay: GPIO1 → relay IN, relay VCC → 3V3 (or 5V module with 3.3V logic), relay GND → GND.
+	5.	MAX98357A: wire LRC→GPIO8, BCLK→GPIO7, DIN→GPIO9, GND→GND, Vin→3V3.
+	6.	MAX98357A SC: tie to 3V3 for always-on.
+	7.	MAX98357A GAIN: leave floating for default gain (or strap per datasheet).
+	8.	Speaker: connect to MAX98357A L+ and L- (do not connect either side to GND).
+	9.	Reserve GPIO5/6 for future I2C sensors; add pull-ups when you install sensors.
+
+DTMF door opener sequence default: `123` (configurable in `include/config.h`).
 
 ⸻
 

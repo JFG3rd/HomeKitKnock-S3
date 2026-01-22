@@ -28,12 +28,33 @@ static bool audioOutEnabled = false;
 static bool audioOutMuted = false;
 static uint8_t audioOutVolume = DEFAULT_AUDIO_OUT_VOLUME;
 static bool audioOutI2sReady = false;
+static SemaphoreHandle_t audioOutMutex = nullptr;
 
 static bool gongTaskRunning = false;
 
 static void ensureMicMutex() {
   if (!micMutex) {
     micMutex = xSemaphoreCreateMutex();
+  }
+}
+
+static void ensureAudioOutMutex() {
+  if (!audioOutMutex) {
+    audioOutMutex = xSemaphoreCreateMutex();
+  }
+}
+
+static bool lockAudioOut(uint32_t timeoutMs) {
+  ensureAudioOutMutex();
+  if (!audioOutMutex) {
+    return true;
+  }
+  return xSemaphoreTake(audioOutMutex, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+}
+
+static void unlockAudioOut() {
+  if (audioOutMutex) {
+    xSemaphoreGive(audioOutMutex);
   }
 }
 
@@ -74,7 +95,7 @@ static bool initMicI2s() {
   config.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
   config.dma_buf_count = 4;
   config.dma_buf_len = 512;
-  config.use_apll = false;
+  config.use_apll = true;
   config.tx_desc_auto_clear = false;
   config.fixed_mclk = 0;
 
@@ -85,8 +106,9 @@ static bool initMicI2s() {
   }
 
   i2s_pin_config_t pin_config = {};
-  pin_config.bck_io_num = I2S_PDM_MIC_CLK;
-  pin_config.ws_io_num = I2S_PIN_NO_CHANGE;
+  // PDM uses WS as the clock line; BCK is unused.
+  pin_config.bck_io_num = I2S_PIN_NO_CHANGE;
+  pin_config.ws_io_num = I2S_PDM_MIC_CLK;
   pin_config.data_out_num = I2S_PIN_NO_CHANGE;
   pin_config.data_in_num = I2S_PDM_MIC_DATA;
   err = i2s_set_pin(I2S_NUM_0, &pin_config);
@@ -232,26 +254,83 @@ bool captureMicSamples(int16_t *buffer, size_t sampleCount, uint32_t timeoutMs) 
   }
 
   size_t bytesNeeded = sampleCount * sizeof(int16_t);
-  size_t bytesRead = 0;
-  esp_err_t err = i2s_read(I2S_NUM_0, buffer, bytesNeeded, &bytesRead, pdMS_TO_TICKS(timeoutMs));
+  size_t bytesReadTotal = 0;
+  unsigned long startMs = millis();
+  while (bytesReadTotal < bytesNeeded) {
+    unsigned long elapsedMs = millis() - startMs;
+    if (elapsedMs >= timeoutMs) {
+      break;
+    }
+    uint32_t remainingMs = timeoutMs - elapsedMs;
+    size_t bytesRead = 0;
+    uint8_t *writePtr = reinterpret_cast<uint8_t *>(buffer) + bytesReadTotal;
+    size_t bytesRemaining = bytesNeeded - bytesReadTotal;
+    esp_err_t err = i2s_read(I2S_NUM_0, writePtr, bytesRemaining, &bytesRead, pdMS_TO_TICKS(remainingMs));
+    if (err != ESP_OK || bytesRead == 0) {
+      break;
+    }
+    bytesReadTotal += bytesRead;
+  }
   unlockMic();
-  if (err != ESP_OK || bytesRead == 0) {
+  if (bytesReadTotal == 0) {
     memset(buffer, 0, bytesNeeded);
     return false;
   }
 
-  size_t samplesRead = bytesRead / sizeof(int16_t);
+  size_t samplesRead = bytesReadTotal / sizeof(int16_t);
   for (size_t i = 0; i < samplesRead; i++) {
     buffer[i] = scaleSample(buffer[i], micSensitivity);
   }
   if (samplesRead < sampleCount) {
     memset(buffer + samplesRead, 0, (sampleCount - samplesRead) * sizeof(int16_t));
   }
+  // Treat partial reads as valid so realtime callers can transmit with zero-padded tails.
+  return bytesReadTotal > 0;
+}
+
+bool playAudioSamples(const int16_t *samples, size_t sampleCount, uint32_t timeoutMs) {
+  if (!samples || sampleCount == 0) {
+    return false;
+  }
+  if (!audioOutEnabled || audioOutMuted) {
+    return false;
+  }
+  if (!audioOutI2sReady && !initAudioOutI2s()) {
+    return false;
+  }
+  if (!lockAudioOut(timeoutMs)) {
+    return false;
+  }
+
+  const size_t maxChunk = 256;
+  int16_t scaled[maxChunk];
+  size_t offset = 0;
+  while (offset < sampleCount) {
+    size_t chunk = min(maxChunk, sampleCount - offset);
+    for (size_t i = 0; i < chunk; i++) {
+      scaled[i] = scaleSample(samples[offset + i], audioOutVolume);
+    }
+    size_t bytesToWrite = chunk * sizeof(int16_t);
+    size_t bytesWritten = 0;
+    esp_err_t err = i2s_write(I2S_NUM_1,
+                              scaled,
+                              bytesToWrite,
+                              &bytesWritten,
+                              pdMS_TO_TICKS(timeoutMs));
+    if (err != ESP_OK || bytesWritten != bytesToWrite) {
+      i2s_zero_dma_buffer(I2S_NUM_1);
+      unlockAudioOut();
+      return false;
+    }
+    offset += chunk;
+  }
+  unlockAudioOut();
   return true;
 }
 
 static void writeSamples(const int16_t *samples, size_t sampleCount) {
   // Only attempt I2S writes when the output path is initialized.
+  // Caller must hold the audio-out mutex to avoid overlapping writes.
   if (!samples || sampleCount == 0 || !audioOutI2sReady) {
     return;
   }
@@ -273,6 +352,12 @@ static void gongTask(void *pvParameters) {
     vTaskDelete(NULL);
     return;
   }
+  if (!lockAudioOut(1000)) {
+    gongTaskRunning = false;
+    vTaskDelete(NULL);
+    return;
+  }
+  i2s_zero_dma_buffer(I2S_NUM_1);
 
   // Prefer the LittleFS gong clip; fall back to a synthesized two-tone if missing.
   if (LittleFS.exists(kGongPcmPath)) {
@@ -330,6 +415,7 @@ static void gongTask(void *pvParameters) {
     }
   }
 
+  unlockAudioOut();
   gongTaskRunning = false;
   vTaskDelete(NULL);
 }

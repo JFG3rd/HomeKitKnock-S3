@@ -17,6 +17,13 @@
 #define STATUS_LED_PIN 2
 #define STATUS_LED_ACTIVE_LOW 0
 
+// Door opener relay output (use a transistor or relay module rated for 3.3V logic).
+#define DOOR_OPENER_PIN 1
+#define DOOR_OPENER_ACTIVE_LOW 0
+#define DOOR_OPENER_PULSE_MS 800
+#define DOOR_OPENER_DTMF_SEQUENCE "123"
+#define DOOR_OPENER_DTMF_TIMEOUT_MS 2000
+
 // Core affinity guidance (ESP32-S3 dual-core).
 // Reserve core 0 for Wi-Fi/LwIP; pin streaming/audio tasks to core 1.
 #define WIFI_TASK_CORE 0

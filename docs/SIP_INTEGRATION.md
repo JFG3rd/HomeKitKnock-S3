@@ -7,13 +7,13 @@
 # SIP Client Integration Guide
 
 ## Overview
-Integrated SIP client functionality into the ESP32-S3 doorbell to ring FRITZ!Box internal phones (DECT handsets) when the doorbell button is pressed. The client now supports SIP Digest authentication challenges (401/407).
+Integrated SIP client functionality into the ESP32-S3 doorbell to ring FRITZ!Box internal phones (DECT handsets) when the doorbell button is pressed. The client supports SIP Digest authentication challenges (401/407), RTP audio (G.711), inbound call handling, and RFC2833 DTMF for door opener control.
 
 ## What Was Changed
 
 ### New Files Created
 1. **`include/sip_client.h`** - SIP client header with function declarations
-2. **`src/sip_client.cpp`** - SIP client implementation with REGISTER, INVITE, and CANCEL support
+2. **`src/sip_client.cpp`** - SIP client implementation with REGISTER, INVITE, ACK/BYE, CANCEL, and RTP audio support
 
 ### Modified Files
 1. **`src/main.cpp`**
@@ -40,8 +40,8 @@ Integrated SIP client functionality into the ESP32-S3 doorbell to ring FRITZ!Box
 1. User presses doorbell button (GPIO pin)
 2. `handleDoorbellPress()` calls `triggerSipRing(sipConfig)`
 3. ESP32 sends SIP INVITE to configured target (e.g., **610)
-4. Rings for 2.5 seconds while processing responses
-5. ESP32 sends SIP CANCEL to stop ringing
+4. FRITZ!Box rings the handsets; ESP32 negotiates RTP audio (PCMU/PCMA)
+5. ESP32 cancels ringing after the configured timeout (30s) if the call is unanswered
 
 ### Configuration Storage
 - SIP credentials stored in NVS under "sip" namespace:
@@ -50,6 +50,17 @@ Integrated SIP client functionality into the ESP32-S3 doorbell to ring FRITZ!Box
   - `sip_displayname` - Caller ID name (default: "Doorbell")
   - `sip_target` - Target number (default: "**610")
 - Scrypted doorbell webhook stored in the "features" namespace (configured on `/setup`)
+
+## Inbound Call Flow (Intercom Mode)
+1. FRITZ!Box/handset sends SIP INVITE to the ESP32 IP phone
+2. ESP32 responds with 200 OK + SDP (G.711 + telephone-event)
+3. Handset sends ACK and RTP audio starts in both directions
+4. Call ends with BYE (handset) or timeout (ESP32 failsafe)
+
+## Door Opener (DTMF)
+- ESP32 listens for RFC2833 telephone-event packets on the SIP RTP stream.
+- The default door-opener sequence is **`123`** (matches the FRITZ!Box “Zeichenfolge für Türöffner” field).
+- When the sequence is received, GPIO1 is pulsed to drive a relay module.
 
 ## Setup Instructions
 
@@ -78,6 +89,7 @@ Integrated SIP client functionality into the ESP32-S3 doorbell to ring FRITZ!Box
 5. Click **"💾 Save"**
 6. Test with **"🔔 Test SIP Ring"** button
 7. If using Scrypted HomeKit, set the doorbell webhook on `http://<ESP32-IP>/setup`
+8. In FRITZ!Box intercom settings, set the door opener sequence to `123` to match the firmware default
 
 ### 3. Verify Registration
 - Check FRITZ!Box → Telefonie → Telefoniegeräte
@@ -89,7 +101,7 @@ Integrated SIP client functionality into the ESP32-S3 doorbell to ring FRITZ!Box
 ### Web UI Test
 1. Navigate to `http://<ESP32-IP>`
 2. Click **"🔔 Test Ring (SIP)"** button
-3. Internal phones should ring for 2.5 seconds
+3. Internal phones should ring for up to 30 seconds
 
 ### Debug Information
 1. Navigate to `http://<ESP32-IP>/sipDebug`
@@ -159,11 +171,12 @@ SIP/2.0 200 OK
 
 ### SIP Protocol Implementation
 - **Transport**: UDP port 5062 (local) → 5060 (FRITZ!Box)
-- **Messages**: REGISTER, INVITE, CANCEL
+- **Messages**: REGISTER, INVITE, ACK, CANCEL, BYE, OPTIONS
 - **Timing**: 
   - REGISTER every 60 seconds (120s expiry)
-  - INVITE ring duration: 2.5 seconds
+  - INVITE ring duration: 30 seconds
   - CANCEL sent after ring duration
+  - RTP audio on UDP port 40000 (PCMU/PCMA, 20ms frames)
 
 ### Network Configuration
 - **Domain**: fritz.box
@@ -191,7 +204,7 @@ platformio device monitor
 1. Watch serial monitor for SIP REGISTER messages
 2. Check FRITZ!Box shows ESP32 as registered IP phone
 3. Press doorbell button or use web UI test button
-4. Verify internal phones ring for 2.5 seconds
+4. Verify internal phones ring for up to 30 seconds
 
 ## Files Modified Summary
 

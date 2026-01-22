@@ -50,6 +50,7 @@ http://192.168.178.188:81/stream
 - HomeKit notification appears
 - FRITZ!Box phones ring (if SIP configured)
 - Video stream available in Home app
+- Door opener relay can be triggered by DTMF sequence `123` (GPIO1)
 
 ## Key URLs
 
@@ -74,6 +75,7 @@ http://192.168.178.188:81/stream
 - **Username**: IP phone username (e.g., 620)
 - **Password**: IP phone password
 - **Target**: `**610` (all DECT) or specific extension
+ - **Door opener code**: `123` (matches ESP32 default DTMF sequence)
 NOTE: FRITZ!Box may require SIP Digest auth; current firmware handles 401/407 challenges automatically.
 
 ### Scrypted

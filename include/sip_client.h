@@ -38,11 +38,18 @@ bool triggerSipRing(const SipConfig &config);
 typedef void (*SipRingTickCallback)();
 void setSipRingTickCallback(SipRingTickCallback callback);
 
+// Callback invoked on received DTMF digits (RFC2833 telephone-event).
+typedef void (*SipDtmfCallback)(char digit);
+void setSipDtmfCallback(SipDtmfCallback callback);
+
 // True when a SIP ring transaction is active (INVITE in progress).
 bool isSipRingActive();
 
 // Advance the SIP ring state machine (non-blocking).
 void processSipRing();
+
+// Advance SIP media (RTP send/receive) and call state (non-blocking).
+void processSipMedia();
 
 // Handle incoming SIP responses (call in loop())
 void handleSipIncoming();

@@ -12,6 +12,7 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <string.h>
 #include "wifi_ap.h"
 #include "config.h"
 #include "tr064_client.h"
@@ -76,6 +77,10 @@ bool lastButtonPressed = false;
 unsigned long lastButtonChangeMs = 0;
 bool doorbellLatched = false;
 volatile bool sipRingQueued = false;
+static bool doorOpenerActive = false;
+static unsigned long doorOpenerUntilMs = 0;
+static String dtmfBuffer;
+static unsigned long lastDtmfMs = 0;
 
 bool initFileSystem(AsyncWebServer &server) {
   // Mount LittleFS and expose static assets for the UI.
@@ -238,8 +243,54 @@ static void updateStatusLed() {
   setStatusLedDuty(duty);
 }
 
+static void setDoorOpenerOutput(bool active) {
+  int level = active ? HIGH : LOW;
+  if (DOOR_OPENER_ACTIVE_LOW) {
+    level = active ? LOW : HIGH;
+  }
+  digitalWrite(DOOR_OPENER_PIN, level);
+}
+
+static void triggerDoorOpenerPulse() {
+  unsigned long now = millis();
+  doorOpenerActive = true;
+  doorOpenerUntilMs = now + DOOR_OPENER_PULSE_MS;
+  setDoorOpenerOutput(true);
+  logEvent(LOG_INFO, "🚪 Door opener triggered");
+}
+
+static void updateDoorOpener() {
+  if (!doorOpenerActive) {
+    return;
+  }
+  unsigned long now = millis();
+  if (static_cast<int32_t>(doorOpenerUntilMs - now) <= 0) {
+    doorOpenerActive = false;
+    setDoorOpenerOutput(false);
+  }
+}
+
+static void handleSipDtmf(char digit) {
+  // Accumulate digits and fire the relay when the configured sequence matches.
+  unsigned long now = millis();
+  if (now - lastDtmfMs > DOOR_OPENER_DTMF_TIMEOUT_MS) {
+    dtmfBuffer = "";
+  }
+  lastDtmfMs = now;
+  dtmfBuffer += digit;
+  const size_t maxLen = strlen(DOOR_OPENER_DTMF_SEQUENCE);
+  if (dtmfBuffer.length() > maxLen) {
+    dtmfBuffer.remove(0, dtmfBuffer.length() - maxLen);
+  }
+  if (dtmfBuffer.endsWith(DOOR_OPENER_DTMF_SEQUENCE)) {
+    dtmfBuffer = "";
+    triggerDoorOpenerPulse();
+  }
+}
+
 static void sipRingLedTick() {
   updateStatusLed();
+  updateDoorOpener();
 }
 
 // Queue SIP rings from async handlers to avoid blocking async_tcp and tripping the WDT.
@@ -460,9 +511,12 @@ void setup() {
   // Initialize status LED PWM (off until state machine runs).
   initStatusLed();
   setSipRingTickCallback(sipRingLedTick);
+  setSipDtmfCallback(handleSipDtmf);
 
   // Configure doorbell GPIO based on active-low setting.
   pinMode(DOORBELL_BUTTON_PIN, DOORBELL_BUTTON_ACTIVE_LOW ? INPUT_PULLUP : INPUT);
+  pinMode(DOOR_OPENER_PIN, OUTPUT);
+  setDoorOpenerOutput(false);
 
   #ifdef CAMERA
   // Initialize camera and register endpoints if hardware is present.
@@ -637,7 +691,7 @@ void setup() {
         free(samples);
       });
 
-      // Short mic preview for browser testing; not a continuous stream.
+      // Longer mic preview for browser testing; not a continuous stream.
       server.on("/audio.wav", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!isMicEnabled()) {
           request->send(503, "text/plain", "Mic disabled");
@@ -647,15 +701,17 @@ void setup() {
         const uint32_t sampleRate = AUDIO_SAMPLE_RATE;
         const uint16_t bitsPerSample = AUDIO_SAMPLE_BITS;
         const uint16_t channels = 1;
-        const uint32_t sampleCount = sampleRate / 2;
+        const uint32_t sampleCount = sampleRate * 2;
         const uint32_t dataBytes = sampleCount * sizeof(int16_t);
+        const uint32_t captureMs = (sampleCount * 1000UL) / sampleRate;
+        const uint32_t captureTimeoutMs = captureMs + 250;
         int16_t *samples = static_cast<int16_t *>(malloc(dataBytes));
         if (!samples) {
           request->send(500, "text/plain", "Audio buffer allocation failed");
           return;
         }
 
-        bool ok = captureMicSamples(samples, sampleCount, 250);
+        bool ok = captureMicSamples(samples, sampleCount, captureTimeoutMs);
         if (!ok) {
           memset(samples, 0, dataBytes);
         }
@@ -1296,6 +1352,7 @@ void loop() {
 
     handleSipIncoming();
     processSipRing();
+    processSipMedia();
     if (!isSipRingActive()) {
       sendRegisterIfNeeded(sipConfig);
     }

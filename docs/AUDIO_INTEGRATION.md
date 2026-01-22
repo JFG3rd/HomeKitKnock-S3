@@ -15,12 +15,13 @@ This document outlines the plan to integrate the Seeed XIAO ESP32-S3 Sense onboa
 - **Continuous HTTP audio**: `http://ESP32-IP:81/audio` streams 16 kHz mono WAV as a companion to MJPEG.
 - **Browser A/V page**: `http://ESP32-IP/live` pairs MJPEG + WAV (click-to-play audio).
 - **Audio out**: MAX98357A I2S DAC plays gong/tone clips when enabled.
+- **SIP intercom audio**: RTP G.711 (PCMU/PCMA) with RFC2833 DTMF support for door opener relay.
 - **HTTP client limit**: MJPEG and WAV streams share the same max client cap.
 - **Mic sharing**: RTSP and HTTP audio share the same mic capture path; avoid running both if audio stutters.
 - **HTTP dependency**: WAV streaming is available only when HTTP camera streaming is enabled.
 - **Compatibility**:
   - **Scrypted/HomeKit**: prefer RTSP for A/V (Scrypted can transcode).
-  - **FRITZ!Box**: SIP is used for ringing only; HTTP audio is not consumed by the intercom.
+  - **FRITZ!Box**: SIP carries G.711 RTP audio + DTMF; HTTP audio is not used by the intercom.
 
 ## Hardware
 
