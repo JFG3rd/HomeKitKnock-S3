@@ -6,8 +6,9 @@
 
 # OTA Update File Creation (Actionable Steps)
 
-This guide shows how to **generate the OTA update files** (.bin) using PlatformIO.
-Use these files in the `/ota` web interface.
+This guide shows how to **generate the OTA update files** (.bin) using the
+`tools/build_ota.py` helper. The script builds firmware + filesystem images,
+renames them with the version string, and copies them into `dist/ota/` for easy upload.
 
 ## 1) Bump the Firmware Version (recommended)
 
@@ -16,23 +17,53 @@ Update the version string so the UI and logs reflect the new build:
 - Edit `platformio.ini`
 - Set `custom_fw_version` to the new version (example: `1.3.3`)
 
-## 2) Build the Firmware OTA File (Flash)
-
-### VS Code (PlatformIO)
-1. Open the project in VS Code.
-2. Run the PlatformIO **Build** task for `seeed_xiao_esp32s3`.
+## 2) Build OTA Files with the Helper Script (recommended)
 
 ### CLI
+```bash
+python3 tools/build_ota.py
+```
+
+### Output Files (default)
+```
+dist/ota/XIAOS3Sense-<version>-firmware.bin
+dist/ota/XIAOS3Sense-<version>-littlefs.bin
+```
+
+These are the **OTA upload files**:
+- Firmware: use `/ota/update`
+- Filesystem: use `/ota/fs` (only if `data/` changed)
+
+### Options
+```bash
+python3 tools/build_ota.py --env seeed_xiao_esp32s3
+python3 tools/build_ota.py --prefix XIAOS3Sense
+python3 tools/build_ota.py --version 1.3.3
+python3 tools/build_ota.py --skip-firmware
+python3 tools/build_ota.py --skip-fs
+```
+
+## 3) Manual Build (fallback)
+
+If you prefer manual PlatformIO commands, use the steps below.
+
+### Build Firmware (Flash)
 ```bash
 pio run -e seeed_xiao_esp32s3
 ```
 
-### Output File
-```
-.pio/build/seeed_xiao_esp32s3/firmware.bin
+### Build Filesystem (LittleFS)
+```bash
+pio run -t buildfs -e seeed_xiao_esp32s3
 ```
 
-### Rename for OTA Upload (recommended)
+### Output Files
+```
+.pio/build/seeed_xiao_esp32s3/firmware.bin
+.pio/build/seeed_xiao_esp32s3/littlefs.bin
+```
+
+### Rename for OTA Upload (optional)
 Use a descriptive filename that includes the project name + version:
 
 Example:
@@ -40,42 +71,11 @@ Example:
 XIAOS3Sense-1.3.3-firmware.bin
 ```
 
-CLI:
+Examples:
 ```bash
 cp .pio/build/seeed_xiao_esp32s3/firmware.bin ./XIAOS3Sense-1.3.3-firmware.bin
-```
-
-This is the **firmware OTA** file (use `/ota/update` in the UI).
-
-## 3) Build the Filesystem OTA File (LittleFS)
-
-Only required when files in `data/` change (UI, CSS, HTML, etc.).
-
-### VS Code (PlatformIO)
-1. Run the PlatformIO **Build Filesystem Image** task.
-
-### CLI
-```bash
-pio run -t buildfs -e seeed_xiao_esp32s3
-```
-
-### Output File
-```
-.pio/build/seeed_xiao_esp32s3/littlefs.bin
-```
-
-### Rename for OTA Upload (recommended)
-Example:
-```
-XIAOS3Sense-1.3.3-littlefs.bin
-```
-
-CLI:
-```bash
 cp .pio/build/seeed_xiao_esp32s3/littlefs.bin ./XIAOS3Sense-1.3.3-littlefs.bin
 ```
-
-This is the **filesystem OTA** file (use `/ota/fs` in the UI).
 
 ## 4) Quick Reference (Which File to Upload?)
 

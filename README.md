@@ -160,7 +160,8 @@ The UI stylesheet is served from LittleFS. After editing `data/style.css`, run:
 `pio run -t uploadfs`
 
 ### OTA Update Files
-See `docs/OTA_UPDATE_FILE.md` for creating the OTA firmware and filesystem `.bin` files.
+Use `tools/build_ota.py` to generate OTA `.bin` files in `dist/ota/`.
+Full steps are in `docs/OTA_UPDATE_FILE.md`.
 
 ---
 
