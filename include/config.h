@@ -24,6 +24,11 @@
 #define DOOR_OPENER_DTMF_SEQUENCE "123"
 #define DOOR_OPENER_DTMF_TIMEOUT_MS 2000
 
+// Original 8VAC gong relay output (triggers on physical doorbell press).
+#define GONG_RELAY_PIN 3
+#define GONG_RELAY_ACTIVE_LOW 0
+#define GONG_RELAY_PULSE_MS 500
+
 // Core affinity guidance (ESP32-S3 dual-core).
 // Reserve core 0 for Wi-Fi/LwIP; pin streaming/audio tasks to core 1.
 #define WIFI_TASK_CORE 0

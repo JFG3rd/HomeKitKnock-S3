@@ -79,6 +79,8 @@ bool doorbellLatched = false;
 volatile bool sipRingQueued = false;
 static bool doorOpenerActive = false;
 static unsigned long doorOpenerUntilMs = 0;
+static bool gongRelayActive = false;
+static unsigned long gongRelayUntilMs = 0;
 static String dtmfBuffer;
 static unsigned long lastDtmfMs = 0;
 
@@ -251,12 +253,28 @@ static void setDoorOpenerOutput(bool active) {
   digitalWrite(DOOR_OPENER_PIN, level);
 }
 
+static void setGongRelayOutput(bool active) {
+  int level = active ? HIGH : LOW;
+  if (GONG_RELAY_ACTIVE_LOW) {
+    level = active ? LOW : HIGH;
+  }
+  digitalWrite(GONG_RELAY_PIN, level);
+}
+
 static void triggerDoorOpenerPulse() {
   unsigned long now = millis();
   doorOpenerActive = true;
   doorOpenerUntilMs = now + DOOR_OPENER_PULSE_MS;
   setDoorOpenerOutput(true);
   logEvent(LOG_INFO, "🚪 Door opener triggered");
+}
+
+static void triggerGongRelayPulse() {
+  unsigned long now = millis();
+  gongRelayActive = true;
+  gongRelayUntilMs = now + GONG_RELAY_PULSE_MS;
+  setGongRelayOutput(true);
+  logEvent(LOG_INFO, "🔔 8VAC gong relay triggered");
 }
 
 static void updateDoorOpener() {
@@ -267,6 +285,17 @@ static void updateDoorOpener() {
   if (static_cast<int32_t>(doorOpenerUntilMs - now) <= 0) {
     doorOpenerActive = false;
     setDoorOpenerOutput(false);
+  }
+}
+
+static void updateGongRelay() {
+  if (!gongRelayActive) {
+    return;
+  }
+  unsigned long now = millis();
+  if (static_cast<int32_t>(gongRelayUntilMs - now) <= 0) {
+    gongRelayActive = false;
+    setGongRelayOutput(false);
   }
 }
 
@@ -517,6 +546,8 @@ void setup() {
   pinMode(DOORBELL_BUTTON_PIN, DOORBELL_BUTTON_ACTIVE_LOW ? INPUT_PULLUP : INPUT);
   pinMode(DOOR_OPENER_PIN, OUTPUT);
   setDoorOpenerOutput(false);
+  pinMode(GONG_RELAY_PIN, OUTPUT);
+  setGongRelayOutput(false);
 
   #ifdef CAMERA
   // Initialize camera and register endpoints if hardware is present.
@@ -736,6 +767,11 @@ void setup() {
         }
         playGongAsync();
         request->send(200, "text/plain", "Gong triggered");
+      });
+
+      server.on("/gong/relay", HTTP_GET, [](AsyncWebServerRequest *request) {
+        triggerGongRelayPulse();
+        request->send(200, "text/plain", "8VAC gong relay triggered");
       });
 
       server.on("/setup", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -1293,6 +1329,7 @@ bool isDoorbellPressed() {
 }
 
 void handleDoorbellPress() {
+  triggerGongRelayPulse();
   triggerDoorbellEvent(true);
 }
 
@@ -1313,6 +1350,8 @@ void loop() {
     dnsServer.processNextRequest();
   }
   updateStatusLed();
+  updateDoorOpener();
+  updateGongRelay();
 
   #ifdef CAMERA
   if (cameraReady) {

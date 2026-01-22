@@ -17,6 +17,7 @@ GND                  ->   GND rail -> MAX98357A GND, Relay GND, I2C GND
 GPIO4                ->   Doorbell switch -> GND
 GPIO2                ->   330R -> LED anode -> GND
 GPIO1                ->   Relay IN (door opener)
+GPIO3                ->   Relay IN (8VAC gong)
 GPIO5                ->   I2C SDA (add 4.7k pullup to 3V3)
 GPIO6                ->   I2C SCL (add 4.7k pullup to 3V3)
 GPIO7                ->   MAX98357A BCLK Orange
@@ -42,6 +43,13 @@ GND -> GND
 IN  -> GPIO1
 COM/NO -> door strike circuit (use strike supply voltage)
 
+Relay module (original 8VAC gong)
+---------------------------------
+VCC -> 3V3 (or 5V if your module accepts 3.3V on IN)
+GND -> GND
+IN  -> GPIO3
+COM/NO -> 8VAC gong circuit (use the gong transformer voltage)
+
 Speaker wiring
 --------------
 MAX98357A L+ -> Speaker +
@@ -54,6 +62,7 @@ NOTE: Do not connect speaker terminals to GND.
 - **Doorbell switch (active-low):** GPIO4 to GND (internal pull-up in firmware).
 - **Status LED:** GPIO2 -> 330 ohm resistor -> LED anode -> GND (active-high).
 - **Door opener relay (active-high):** GPIO1 -> relay IN (use a relay module or transistor driver).
+- **Original 8VAC gong relay (active-high):** GPIO3 -> relay IN (use a relay module rated for AC).
 - **MAX98357A I2S DAC:**
   - **BCLK:** GPIO7
   - **LRC/WS:** GPIO8
@@ -71,5 +80,10 @@ NOTE: Do not connect speaker terminals to GND.
 
 - GPIO7/8/9 are the default SPI pins; avoid SPI when the DAC is wired.
 - Use a relay module or transistor + flyback diode; do not drive a raw relay coil directly.
+- The 8VAC gong relay is electrically isolated from the ESP32; only the relay contacts touch the AC circuit.
 - Speaker outputs are bridged; never connect either speaker terminal to GND.
 - Keep audio wires short to reduce noise.
+
+## Free Header GPIOs
+
+- **GPIO43 (D6 / UART TX)** and **GPIO44 (D7 / UART RX)** if you are not using the serial header.

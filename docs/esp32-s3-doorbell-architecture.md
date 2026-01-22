@@ -167,6 +167,7 @@ Pin assignments (current):
 	•	Doorbell button: GPIO4 (active-low, internal pull-up)
 	•	Status LED (online/ready): GPIO2 (active-high) + 330 ohm resistor
 	•	Door opener relay: GPIO1 (active-high, relay module or transistor driver)
+	•	Original 8VAC gong relay: GPIO3 (active-high, relay module rated for AC)
 	•	I2C (reserved for sensors): GPIO5 = SDA, GPIO6 = SCL
 	•	MAX98357A I2S: GPIO7 = BCLK, GPIO8 = LRC/WS, GPIO9 = DIN
 	•	PDM mic: GPIO42 = CLK, GPIO41 = DATA
