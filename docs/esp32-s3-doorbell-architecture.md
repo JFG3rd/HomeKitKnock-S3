@@ -173,6 +173,11 @@ Pin assignments (current):
 	•	PDM mic: GPIO42 = CLK, GPIO41 = DATA
 	•	Camera pins: see `include/camera_pins.h` (XIAO ESP32-S3 Sense map)
 
+Power supply:
+	•	8VAC transformer (existing doorbell transformer or similar) → bridge rectifier → supercapacitor ride-through → 3.3V buck
+	•	Supercapacitor bank provides ~45 second hold-up during gong relay activation
+	•	Full schematic and BOM in `docs/POWER_SUPPLY_DESIGNS.md`
+
 Status LED behavior (priority):
 	•	Ringing: breathing (dim in/out)
 	•	AP mode: fast double blink

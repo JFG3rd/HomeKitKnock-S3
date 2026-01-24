@@ -55,6 +55,31 @@ Speaker wiring
 MAX98357A L+ -> Speaker +
 MAX98357A L- -> Speaker -
 NOTE: Do not connect speaker terminals to GND.
+
+Power Supply (Supercapacitor Ride-Through)
+-------------------------------------------
+8VAC Transformer
+    ↓
+Fuse (500 mA slow-blow)
+    ↓
+Bridge Rectifier (DB107 or KBL406) → ~11.3V DC unregulated
+    ↓
+Bulk Cap (2× 1000µF 16V + 1× 220µF 16V in parallel = ~2220µF)
+    ↓
+MP1584EN Buck Module → 5V @ 2A (accepts 4.5–28V input; 95% efficient)
+    ↓
+Supercap (Lumonic 4F 5.5V radial goldcap)
+    ↓
+MP1584EN Buck Module → 3.3V @ 2A
+    ↓
+ESP32-S3 + MAX98357A + Relays (3V3 rail)
+
+Supercap notes:
+- Single 4F 5.5V goldcap directly on 5V rail (no series connection needed)
+- Provides ~18 second ride-through during gong relay activation
+- Radial form factor: 24.5 mm Ø × 6 mm height
+- 3.8 mm pin pitch (standard breadboard/perfboard compatible)
+- No balancing resistors or ideal diode circuit required
 ```
 
 ## Connection Summary
@@ -87,3 +112,7 @@ NOTE: Do not connect speaker terminals to GND.
 ## Free Header GPIOs
 
 - **GPIO43 (D6 / UART TX)** and **GPIO44 (D7 / UART RX)** if you are not using the serial header.
+
+## Power Supply Details
+
+The system uses an 8VAC transformer as the primary power source, with a supercapacitor ride-through circuit to prevent brownouts when the gong relay activates. See [POWER_SUPPLY_DESIGNS.md](POWER_SUPPLY_DESIGNS.md) for full design and BOM.

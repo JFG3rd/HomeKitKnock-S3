@@ -119,8 +119,9 @@ void OtaUpdate::begin(AsyncWebServer &server) {
   server_ = &server;
 
   // OTA endpoints are registered here so they share the main AsyncWebServer instance.
-  server.on("/ota", HTTP_GET, [this](AsyncWebServerRequest *request) {
-    handleOtaPage(request);
+  // Register more specific routes (/ota/status, /ota/enable, etc.) BEFORE the generic /ota route
+  server.on("/ota/status", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    handleStatus(request);
   });
 
   server.on("/ota/status", HTTP_GET, [this](AsyncWebServerRequest *request) {
@@ -177,6 +178,11 @@ void OtaUpdate::begin(AsyncWebServer &server) {
            bool final) {
       handleUpload(request, filename, index, data, len, final, U_SPIFFS);
     });
+
+  // Register the generic /ota page route LAST so it doesn't catch /ota/status, /ota/enable, etc.
+  server.on("/ota", HTTP_GET, [this](AsyncWebServerRequest *request) {
+    handleOtaPage(request);
+  });
 }
 
 void OtaUpdate::loop() {

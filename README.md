@@ -32,7 +32,12 @@ Audio streaming is planned for a later phase.
 - Status LED + 330 ohm resistor (GPIO2 to GND, online/ready indicator)
 - MAX98357A I2S mono amp + small speaker (local gong output)
 - USB data cable for programming
-- (Optional) AC detector or relay interface for legacy 8 V gong
+- **8VAC transformer** (existing doorbell transformer) + supercapacitor ride-through circuit (see BOM below)
+  - Bridge rectifier (DF04M)
+  - Supercapacitors (2× 5.5F 2.7V) + balancing resistors
+  - Buck converters (LM2596, MP1584) or breakout modules
+  - Ideal diode controller (LTC4412) or equivalent
+- Two relay modules (door opener + gong, rated 3.3V/5V input)
 
 ### Software
 - **Visual Studio Code** with **PlatformIO IDE extension**, or the PlatformIO CLI (`pio`)
@@ -162,6 +167,9 @@ The UI stylesheet is served from LittleFS. After editing `data/style.css`, run:
 ### OTA Update Files
 Use `tools/build_ota.py` to generate OTA `.bin` files in `dist/ota/`.
 Full steps are in `docs/OTA_UPDATE_FILE.md`.
+
+### Bill of Materials (BOM)
+See `docs/PROJECT_BOM.md` for a comprehensive parts list with sourcing suggestions for the entire project, including the supercapacitor power supply.
 
 ---
 

@@ -30,10 +30,15 @@
             <div class="flash-stats" id="otaStatus">
                 <strong>Status:</strong> loading...
             </div>
+            <div class="ota-banner" id="otaBanner" hidden>
+                OTA is disabled. Enable it in Setup to upload firmware or filesystem images.
+            </div>
             <div class="ota-note">
                 Uploads are restricted to the local network and a time-limited OTA window.
             </div>
             <div class="button-row" style="margin-top: 12px;">
+                <a class="button" href="/logs/camera" target="_blank" title="Open filtered camera/streaming logs.">📹 Camera Logs</a>
+                <a class="button" href="/logs/doorbell" target="_blank" title="Open filtered doorbell/SIP/TR-064 logs.">☎️ Doorbell Logs</a>
                 <a class="button" href="/setup">Back to Setup</a>
             </div>
         </div>
@@ -41,7 +46,11 @@
         <div class="container card setup-card">
             <h3>Firmware Update</h3>
             <form id="fwForm" method="POST" action="/ota/update" enctype="multipart/form-data">
-                <input type="file" name="update" accept=".bin" required>
+                <div class="file-picker">
+                    <input type="file" id="fwFile" name="update" accept=".bin" required>
+                    <div class="button file-button" aria-hidden="true">Choose Firmware File</div>
+                    <div class="file-name" id="fwFileName">No file selected</div>
+                </div>
                 <button class="button" type="submit">Upload Firmware</button>
             </form>
         </div>
@@ -49,7 +58,11 @@
         <div class="container card setup-card">
             <h3>Filesystem Update (LittleFS)</h3>
             <form id="fsForm" method="POST" action="/ota/fs" enctype="multipart/form-data">
-                <input type="file" name="update" accept=".bin" required>
+                <div class="file-picker">
+                    <input type="file" id="fsFile" name="update" accept=".bin" required>
+                    <div class="button file-button" aria-hidden="true">Choose Filesystem File</div>
+                    <div class="file-name" id="fsFileName">No file selected</div>
+                </div>
                 <button class="button" type="submit">Upload Filesystem</button>
             </form>
             <div class="ota-note">
@@ -61,8 +74,13 @@
     <script>
         const darkToggle = document.getElementById("darkModeToggle");
         const otaStatusEl = document.getElementById("otaStatus");
-        const fwInputs = document.querySelectorAll("#fwForm input, #fwForm button");
-        const fsInputs = document.querySelectorAll("#fsForm input, #fsForm button");
+        const fwSubmit = document.querySelector("#fwForm button[type=\"submit\"]");
+        const fsSubmit = document.querySelector("#fsForm button[type=\"submit\"]");
+        const fwFile = document.getElementById("fwFile");
+        const fsFile = document.getElementById("fsFile");
+        const fwFileName = document.getElementById("fwFileName");
+        const fsFileName = document.getElementById("fsFileName");
+        const otaBanner = document.getElementById("otaBanner");
 
         function setDarkMode(enabled) {
             document.body.classList.toggle("dark-mode", enabled);
@@ -87,8 +105,20 @@
         }
 
         function setFormsEnabled(enabled) {
-            fwInputs.forEach(el => el.disabled = !enabled);
-            fsInputs.forEach(el => el.disabled = !enabled);
+            if (fwSubmit) fwSubmit.disabled = !enabled;
+            if (fsSubmit) fsSubmit.disabled = !enabled;
+            if (otaBanner) otaBanner.hidden = enabled;
+        }
+
+        function bindFilePicker(fileInput, label) {
+            if (!fileInput || !label) return;
+            fileInput.addEventListener("change", () => {
+                if (fileInput.files && fileInput.files.length > 0) {
+                    label.textContent = fileInput.files[0].name;
+                } else {
+                    label.textContent = "No file selected";
+                }
+            });
         }
 
         function fetchOtaStatus() {
@@ -115,7 +145,8 @@
                     otaStatusEl.innerHTML = `<strong>Status:</strong> ${configured} | ${enabled}`;
                     setFormsEnabled(data.enabled);
                 })
-                .catch(() => {
+                .catch(err => {
+                    console.error("OTA fetch error:", err);
                     otaStatusEl.innerHTML = "<strong>Status:</strong> unavailable";
                     setFormsEnabled(false);
                 });
@@ -123,6 +154,8 @@
 
         fetchOtaStatus();
         setInterval(fetchOtaStatus, 10000);
+        bindFilePicker(fwFile, fwFileName);
+        bindFilePicker(fsFile, fsFileName);
     </script>
 </body>
 </html>
