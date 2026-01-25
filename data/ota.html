@@ -26,7 +26,7 @@
 
     <div class="dashboard">
         <div class="container card setup-card">
-            <h3>OTA Status</h3>
+            <h3 class="card-title">OTA Status</h3>
             <div class="flash-stats" id="otaStatus">
                 <strong>Status:</strong> loading...
             </div>
@@ -36,7 +36,7 @@
             <div class="ota-note">
                 Uploads are restricted to the local network and a time-limited OTA window.
             </div>
-            <div class="button-row" style="margin-top: 12px;">
+            <div class="button-row button-grid" style="margin-top: 12px;">
                 <a class="button" href="/logs/camera" target="_blank" title="Open filtered camera/streaming logs.">📹 Camera Logs</a>
                 <a class="button" href="/logs/doorbell" target="_blank" title="Open filtered doorbell/SIP/TR-064 logs.">☎️ Doorbell Logs</a>
                 <a class="button" href="/setup">Back to Setup</a>
@@ -44,7 +44,7 @@
         </div>
 
         <div class="container card setup-card">
-            <h3>Firmware Update</h3>
+            <h3 class="card-title">Firmware Update</h3>
             <form id="fwForm" method="POST" action="/ota/update" enctype="multipart/form-data">
                 <div class="file-picker">
                     <input type="file" id="fwFile" name="update" accept=".bin" required>
@@ -56,7 +56,7 @@
         </div>
 
         <div class="container card setup-card">
-            <h3>Filesystem Update (LittleFS)</h3>
+            <h3 class="card-title">Filesystem Update (LittleFS)</h3>
             <form id="fsForm" method="POST" action="/ota/fs" enctype="multipart/form-data">
                 <div class="file-picker">
                     <input type="file" id="fsFile" name="update" accept=".bin" required>

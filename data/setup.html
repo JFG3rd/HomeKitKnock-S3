@@ -26,7 +26,7 @@
 
     <div class="dashboard">
         <div class="container card setup-card">
-            <h3>🔧 Core Features</h3>
+            <h3 class="card-title">🔧 Core Features</h3>
             <div class="info-grid">
                 <div class="info-item">
                     <span><strong>🌍 Timezone</strong></span>
@@ -122,14 +122,16 @@
                 </div>
                 <div class="info-item">
                     <span><strong>🔊 Audio Out Volume</strong></span>
-                    <input type="range" id="audio_out_volume" min="0" max="100" value="{{AUDIO_OUT_VOLUME}}">
-                    <span id="audioOutVolumeValue">{{AUDIO_OUT_VOLUME}}</span>
+                    <div class="range-wrap">
+                        <input type="range" id="audio_out_volume" class="range-input" min="0" max="100" value="{{AUDIO_OUT_VOLUME}}" data-unit="%">
+                        <span class="range-value" id="audioOutVolumeValue">{{AUDIO_OUT_VOLUME}}</span>
+                    </div>
                 </div>
             </div>
         </div>
 
         <div class="container card setup-card">
-            <h3>📷 Camera Quality</h3>
+            <h3 class="card-title">📷 Camera Config</h3>
             <div class="flash-stats" id="cameraSetupStatus">
                 <strong>Camera:</strong> loading...
             </div>
@@ -143,16 +145,48 @@
             </select>
 
             <label><strong>JPEG Quality</strong></label>
-            <input type="range" id="quality" min="4" max="63" value="10">
-            <span id="qualityValue">10</span>
+            <div class="range-wrap">
+                <input type="range" id="quality" class="range-input" min="4" max="63" value="10">
+                <span class="range-value" id="qualityValue">10</span>
+            </div>
 
             <label><strong>Brightness</strong></label>
-            <input type="range" id="brightness" min="-2" max="2" step="1" value="0">
-            <span id="brightnessValue">0</span>
+            <div class="range-wrap">
+                <input type="range" id="brightness" class="range-input" min="-2" max="2" step="1" value="0">
+                <span class="range-value" id="brightnessValue">0</span>
+            </div>
 
             <label><strong>Contrast</strong></label>
-            <input type="range" id="contrast" min="-2" max="2" step="1" value="0">
-            <span id="contrastValue">0</span>
+            <div class="range-wrap">
+                <input type="range" id="contrast" class="range-input" min="-2" max="2" step="1" value="0">
+                <span class="range-value" id="contrastValue">0</span>
+            </div>
+
+            <label class="card-group-title" style="margin-top: 12px;"><strong>Audio (Mic)</strong></label>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span>Mic enabled</span>
+                    <label class="switch">
+                        <input type="checkbox" id="mic_enabled" {{MIC_ENABLED_CHECKED}}>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="info-item">
+                    <span>Mic mute</span>
+                    <label class="switch">
+                        <input type="checkbox" id="mic_muted" {{MIC_MUTED_CHECKED}}>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+            <label><strong>Mic Sensitivity</strong></label>
+            <div class="range-wrap">
+                <input type="range" id="mic_sensitivity" class="range-input" min="0" max="100" value="{{MIC_SENSITIVITY}}" data-unit="%">
+                <span class="range-value" id="micSensitivityValue">{{MIC_SENSITIVITY}}</span>
+            </div>
+            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                Preview mic capture at http://ESP32-IP/audio.wav (RTSP audio planned).
+            </div>
 
             <div style="margin-top: 12px;">
                 <button class="button" title="Apply frame size, JPEG quality, brightness, and contrast." onclick="applyCameraSettings()">Apply Camera Settings</button>
@@ -160,12 +194,12 @@
         </div>
 
         <div class="container card setup-card">
-            <h3>📺 Scrypted Stream Options</h3>
+            <h3 class="card-title">📺 Scrypted Stream Options</h3>
             <div class="flash-stats" id="scryptedStatus">
                 <strong>Status:</strong> loading...
             </div>
 
-            <label><strong>Source Type</strong></label>
+            <label class="card-group-title"><strong>Source Type</strong></label>
             <div class="info-grid">
                 <div class="info-item">
                     <span>HTTP MJPEG</span>
@@ -177,46 +211,37 @@
                 </div>
             </div>
 
-            <label style="margin-top: 12px;"><strong>Optimization</strong></label>
+            <label class="card-group-title" style="margin-top: 12px;"><strong>Optimization</strong></label>
             <div class="info-grid">
                 <div class="info-item">
                     <span>Low latency (short GOP)</span>
-                    <input type="checkbox" id="scrypted_low_latency" {{SCRYPTED_LOW_LATENCY_CHECKED}}>
+                    <label class="switch">
+                        <input type="checkbox" id="scrypted_low_latency" {{SCRYPTED_LOW_LATENCY_CHECKED}}>
+                        <span class="slider"></span>
+                    </label>
                 </div>
                 <div class="info-item">
                     <span>Reduce input buffering</span>
-                    <input type="checkbox" id="scrypted_low_buffer" {{SCRYPTED_LOW_BUFFER_CHECKED}}>
+                    <label class="switch">
+                        <input type="checkbox" id="scrypted_low_buffer" {{SCRYPTED_LOW_BUFFER_CHECKED}}>
+                        <span class="slider"></span>
+                    </label>
                 </div>
                 <div class="info-item">
                     <span>Prefer RTSP UDP transport</span>
-                    <input type="checkbox" id="scrypted_rtsp_udp" {{SCRYPTED_RTSP_UDP_CHECKED}}>
+                    <label class="switch">
+                        <input type="checkbox" id="scrypted_rtsp_udp" {{SCRYPTED_RTSP_UDP_CHECKED}}>
+                        <span class="slider"></span>
+                    </label>
                 </div>
             </div>
 
-            <label style="margin-top: 12px;"><strong>Audio (Mic)</strong></label>
-            <div class="info-grid">
-                <div class="info-item">
-                    <span>Mic enabled</span>
-                    <input type="checkbox" id="mic_enabled" {{MIC_ENABLED_CHECKED}}>
-                </div>
-                <div class="info-item">
-                    <span>Mic mute</span>
-                    <input type="checkbox" id="mic_muted" {{MIC_MUTED_CHECKED}}>
-                </div>
-            </div>
-            <label><strong>Mic Sensitivity</strong></label>
-            <input type="range" id="mic_sensitivity" min="0" max="100" value="{{MIC_SENSITIVITY}}">
-            <span id="micSensitivityValue">{{MIC_SENSITIVITY}}</span>
-            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                Preview mic capture at http://ESP32-IP/audio.wav (RTSP audio planned).
-            </div>
-
-            <label style="margin-top: 12px;"><strong>Doorbell Webhook (HomeKit)</strong></label>
+            <label class="card-group-title" style="margin-top: 12px;"><strong>Doorbell Webhook (HomeKit)</strong></label>
             <input type="text" id="scrypted_webhook" value="{{SCRYPTED_WEBHOOK}}" placeholder="http://scrypted-ip:11080/endpoint/your-id/public/">
             <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
                 Get this from Scrypted doorbell device settings. Leave empty to disable HomeKit ring.
             </div>
-            <div class="button-row" style="margin-top: 8px;">
+            <div class="button-row button-grid" style="margin-top: 8px;">
                 <button class="button" title="Trigger the doorbell flow without SIP ringing." onclick="testHomekitGong()">🔔 HomeKit Test Gong</button>
             </div>
 
@@ -235,7 +260,7 @@
         </div>
 
         <div class="container card setup-card">
-            <h3>⬆️ OTA Updates</h3>
+            <h3 class="card-title">⬆️ OTA Updates</h3>
             <div class="flash-stats" id="otaStatus">
                 <strong>Status:</strong> loading...
             </div>
@@ -252,7 +277,7 @@
             <label><strong>Confirm New Password</strong></label>
             <input type="password" id="ota_pass_confirm" placeholder="Re-enter new password">
 
-            <div class="button-row" style="margin-top: 12px;">
+            <div class="button-row button-grid" style="margin-top: 12px;">
                 <button class="button" title="Save or update OTA credentials." onclick="saveOtaConfig()">Save OTA Credentials</button>
                 <button class="button" title="Enable OTA uploads for 5 minutes." onclick="enableOta()">Enable OTA (5 min)</button>
                 <a class="button" href="/ota" target="_blank" title="Open the OTA upload page.">Open OTA Page</a>
@@ -263,7 +288,7 @@
         </div>
     </div>
 
-    <div class="button-row log-actions" style="margin-top: 20px;">
+    <div class="button-row button-grid log-actions" style="margin-top: 20px;">
         <button class="button" title="Save feature toggles and restart." onclick="saveFeatures()">💾 Save Features</button>
         <button class="button danger-btn" title="Reboot the ESP32 device." onclick="location.href='/restart';">🔄 Restart</button>
         <a class="button" href="/logs/camera" target="_blank" title="Open filtered camera/streaming logs.">📹 Camera Logs</a>
@@ -371,6 +396,31 @@
             return "Basic " + btoa(`${user}:${pass}`);
         }
 
+        function updateRangeDisplay(input, label) {
+            if (!input || !label) return;
+            const min = parseFloat(input.min || "0");
+            const max = parseFloat(input.max || "100");
+            const val = parseFloat(input.value || "0");
+            const percent = max > min ? ((val - min) / (max - min)) * 100 : 0;
+            const labelPercent = Math.min(95, Math.max(5, percent));
+            const unit = input.dataset.unit || "";
+            label.textContent = `${val}${unit}`;
+            const wrap = input.closest(".range-wrap");
+            if (wrap) {
+                wrap.style.setProperty("--range-percent", `${percent}%`);
+                wrap.style.setProperty("--range-label", `${labelPercent}%`);
+            }
+        }
+
+        function bindRange(inputId, labelId) {
+            const input = document.getElementById(inputId);
+            const label = document.getElementById(labelId);
+            if (!input || !label) return;
+            const update = () => updateRangeDisplay(input, label);
+            input.addEventListener("input", update);
+            update();
+        }
+
         function fetchOtaStatus() {
             fetch("/ota/status", { credentials: "include" })
                 .then(r => {
@@ -469,15 +519,15 @@
                     }
                     if (data.quality !== undefined) {
                         document.getElementById("quality").value = data.quality;
-                        qualityValueEl.textContent = data.quality;
+                        updateRangeDisplay(document.getElementById("quality"), qualityValueEl);
                     }
                     if (data.brightness !== undefined) {
                         document.getElementById("brightness").value = data.brightness;
-                        brightnessValueEl.textContent = data.brightness;
+                        updateRangeDisplay(document.getElementById("brightness"), brightnessValueEl);
                     }
                     if (data.contrast !== undefined) {
                         document.getElementById("contrast").value = data.contrast;
-                        contrastValueEl.textContent = data.contrast;
+                        updateRangeDisplay(document.getElementById("contrast"), contrastValueEl);
                     }
                 })
                 .catch(() => {
@@ -501,21 +551,11 @@
             }).catch(() => alert("Failed to apply camera settings"));
         }
 
-        document.getElementById("quality").addEventListener("input", (e) => {
-            qualityValueEl.textContent = e.target.value;
-        });
-        document.getElementById("brightness").addEventListener("input", (e) => {
-            brightnessValueEl.textContent = e.target.value;
-        });
-        document.getElementById("contrast").addEventListener("input", (e) => {
-            contrastValueEl.textContent = e.target.value;
-        });
-        document.getElementById("mic_sensitivity").addEventListener("input", (e) => {
-            micSensitivityValueEl.textContent = e.target.value;
-        });
-        document.getElementById("audio_out_volume").addEventListener("input", (e) => {
-            audioOutVolumeValueEl.textContent = e.target.value;
-        });
+        bindRange("quality", "qualityValue");
+        bindRange("brightness", "brightnessValue");
+        bindRange("contrast", "contrastValue");
+        bindRange("mic_sensitivity", "micSensitivityValue");
+        bindRange("audio_out_volume", "audioOutVolumeValue");
 
         function updateAudioUi() {
             const micEnabled = document.getElementById("mic_enabled").checked;

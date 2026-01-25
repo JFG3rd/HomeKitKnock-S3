@@ -26,7 +26,7 @@
     <div class="dashboard">
         <!-- System Information Card -->
         <div class="container card">
-            <h3>📊 System Information</h3>
+            <h3 class="card-title">📊 System Information</h3>
             <div class="info-grid">
                 <div class="info-item">
                     <span class="info-label">Status:</span>
@@ -63,7 +63,7 @@
             </div>
             <hr>
             <button class="danger-btn" title="Clear saved WiFi credentials and reboot into AP mode." onclick="location.href='/forget';">Forget WiFi</button>
-            <div class="button-row" style="margin-top: 12px;">
+            <div class="button-row button-grid" style="margin-top: 12px;">
                 <a class="button" href="/setup" title="Configure features, streams, and Scrypted options.">⚙️ Feature Setup</a>
                 <button class="button danger-btn" title="Reboot the ESP32 device." onclick="location.href='/restart';">🔄 Restart</button>
             </div>
@@ -71,7 +71,7 @@
 
         <!-- Camera Settings Card -->
         <div class="container card">
-            <h3>📷 Camera Settings</h3>
+            <h3 class="card-title">📷 Camera Settings</h3>
             <div class="flash-stats" id="cameraStatus">
                 <strong>Camera:</strong> loading...
             </div>
@@ -80,7 +80,7 @@
             </div>
             
             <hr>
-            <div class="button-row">
+            <div class="button-row button-grid">
                 <a class="button config-btn" href="/capture" target="_blank" title="Open a single JPEG snapshot.">📸 Snapshot</a>
                 <a class="button" href="http://{{LOCAL_IP}}:81/stream" target="_blank" title="Open the MJPEG live stream.">🎥 Live Stream</a>
                 <a class="button" href="/live" target="_blank" title="Open MJPEG with the companion audio stream.">🎧 Live + Audio</a>
@@ -99,13 +99,13 @@
 
         <!-- SIP/TR-064 Card -->
         <div class="container card">
-            <h3>☎️ SIP/TR-064</h3>
+            <h3 class="card-title">☎️ SIP/TR-064</h3>
             <p>FRITZ!Box SIP/TR-064 integration for doorbell notifications.</p>
             <div class="flash-stats" id="tr064Status">
                 <strong>Status:</strong> loading...
             </div>
             <hr>
-            <div class="button-row">
+            <div class="button-row button-grid">
                 <button class="button" title="Trigger a SIP ring test." onclick="testRingSip()">🔔 Test Ring (SIP)</button>
                 <a class="button config-btn" href="/sip" title="Configure SIP credentials and ring target.">⚙️ Setup</a>
             </div>
@@ -114,7 +114,7 @@
 
         <!-- Metrics Card -->
         <div class="container card">
-            <h3>📈 Metrics</h3>
+            <h3 class="card-title">📈 Metrics</h3>
             <div class="info-grid">
                 <div class="info-item">
                     <span class="info-label" title="Active RTSP PLAY sessions (streaming).">RTSP Sessions:</span>
@@ -142,7 +142,7 @@
                 </div>
             </div>
             <hr>
-            <div class="button-row">
+            <div class="button-row button-grid">
                 <a class="button" href="/logs/camera" target="_blank" title="Open filtered camera/streaming logs.">📹 Camera Logs</a>
                 <a class="button" href="/logs/doorbell" target="_blank" title="Open filtered doorbell/SIP/TR-064 logs.">☎️ Doorbell Logs</a>
                 <button class="button danger-btn" title="Reset the RTSP UDP fail counter." onclick="resetRtspUdpFails()">♻️ Reset UDP Fail Count</button>

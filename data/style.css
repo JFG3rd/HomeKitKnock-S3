@@ -10,6 +10,14 @@
 :root {
     --max-log-entries: 30;
     --log-line-height: 24px;
+    --card-title-font-size: 20px;
+    --card-title-neon-effect: 0 0 12px #FF4500, 0 0 20px #B22222, 0 0 30px #660000;
+    --card-group-title-font-size: 18px;
+    --card-group-title-neon-effect: 0 0 8px #FF4500, 0 0 18px #B22222, 0 0 24px #660000;
+    --card-group-gap: 20px;
+    --button-font-size: 14px;
+    --label-font-size: 14px;
+    --info-item-font-size: 12px;
     --primary-color: #007bff;
     --primary-hover: #0056b3;
     --danger-color: #dc3545;
@@ -54,6 +62,25 @@ h1 {
 
 h3 {
     color: var(--light-text);
+}
+
+.card-title {
+    font-size: var(--card-title-font-size);
+    color: var(--light-text);
+    text-shadow: var(--card-title-neon-effect);
+    margin: 0 0 12px 0;
+}
+
+.card-group-title {
+    display: block;
+    font-size: var(--card-group-title-font-size);
+    color: var(--light-text);
+    text-shadow: var(--card-group-title-neon-effect);
+    margin: 14px 0 6px;
+}
+
+.card-group {
+    margin-top: var(--card-group-gap);
 }
 
 /* Container Styles */
@@ -119,6 +146,17 @@ h3 {
     padding: 8px;
     background: #f8f9fa;
     border-radius: 5px;
+    font-size: var(--info-item-font-size);
+}
+
+.info-item .range-wrap {
+    flex: 1;
+    margin-left: 10px;
+    margin-bottom: 0;
+}
+
+.info-item .range-input {
+    margin: 0;
 }
 
 .info-label {
@@ -148,6 +186,18 @@ h3 {
 .button-row button {
     flex: 1 1 auto;
     min-width: 140px;
+}
+
+.button-row.button-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+}
+
+.button-row.button-grid .button,
+.button-row.button-grid button {
+    min-width: 0;
+    width: 100%;
 }
 
 /* Logs Grid - Split Camera and Doorbell Logs */
@@ -275,18 +325,21 @@ button, .button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
-    color: white;
-    padding: 14px 20px;
-    border: 2px solid rgba(255, 255, 255, 0.3);
+    gap: 6px;
+    background-color: rgba(33, 150, 243, 0.18);
+    color: rgb(220, 232, 255);
+    border: 0.8px solid rgb(33, 150, 243);
+    background-image: none;
+    border-radius: 4px;
+    padding: 4px 10px;
+    margin: 0;
+    font-family: Arial, sans-serif;
+    font-size: var(--button-font-size);
+    font-weight: 700;
+    text-transform: none;
+    box-shadow: none;
     cursor: pointer;
-    font-size: 15px;
-    font-weight: 600;
-    border-radius: 8px;
-    transition: all 0.2s ease;
-    margin: 5px;
-    box-shadow: 0 3px 12px rgba(74, 144, 226, 0.35);
+    transition: none;
     text-decoration: none;
     min-height: 48px;
     width: 100%;
@@ -296,43 +349,51 @@ button, .button {
 }
 
 button:hover, .button:hover {
-    background: linear-gradient(135deg, #357abd 0%, #2a5f94 100%);
-    transform: translateY(-1px);
-    box-shadow: 0 5px 16px rgba(74, 144, 226, 0.45);
-    border-color: rgba(255, 255, 255, 0.4);
+    filter: none;
 }
 
 button:active, .button:active {
-    transform: translateY(0);
-    box-shadow: 0 2px 8px rgba(74, 144, 226, 0.3);
+    transform: none;
 }
 
 /* Danger/Warning Button - Red gradient */
 .danger-btn, .wifi-btn {
-    background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
-    box-shadow: 0 3px 12px rgba(231, 76, 60, 0.35);
-    border-color: rgba(255, 255, 255, 0.3);
+    background-color: rgba(244, 67, 54, 0.18);
+    color: rgb(255, 214, 209);
+    border: 0.8px solid rgb(244, 67, 54);
+    background-image: none;
+    border-radius: 6px;
+    padding: 10px;
+    margin: 0;
+    font-family: Arial, sans-serif;
+    font-size: var(--button-font-size);
+    font-weight: 700;
+    text-transform: none;
+    box-shadow: none;
 }
 
 .danger-btn:hover, .wifi-btn:hover {
-    background: linear-gradient(135deg, #c0392b 0%, #a93226 100%);
-    transform: translateY(-1px);
-    box-shadow: 0 5px 16px rgba(231, 76, 60, 0.45);
-    border-color: rgba(255, 255, 255, 0.4);
+    filter: none;
 }
 
 /* Config/Success Button - Green gradient */
 .config-btn {
-    background: linear-gradient(135deg, #52c41a 0%, #3a9b15 100%);
-    box-shadow: 0 3px 12px rgba(82, 196, 26, 0.35);
-    border-color: rgba(255, 255, 255, 0.3);
+    background-color: rgba(76, 175, 80, 0.18);
+    color: rgb(200, 247, 209);
+    border: 0.8px solid rgb(76, 175, 80);
+    background-image: none;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin: 0;
+    font-family: Arial, sans-serif;
+    font-size: var(--button-font-size);
+    font-weight: 700;
+    text-transform: none;
+    box-shadow: none;
 }
 
 .config-btn:hover {
-    background: linear-gradient(135deg, #3a9b15 0%, #2d7a11 100%);
-    transform: translateY(-1px);
-    box-shadow: 0 5px 16px rgba(82, 196, 26, 0.45);
-    border-color: rgba(255, 255, 255, 0.4);
+    filter: none;
 }
 
 /* Form Elements */
@@ -343,6 +404,88 @@ select, input, textarea {
     border: 1px solid #ccc;
     border-radius: 4px;
     box-sizing: border-box;
+}
+
+label {
+    font-size: var(--label-font-size);
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+    width: 18px;
+    height: 18px;
+    accent-color: #5aa7ff;
+}
+
+.info-grid input[type="checkbox"],
+.info-grid input[type="radio"] {
+    transform: scale(1.2);
+}
+
+/* Range sliders with in-bar values */
+.range-wrap {
+    position: relative;
+    width: 100%;
+    margin: 6px 0 28px;
+    --range-percent: 50%;
+    --range-label: var(--range-percent);
+    --range-bubble-offset: 16px;
+    --range-track: #c7c7c7;
+}
+
+.range-input {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--range-track);
+    border: 1px solid #b0b0b0;
+    outline: none;
+}
+
+.range-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.range-input::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #f9f9f9;
+    border: 2px solid #9e9e9e;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+    cursor: pointer;
+}
+
+.range-input::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #f9f9f9;
+    border: 2px solid #9e9e9e;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+    cursor: pointer;
+}
+
+.range-value {
+    position: absolute;
+    top: 16px;
+    left: var(--range-label);
+    transform: translate(-50%, var(--range-bubble-offset));
+    font-size: 12px;
+    font-weight: 700;
+    color: #fff;
+    background: #e53935;
+    padding: 2px 8px;
+    border-radius: 6px;
+    min-width: 28px;
+    text-align: center;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+    pointer-events: none;
 }
 
 /* File input - ensure browser default button is visible and clickable */
@@ -551,6 +694,17 @@ footer {
     text-shadow: 0 0 12px #FF4500, 0 0 24px #B22222, 0 0 36px #660000;
 }
 
+.dark-mode .card-title {
+    color: #5AB1FF;
+    text-shadow: var(--card-title-neon-effect);
+}
+
+.dark-mode .card-group-title {
+    color: #5AB1FF;
+    text-shadow: var(--card-group-title-neon-effect);
+}
+
+
 .dark-mode h3 {
     color: #5AB1FF;
     text-shadow: 0 0 8px rgba(90, 177, 255, 0.6);
@@ -577,36 +731,43 @@ footer {
 
 .dark-mode button,
 .dark-mode .button {
-    background: linear-gradient(135deg, #1e5a8e 0%, #14405e 100%);
-    border-color: rgba(255, 255, 255, 0.15);
-    box-shadow: 0 4px 15px rgba(30, 90, 142, 0.4);
+    background-color: rgba(33, 150, 243, 0.18);
+    color: rgb(220, 232, 255);
+    border: 0.8px solid rgb(33, 150, 243);
+    background-image: none;
+    box-shadow: none;
 }
 
 .dark-mode button:hover,
 .dark-mode .button:hover {
-    background: linear-gradient(135deg, #14405e 0%, #0f3047 100%);
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(30, 90, 142, 0.5);
+    filter: none;
+    box-shadow: none;
 }
 
 .dark-mode .danger-btn,
 .dark-mode .wifi-btn {
-    background: linear-gradient(135deg, #c0392b 0%, #a93226 100%);
-    box-shadow: 0 4px 15px rgba(192, 57, 43, 0.4);
+    background-color: rgba(244, 67, 54, 0.18);
+    color: rgb(255, 214, 209);
+    border: 0.8px solid rgb(244, 67, 54);
+    background-image: none;
+    box-shadow: none;
 }
 
 .dark-mode .danger-btn:hover,
 .dark-mode .wifi-btn:hover {
-    background: linear-gradient(135deg, #a93226 0%, #8e2a20 100%);
+    filter: brightness(1.1);
 }
 
 .dark-mode .config-btn {
-    background: linear-gradient(135deg, #3a9b15 0%, #2d7a11 100%);
-    box-shadow: 0 4px 15px rgba(58, 155, 21, 0.4);
+    background-color: rgba(76, 175, 80, 0.18);
+    color: rgb(200, 247, 209);
+    border: 0.8px solid rgb(76, 175, 80);
+    background-image: none;
+    box-shadow: none;
 }
 
 .dark-mode .config-btn:hover {
-    background: linear-gradient(135deg, #2d7a11 0%, #23600d 100%);
+    filter: brightness(1.1);
 }
 
 .dark-mode .log-container::-webkit-scrollbar-track {
@@ -653,15 +814,6 @@ footer {
     border-bottom: 1px solid #666;
 }
 
-.dark-mode button {
-    background-color: #008cff;
-    color: white;
-    border: 1px solid #ffffff;
-}
-
-.dark-mode button:hover {
-    background-color: #0066cc;
-}
 
 .dark-mode .log-container::-webkit-scrollbar-track {
     background: #222;
@@ -710,7 +862,7 @@ footer {
     button,
     .button {
         padding: 10px 15px;
-        font-size: 14px;
+        font-size: var(--button-font-size);
     }
 
     .button-row {
@@ -720,6 +872,10 @@ footer {
     .button-row .button,
     .button-row button {
         width: 100%;
+    }
+
+    .button-row.button-grid {
+        grid-template-columns: 1fr;
     }
 }
 
