@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Setup Guide</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="dark-mode-toggle">
+        <label class="switch">
+            <input type="checkbox" id="darkModeToggle">
+            <span class="slider"></span>
+        </label>
+        <span>Dark Mode</span>
+    </div>
+    <div class="version-info">
+        <div>Version {{FW_VERSION}}</div>
+        <div>Build {{FW_BUILD_TIME}}</div>
+    </div>
+
+    <div class="header-container">
+        <h1 class="main-title">Setup Guide</h1>
+        <p>Quick reference for stream URLs and feature setup.</p>
+    </div>
+
+    <div class="dashboard">
+        <div class="container card setup-card">
+            <h3 class="card-title">📷 Camera & Streams</h3>
+            <div class="flash-stats">
+                <strong>HTTP MJPEG:</strong>
+                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;">
+                    http://{{LOCAL_IP}}:81/stream
+                </p>
+                <p style="font-size: 0.85em;">
+                    Use this for browser preview, FRITZ!Box Live-Bild, or Scrypted HTTP Camera.
+                </p>
+            </div>
+            <div class="flash-stats">
+                <strong>HTTP Audio (WAV):</strong>
+                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;">
+                    http://{{LOCAL_IP}}:81/audio
+                </p>
+                <p style="font-size: 0.85em;">
+                    Companion audio stream for MJPEG. For combined A/V, open <code>/live</code>.
+                </p>
+            </div>
+            <div class="flash-stats">
+                <strong>Live Preview (MJPEG + Audio):</strong>
+                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;">
+                    http://{{LOCAL_IP}}/live
+                </p>
+            </div>
+            <div class="flash-stats">
+                <strong>RTSP Stream (for Scrypted):</strong>
+                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;">
+                    rtsp://{{LOCAL_IP}}:8554/mjpeg/1
+                </p>
+                <p style="font-size: 0.85em;">
+                    Use the RTSP Camera plugin or prefix with <code>-i</code> for FFmpeg Camera.
+                </p>
+            </div>
+        </div>
+
+        <div class="container card setup-card">
+            <h3 class="card-title">📺 Scrypted (Quick Steps)</h3>
+            <div class="flash-stats">
+                <ol style="margin: 8px 0 0 16px; padding: 0; font-size: 0.9em;">
+                    <li>Add a camera in Scrypted.</li>
+                    <li>Use <strong>HTTP Camera</strong> with <code>http://ESP32-IP:81/stream</code>, or <strong>RTSP Camera</strong> with <code>rtsp://ESP32-IP:8554/mjpeg/1</code>.</li>
+                    <li>If using FFmpeg Camera for HomeKit, set Output Prefix to:</li>
+                </ol>
+                <p style="font-family: monospace; font-size: 0.85em; word-break: break-word; margin-top: 8px;">
+                    -c:v libx264 -pix_fmt yuvj420p -preset ultrafast -bf 0 -g 60 -r 15 -b:v 500000 -bufsize 1000000 -maxrate 500000
+                </p>
+            </div>
+            <div class="flash-stats">
+                <strong>HomeKit Doorbell:</strong>
+                <p style="font-size: 0.85em;">
+                    Paste the Scrypted webhook into <code>/setup</code> to trigger HomeKit ring events.
+                </p>
+            </div>
+        </div>
+
+        <div class="container card setup-card">
+            <h3 class="card-title">☎️ SIP / TR-064</h3>
+            <div class="flash-stats">
+                <strong>SIP Ring Target:</strong>
+                <p style="font-size: 0.85em;">
+                    Use internal numbers like <code>**11</code> (group), <code>**610</code>, <code>**611</code>.
+                </p>
+            </div>
+            <div class="flash-stats">
+                <strong>TR-064:</strong>
+                <p style="font-size: 0.85em;">
+                    Enable TR-064 and set credentials on the TR-064 page to allow FRITZ!Box ringing.
+                </p>
+            </div>
+            <div class="flash-stats">
+                <strong>FRITZ!Box Live-Bild:</strong>
+                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;">
+                    http://{{LOCAL_IP}}/capture
+                </p>
+            </div>
+        </div>
+
+        <div class="container card setup-card">
+            <h3 class="card-title">⬆️ OTA Updates</h3>
+            <div class="flash-stats">
+                <p style="font-size: 0.85em;">
+                    Enable OTA in <code>/setup</code>, then upload firmware or LittleFS via <code>/ota</code>.
+                </p>
+            </div>
+            <div class="button-row button-grid">
+                <a class="button btn-nav" href="/">Back</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const darkToggle = document.getElementById("darkModeToggle");
+        function setDarkMode(enabled) {
+            document.body.classList.toggle("dark-mode", enabled);
+            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        }
+        const savedDarkMode = localStorage.getItem("darkMode");
+        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
+        darkToggle.checked = darkModeEnabled;
+        setDarkMode(darkModeEnabled);
+        darkToggle.addEventListener("change", () => setDarkMode(darkToggle.checked));
+    </script>
+</body>
+</html>

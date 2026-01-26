@@ -186,6 +186,14 @@ Status LED behavior (priority):
 	•	SIP ok: steady low glow
 	•	RTSP active: short tick every 2 seconds
 
+LED status codes (summary):
+	•	Double‑blink = AP provisioning mode (no saved Wi‑Fi credentials or AP mode forced).
+	•	Breathing = doorbell ringing active.
+	•	Steady low glow = SIP registered and idle.
+	•	Short tick = RTSP session active (overlaid on SIP OK).
+	•	2 Hz blink = Wi‑Fi connect in progress.
+	•	Slow pulse = SIP error (registration failed or timed out).
+
 MAX98357A pin order (left → right): LRC, BCLK, DIN, GAIN, SC, GND, Vin
 
 Wiring diagram:
@@ -346,3 +354,26 @@ This document should evolve along with:
 	•	wiring decisions
 	•	firmware iterations
 	•	Scrypted configuration changes
+
+⸻
+
+📚 Documentation Index (docs/)
+	•	`docs/QUICK_START.md` — fast setup checklist + key URLs.
+	•	`docs/esp32-s3-doorbell-architecture.md` — system overview and design notes.
+	•	`docs/GPIO_MAP.md` — GPIO availability and reserved pins.
+	•	`docs/WIRING_DIAGRAM.md` — wiring map and relay/sensor hookups.
+	•	`docs/PROJECT_BOM.md` — parts list.
+	•	`docs/POWER_SUPPLY_DESIGNS.md` — power options and schematic notes.
+	•	`docs/AUDIO_INTEGRATION.md` — mic + speaker path, formats, and tuning.
+	•	`docs/SIP_INTEGRATION.md` — SIP flow, authentication, and RTP notes.
+	•	`docs/SIP-Fritzbox JSON Spec.md` — structured SIP/Fritz!Box config model.
+	•	`docs/ESP32-Fritzbox-SIP-Documentation.md` — SIP interoperability notes.
+	•	`docs/TR064_DEBUGGING.md` — TR-064 call testing and diagnostics.
+	•	`docs/SCRYPTED_RTSP_SETUP.md` — Scrypted camera setup guidance.
+	•	`docs/OTA_UPDATE_FILE.md` — OTA image creation and naming.
+	•	`docs/UPDATING_WEB_INTERFACE.md` — LittleFS UI update workflow.
+	•	`docs/IMPLEMENTATION_SUMMARY.md` — status and implementation notes.
+	•	`docs/Mermaid SIP Sequence Diagram.md` — SIP message flow diagram.
+	•	`docs/Mermaid Timing Diagram — SIP Message Timing & Retransmissions.md` — SIP timers and retries.
+	•	`docs/Mermaid Class Diagram — ESP32 SIP Client Architecture.md` — SIP client structure.
+	•	`docs/ Mermaid Flowchart — Digest Authentication Logic.md` — digest auth flow.

@@ -62,6 +62,7 @@ http://192.168.178.188:81/stream
 | MJPEG Audio | `http://192.168.178.188:81/audio` | Companion WAV stream |
 | Live A/V | `http://192.168.178.188/live` | MJPEG + audio page |
 | Snapshot | `http://192.168.178.188/capture` | Single frame |
+| Setup Guide | `http://192.168.178.188/guide` | Feature setup instructions |
 | SIP Setup | `http://192.168.178.188/sip` | Configure phone ring |
 | Test Ring | `http://192.168.178.188/ring/sip` | Trigger manually |
 

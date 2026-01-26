@@ -64,7 +64,7 @@
             <hr>
             <button class="danger-btn" title="Clear saved WiFi credentials and reboot into AP mode." onclick="location.href='/forget';">Forget WiFi</button>
             <div class="button-row button-grid" style="margin-top: 12px;">
-                <a class="button" href="/setup" title="Configure features, streams, and Scrypted options.">⚙️ Feature Setup</a>
+                <a class="button btn-nav" href="/setup" title="Configure features, streams, and Scrypted options.">⚙️ Feature Setup</a>
                 <button class="button danger-btn" title="Reboot the ESP32 device." onclick="location.href='/restart';">🔄 Restart</button>
             </div>
         </div>
@@ -80,21 +80,14 @@
             </div>
             
             <hr>
-            <div class="button-row button-grid">
-                <a class="button config-btn" href="/capture" target="_blank" title="Open a single JPEG snapshot.">📸 Snapshot</a>
-                <a class="button" href="http://{{LOCAL_IP}}:81/stream" target="_blank" title="Open the MJPEG live stream.">🎥 Live Stream</a>
-                <a class="button" href="/live" target="_blank" title="Open MJPEG with the companion audio stream.">🎧 Live + Audio</a>
-            </div>
-            <hr>
             {{STREAM_INFO}}
-            <details class="flash-stats">
-                <summary><strong>📺 Scrypted Setup (Quick Steps)</strong></summary>
-                <ol style="margin: 8px 0 0 16px; padding: 0; font-size: 0.9em;">
-                    <li>Add a camera in Scrypted.</li>
-                    <li>Use <strong>HTTP Camera</strong> with <code>http://ESP32-IP:81/stream</code>, or <strong>RTSP Camera</strong> with <code>rtsp://ESP32-IP:8554/mjpeg/1</code>.</li>
-                    <li>If using FFmpeg Camera for HomeKit, set Output Prefix to: <code>-c:v libx264 -pix_fmt yuvj420p -preset ultrafast -bf 0 -g 60 -r 15 -b:v 500000 -bufsize 1000000 -maxrate 500000</code></li>
-                </ol>
-            </details>
+            <hr>
+            <div class="button-row button-grid">
+                <a class="button btn-nav" href="/capture" target="_blank" title="Open a single JPEG snapshot.">📸 Snapshot</a>
+                <a class="button btn-nav" id="liveStreamLink" href="http://{{LOCAL_IP}}:81/stream" target="_blank" title="Open the MJPEG live stream.">🎥 Live Stream</a>
+                <a class="button btn-nav" id="liveAudioLink" href="/live" target="_blank" title="Open MJPEG with the companion audio stream.">🎧 Live + Audio</a>
+                <a class="button btn-nav" href="/guide" title="Open setup instructions and stream URLs.">📘 Setup Guide</a>
+            </div>
         </div>
 
         <!-- SIP/TR-064 Card -->
@@ -106,10 +99,10 @@
             </div>
             <hr>
             <div class="button-row button-grid">
-                <button class="button" title="Trigger a SIP ring test." onclick="testRingSip()">🔔 Test Ring (SIP)</button>
-                <a class="button config-btn" href="/sip" title="Configure SIP credentials and ring target.">⚙️ Setup</a>
+                <button class="button btn-test" title="Trigger a SIP ring test." onclick="testRingSip()">🔔 Test Ring (SIP)</button>
+                <a class="button btn-nav" href="/sip" title="Configure SIP credentials and ring target.">⚙️ Setup</a>
             </div>
-            <a class="button" href="/sipDebug" target="_blank" title="Open SIP debug JSON.">🐛 Debug JSON</a>
+            <a class="button btn-info" href="/sipDebug" target="_blank" title="Open SIP debug JSON.">🐛 Debug JSON</a>
         </div>
 
         <!-- Metrics Card -->
@@ -143,8 +136,8 @@
             </div>
             <hr>
             <div class="button-row button-grid">
-                <a class="button" href="/logs/camera" target="_blank" title="Open filtered camera/streaming logs.">📹 Camera Logs</a>
-                <a class="button" href="/logs/doorbell" target="_blank" title="Open filtered doorbell/SIP/TR-064 logs.">☎️ Doorbell Logs</a>
+                <a class="button btn-info" href="/logs/camera" target="_blank" title="Open filtered camera/streaming logs.">📹 Camera Logs</a>
+                <a class="button btn-info" href="/logs/doorbell" target="_blank" title="Open filtered doorbell/SIP/TR-064 logs.">☎️ Doorbell Logs</a>
                 <button class="button danger-btn" title="Reset the RTSP UDP fail counter." onclick="resetRtspUdpFails()">♻️ Reset UDP Fail Count</button>
                 <button class="button danger-btn" title="Clear active RTSP UDP backoff state." onclick="resetRtspUdpBackoff()">🧹 Clear UDP Backoff</button>
             </div>
@@ -166,6 +159,8 @@
         const metricRtspUdpBackoffActiveEl = document.getElementById("metricRtspUdpBackoffActive");
         const metricRtspUdpBackoffMsEl = document.getElementById("metricRtspUdpBackoffMs");
         const wifiConnectTime = Date.now();
+        const liveStreamLink = document.getElementById("liveStreamLink");
+        const liveAudioLink = document.getElementById("liveAudioLink");
 
         function setDarkMode(enabled) {
             document.body.classList.toggle("dark-mode", enabled);
@@ -202,6 +197,26 @@
             return `${min}m ${rem}s`;
         }
 
+        function setLinkEnabled(link, enabled) {
+            if (!link) return;
+            if (enabled) {
+                if (link.dataset.href) {
+                    link.setAttribute("href", link.dataset.href);
+                }
+                link.classList.remove("is-disabled");
+                link.setAttribute("aria-disabled", "false");
+                link.removeAttribute("tabindex");
+            } else {
+                if (!link.dataset.href) {
+                    link.dataset.href = link.getAttribute("href") || "";
+                }
+                link.removeAttribute("href");
+                link.classList.add("is-disabled");
+                link.setAttribute("aria-disabled", "true");
+                link.setAttribute("tabindex", "-1");
+            }
+        }
+
         function fetchStreamInfo() {
             fetch("/cameraStreamInfo")
                 .then(r => r.json())
@@ -218,10 +233,18 @@
                     metricRtspUdpBackoffActiveEl.textContent = rtspUdpBackoffMs > 0 ? "ON" : "OFF";
                     metricRtspUdpBackoffMsEl.textContent = `${rtspUdpBackoffMs}ms`;
 
+                    const rtspStatus = rtspSessions > 0
+                        ? `RTSP: ${rtspSessions} session(s)`
+                        : "RTSP: idle";
+
                     if (!data.running) {
-                        streamStatusEl.innerHTML = "<strong>Stream:</strong> server stopped";
+                        streamStatusEl.innerHTML = `<strong>Stream:</strong> HTTP: disabled<br>${rtspStatus}`;
+                        setLinkEnabled(liveStreamLink, false);
+                        setLinkEnabled(liveAudioLink, false);
                         return;
                     }
+                    setLinkEnabled(liveStreamLink, true);
+                    setLinkEnabled(liveAudioLink, true);
                     
                     // Build HTTP stream status
                     let httpStatus = "";
@@ -237,11 +260,6 @@
                         httpStatus = `HTTP: ${clients} client(s)${listText} | connected ${connectedFor} | last frame ${lastFrame} ago`;
                     }
                     
-                    // Build RTSP stream status
-                    const rtspStatus = rtspSessions > 0 
-                        ? `RTSP: ${rtspSessions} session(s)` 
-                        : "RTSP: no sessions";
-                    
                     const audioStatus = httpAudioClients > 0
                         ? `HTTP Audio: ${httpAudioClients} client(s)`
                         : "HTTP Audio: idle";
@@ -249,6 +267,8 @@
                 })
                 .catch(() => {
                     streamStatusEl.innerHTML = "<strong>Stream:</strong> unavailable";
+                    setLinkEnabled(liveStreamLink, false);
+                    setLinkEnabled(liveAudioLink, false);
                     metricRtspSessionsEl.textContent = "--";
                     metricHttpClientsEl.textContent = "--";
                     metricHttpAudioClientsEl.textContent = "--";

@@ -86,8 +86,8 @@
         <label><strong>Password:</strong></label>
         <input type="password" id="password" placeholder="Enter Wi-Fi Password">
         
-        <button title="Save WiFi credentials and reboot into STA mode." onclick="connectWiFi()">💾 Save & Connect</button>
-        <button title="Refresh the list of available WiFi networks." onclick="rescanWiFi()">🔄 Rescan WiFi</button>
+        <button class="button btn-save" title="Save WiFi credentials and reboot into STA mode." onclick="connectWiFi()">💾 Save & Connect</button>
+        <button class="button btn-info" title="Refresh the list of available WiFi networks." onclick="rescanWiFi()">🔄 Rescan WiFi</button>
 
         <hr>
 
@@ -101,7 +101,7 @@
         <label><strong>Internal Ring Number:</strong></label>
         <input type="text" id="tr_number" placeholder="e.g., **9 or **610">
 
-        <button title="Save TR-064 credentials and ring number." onclick="saveTr064()">💾 Save TR-064 Settings</button>
+        <button class="button btn-save" title="Save TR-064 credentials and ring number." onclick="saveTr064()">💾 Save TR-064 Settings</button>
         
         <footer>
             <p class="disclaimer">ESP32-S3 HomeKit Doorbell</p>

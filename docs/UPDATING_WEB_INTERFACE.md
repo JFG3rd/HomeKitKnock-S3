@@ -47,11 +47,12 @@ Or from VS Code:
 - Each card has `flex: 1 1 0` to ensure equal width
 
 ### Button Styles
-- Default buttons: Blue gradient
-- `.config-btn`: Green gradient
-- `.danger-btn` / `.wifi-btn`: Red gradient
-- All buttons have 8px border-radius and subtle shadows
-- Hover effect: -1px translateY with stronger shadow
+- Base buttons: `.button` (theme-driven)
+- `.btn-save`: Save/apply/upload actions
+- `.btn-info`: Logs, debug, and informational links
+- `.btn-nav`: Navigation/back/setup links
+- `.btn-test`: Test or diagnostic actions
+- `.danger-btn`: Destructive actions (reset/forget/reboot)
 
 ## Troubleshooting
 

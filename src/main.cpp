@@ -596,18 +596,12 @@ void setup() {
                         "<p style=\"font-family: monospace; font-size: 0.9em; word-break: break-all;\">"
                         "http://" + WiFi.localIP().toString() + ":81/stream"
                         "</p>"
-                        "<p style=\"font-size: 0.85em; color: #666;\">"
-                        "Use this URL for MJPEG clients (Scrypted HTTP camera, FRITZ!Box)."
-                        "</p>"
                         "</div>";
           if (micEnabled) {
             streamInfo += "<div class=\"flash-stats\">"
                           "<strong>🎧 HTTP Audio (WAV):</strong>"
                           "<p style=\"font-family: monospace; font-size: 0.9em; word-break: break-all;\">"
                           "http://" + WiFi.localIP().toString() + ":81/audio"
-                          "</p>"
-                          "<p style=\"font-size: 0.85em; color: #666;\">"
-                          "Companion audio stream for MJPEG. For browser A/V, open <code>/live</code>."
                           "</p>"
                           "</div>";
           } else {
@@ -625,9 +619,6 @@ void setup() {
                         "<strong>📡 RTSP Stream (for Scrypted):</strong>"
                         "<p style=\"font-family: monospace; font-size: 0.9em; word-break: break-all;\">"
                         "rtsp://" + WiFi.localIP().toString() + ":8554/mjpeg/1"
-                        "</p>"
-                        "<p style=\"font-size: 0.85em; color: #666;\">"
-                        "Use the RTSP Camera plugin or prefix with <code>-i</code> if using FFmpeg Camera."
                         "</p>"
                         "</div>";
         } else {
@@ -653,6 +644,20 @@ void setup() {
 
       server.on("/live", HTTP_GET, [](AsyncWebServerRequest *request) {
         String page = loadUiTemplate("/live.html");
+        if (page.isEmpty()) {
+          request->send(500, "text/plain", "UI template missing");
+          return;
+        }
+        page.replace("{{LOCAL_IP}}", WiFi.localIP().toString());
+        page.replace("{{FW_VERSION}}", String(FW_VERSION));
+        page.replace("{{FW_BUILD_TIME}}", String(FW_BUILD_TIME));
+        AsyncWebServerResponse *response = request->beginResponse(200, "text/html", page);
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
+      });
+
+      server.on("/guide", HTTP_GET, [](AsyncWebServerRequest *request) {
+        String page = loadUiTemplate("/guide.html");
         if (page.isEmpty()) {
           request->send(500, "text/plain", "UI template missing");
           return;

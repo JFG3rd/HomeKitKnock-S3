@@ -37,9 +37,9 @@
                 Uploads are restricted to the local network and a time-limited OTA window.
             </div>
             <div class="button-row button-grid" style="margin-top: 12px;">
-                <a class="button" href="/logs/camera" target="_blank" title="Open filtered camera/streaming logs.">📹 Camera Logs</a>
-                <a class="button" href="/logs/doorbell" target="_blank" title="Open filtered doorbell/SIP/TR-064 logs.">☎️ Doorbell Logs</a>
-                <a class="button" href="/setup">Back to Setup</a>
+                <a class="button btn-info" href="/logs/camera" target="_blank" title="Open filtered camera/streaming logs.">📹 Camera Logs</a>
+                <a class="button btn-info" href="/logs/doorbell" target="_blank" title="Open filtered doorbell/SIP/TR-064 logs.">☎️ Doorbell Logs</a>
+                <a class="button btn-nav" href="/setup">Back to Setup</a>
             </div>
         </div>
 
@@ -48,10 +48,10 @@
             <form id="fwForm" method="POST" action="/ota/update" enctype="multipart/form-data">
                 <div class="file-picker">
                     <input type="file" id="fwFile" name="update" accept=".bin" required>
-                    <div class="button file-button" aria-hidden="true">Choose Firmware File</div>
+                    <div class="button btn-save file-button" aria-hidden="true">Choose Firmware File</div>
                     <div class="file-name" id="fwFileName">No file selected</div>
                 </div>
-                <button class="button" type="submit">Upload Firmware</button>
+                <button class="button btn-save" type="submit">Upload Firmware</button>
             </form>
         </div>
 
@@ -60,10 +60,10 @@
             <form id="fsForm" method="POST" action="/ota/fs" enctype="multipart/form-data">
                 <div class="file-picker">
                     <input type="file" id="fsFile" name="update" accept=".bin" required>
-                    <div class="button file-button" aria-hidden="true">Choose Filesystem File</div>
+                    <div class="button btn-save file-button" aria-hidden="true">Choose Filesystem File</div>
                     <div class="file-name" id="fsFileName">No file selected</div>
                 </div>
-                <button class="button" type="submit">Upload Filesystem</button>
+                <button class="button btn-save" type="submit">Upload Filesystem</button>
             </form>
             <div class="ota-note">
                 Use the LittleFS image built by PlatformIO (Upload File System Image).

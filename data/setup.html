@@ -189,7 +189,7 @@
             </div>
 
             <div style="margin-top: 12px;">
-                <button class="button" title="Apply frame size, JPEG quality, brightness, and contrast." onclick="applyCameraSettings()">Apply Camera Settings</button>
+                <button class="button btn-save" title="Apply frame size, JPEG quality, brightness, and contrast." onclick="applyCameraSettings()">Apply Camera Settings</button>
             </div>
         </div>
 
@@ -242,7 +242,7 @@
                 Get this from Scrypted doorbell device settings. Leave empty to disable HomeKit ring.
             </div>
             <div class="button-row button-grid" style="margin-top: 8px;">
-                <button class="button" title="Trigger the doorbell flow without SIP ringing." onclick="testHomekitGong()">🔔 HomeKit Test Gong</button>
+                <button class="button btn-test" title="Trigger the doorbell flow without SIP ringing." onclick="testHomekitGong()">🔔 HomeKit Test Gong</button>
             </div>
 
             <div class="flash-stats" style="margin-top: 12px;">
@@ -278,9 +278,9 @@
             <input type="password" id="ota_pass_confirm" placeholder="Re-enter new password">
 
             <div class="button-row button-grid" style="margin-top: 12px;">
-                <button class="button" title="Save or update OTA credentials." onclick="saveOtaConfig()">Save OTA Credentials</button>
-                <button class="button" title="Enable OTA uploads for 5 minutes." onclick="enableOta()">Enable OTA (5 min)</button>
-                <a class="button" href="/ota" target="_blank" title="Open the OTA upload page.">Open OTA Page</a>
+                <button class="button btn-save" title="Save or update OTA credentials." onclick="saveOtaConfig()">Save OTA Credentials</button>
+                <button class="button btn-save" title="Enable OTA uploads for 5 minutes." onclick="enableOta()">Enable OTA (5 min)</button>
+                <a class="button btn-nav" href="/ota" target="_blank" title="Open the OTA upload page.">Open OTA Page</a>
             </div>
             <div class="ota-note">
                 OTA uploads are local-network only and require the credentials above.
@@ -289,11 +289,11 @@
     </div>
 
     <div class="button-row button-grid log-actions" style="margin-top: 20px;">
-        <button class="button" title="Save feature toggles and restart." onclick="saveFeatures()">💾 Save Features</button>
+        <button class="button btn-save" title="Save feature toggles and restart." onclick="saveFeatures()">💾 Save Features</button>
         <button class="button danger-btn" title="Reboot the ESP32 device." onclick="location.href='/restart';">🔄 Restart</button>
-        <a class="button" href="/logs/camera" target="_blank" title="Open filtered camera/streaming logs.">📹 Camera Logs</a>
-        <a class="button" href="/logs/doorbell" target="_blank" title="Open filtered doorbell/SIP/TR-064 logs.">☎️ Doorbell Logs</a>
-        <a class="button danger-btn" href="/" title="Return to the main dashboard.">Back</a>
+        <a class="button btn-info" href="/logs/camera" target="_blank" title="Open filtered camera/streaming logs.">📹 Camera Logs</a>
+        <a class="button btn-info" href="/logs/doorbell" target="_blank" title="Open filtered doorbell/SIP/TR-064 logs.">☎️ Doorbell Logs</a>
+        <a class="button btn-nav" href="/" title="Return to the main dashboard.">Back</a>
     </div>
 
     <script>
