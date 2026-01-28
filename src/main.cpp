@@ -27,6 +27,7 @@
 #include "logger.h"
 #include "ota_update.h"
 #include "version_info.h"
+#include "embedded_web_server.h"
 
 // Global objects shared across setup/loop.
 AsyncWebServer server(80);
@@ -99,16 +100,8 @@ bool initFileSystem(AsyncWebServer &server) {
   // Register embedded web asset routes instead of serving from filesystem
   logEvent(LOG_INFO, "✅ Loading embedded web assets from firmware");
   
-  // Serve embedded index.html from root
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
-    // Placeholder: In final version, decompress and serve embedded_index.h
-    request->send(200, "text/html", 
-      "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-      "<title>ESP32-S3 Doorbell</title></head><body>"
-      "<h1>ESP32-S3 Doorbell</h1>"
-      "<p>Web interface loading from embedded assets...</p>"
-      "</body></html>");
-  });
+  // Register routes for all embedded HTML/CSS files
+  register_embedded_web_assets(server);
   
   return true;
 }
