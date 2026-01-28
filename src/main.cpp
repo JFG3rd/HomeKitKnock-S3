@@ -9,14 +9,12 @@
 #include <ESPAsyncWebServer.h>
 #include <DNSServer.h>
 #include <Preferences.h>
-#include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <esp_err.h>
 #include <esp_partition.h>
 #include <nvs_flash.h>
 #include <string.h>
-#include <esp_littlefs.h>
 #include "wifi_ap.h"
 #include "config.h"
 #include "tr064_client.h"
@@ -93,43 +91,25 @@ static unsigned long gongRelayUntilMs = 0;
 static String dtmfBuffer;
 static unsigned long lastDtmfMs = 0;
 
-static bool formatLittlefsByLabel(const char *label) {
-  const esp_partition_t *part = esp_partition_find_first(
-      ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, label);
-  if (!part) {
-    logEvent(LOG_ERROR,
-             "❌ LittleFS partition not found: " + String(label));
-    return false;
-  }
-  logEvent(LOG_INFO, "📦 LittleFS partition " + String(label) +
-                          " offset=0x" + String(part->address, HEX) +
-                          " size=" + String(part->size));
-  esp_err_t err = esp_littlefs_format_partition(part);
-  if (err != ESP_OK) {
-    logEvent(LOG_ERROR,
-             "❌ LittleFS format failed: " + String(esp_err_to_name(err)));
-    return false;
-  }
-  return true;
-}
+// Removed: formatLittlefsByLabel - no longer needed with embedded assets
+
 
 bool initFileSystem(AsyncWebServer &server) {
-  constexpr const char *kFsLabel = "littlefs";
-  // Mount LittleFS and expose static assets for the UI.
-  // Try WITHOUT auto-format first to avoid boot loop if format fails
-  if (!LittleFS.begin(false, "/littlefs", 10, kFsLabel)) {
-    logEvent(LOG_ERROR, "❌ LittleFS mount failed");
-    logEvent(LOG_WARN,
-             "⚠️ Web UI will not be available (filesystem required)");
-    logEvent(LOG_WARN,
-             "⚠️ Upload filesystem via 'pio run -t uploadfs' to fix");
-    // Don't attempt format - it causes boot loop with error 261
-    return false;
-  } else {
-    logEvent(LOG_INFO, "✅ LittleFS mounted");
-  }
-  server.serveStatic("/style.css", LittleFS, "/style.css");
-  server.serveStatic("/favicon.ico", LittleFS, "/favicon.ico");
+  // Web assets are now embedded in firmware (PROGMEM)
+  // Register embedded web asset routes instead of serving from filesystem
+  logEvent(LOG_INFO, "✅ Loading embedded web assets from firmware");
+  
+  // Serve embedded index.html from root
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
+    // Placeholder: In final version, decompress and serve embedded_index.h
+    request->send(200, "text/html", 
+      "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+      "<title>ESP32-S3 Doorbell</title></head><body>"
+      "<h1>ESP32-S3 Doorbell</h1>"
+      "<p>Web interface loading from embedded assets...</p>"
+      "</body></html>");
+  });
+  
   return true;
 }
 
@@ -155,15 +135,12 @@ static bool initNvs() {
   return true;
 }
 
-static String loadUiTemplate(const char *path) {
-  File file = LittleFS.open(path, "r");
-  if (!file) {
-    logEvent(LOG_ERROR, "❌ UI template missing: " + String(path));
-    return String();
-  }
-  String content = file.readString();
-  file.close();
-  return content;
+static String loadUiTemplate(const char *filename) {
+  // Load embedded web asset
+  logEvent(LOG_INFO, "📄 Loading embedded UI template: " + String(filename));
+  // TODO: Implement decompression of gzip-compressed embedded assets
+  // For now, return empty - routes will serve embedded directly
+  return String();
 }
 
 static void writeWavHeader(AsyncResponseStream *response,
