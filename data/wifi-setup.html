@@ -6,10 +6,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="/style.css">
     <script>
+        const statusElId = "wifiStatusMsg";
+        function setStatus(message, isError = false) {
+            const el = document.getElementById(statusElId);
+            if (!el) return;
+            el.textContent = message || "";
+            el.style.color = isError ? "#ff4b4b" : "";
+        }
+
+        function getSelectedSsid() {
+            const manual = document.getElementById("manual_ssid").value.trim();
+            const selected = document.getElementById("ssid").value.trim();
+            return manual.length ? manual : selected;
+        }
+
         function connectWiFi() {
             // Save WiFi credentials to NVS and reboot.
-            let ssid = document.getElementById("ssid").value;
-            let password = document.getElementById("password").value;
+            const ssid = getSelectedSsid();
+            const password = document.getElementById("password").value;
 
             if (ssid === "") {
                 alert("⚠️ Please select or enter an SSID!");
@@ -29,39 +43,75 @@
                   alert("Error saving WiFi credentials: " + error);
               });
         }
-
-        function saveTr064() {
-            // Save TR-064 credentials and ring number for FRITZ!Box.
-            let tr064_user = document.getElementById("tr064_user").value;
-            let tr064_pass = document.getElementById("tr064_pass").value;
-            let number = document.getElementById("tr_number").value;
-
-            fetch("/saveTR064", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
-                    "tr064_user": tr064_user, 
-                    "tr064_pass": tr064_pass, 
-                    "number": number 
-                })
-            }).then(response => response.text())
-              .then(text => {
-                  alert(text);
-              })
-              .catch(error => {
-                  alert("Error saving TR-064 settings: " + error);
-              });
-        }
         function rescanWiFi() {
+            setStatus("Scanning for networks...");
             fetch("/scanWifi")
                 .then(response => response.text())
-                .then(text => {
-                    alert(text + "\nRefresh the page in a few seconds.");
-                })
+                .then(() => pollWifiScanResults(8))
                 .catch(error => {
                     alert("Error starting WiFi scan: " + error);
                 });
         }
+
+        function updateSsidOptions(ssids, scanning) {
+            const select = document.getElementById("ssid");
+            const current = select.value;
+            select.innerHTML = "";
+            const placeholder = document.createElement("option");
+            placeholder.value = "";
+            placeholder.textContent = "-- Select WiFi Network --";
+            select.appendChild(placeholder);
+            if (!Array.isArray(ssids) || ssids.length === 0) {
+                const label = scanning ? "(scanning...) refresh in a few seconds" : "(no networks found)";
+                const option = document.createElement("option");
+                option.value = "";
+                option.disabled = true;
+                option.textContent = label;
+                select.appendChild(option);
+            } else {
+                ssids.forEach(ssid => {
+                    const option = document.createElement("option");
+                    option.value = String(ssid);
+                    option.textContent = String(ssid);
+                    select.appendChild(option);
+                });
+            }
+            if (current) {
+                select.value = current;
+            }
+        }
+
+        function pollWifiScanResults(remaining) {
+            fetch("/wifiScanResults")
+                .then(r => r.json())
+                .then(data => {
+                    updateSsidOptions(data.ssids || [], data.inProgress);
+                    if (data.inProgress && remaining > 0) {
+                        setTimeout(() => pollWifiScanResults(remaining - 1), 1000);
+                        return;
+                    }
+                    setStatus("");
+                })
+                .catch(() => {
+                    setStatus("Failed to load scan results.", true);
+                });
+        }
+
+        document.addEventListener("DOMContentLoaded", () => {
+            const manualSsid = document.getElementById("manual_ssid");
+            const select = document.getElementById("ssid");
+            manualSsid.addEventListener("input", () => {
+                if (manualSsid.value.trim().length) {
+                    select.value = "";
+                }
+            });
+            select.addEventListener("change", () => {
+                if (select.value) {
+                    manualSsid.value = "";
+                }
+            });
+            pollWifiScanResults(2);
+        });
     </script>
 </head>
 <body>
@@ -76,32 +126,15 @@
         </select>
         
         <label><strong>Or Enter SSID Manually:</strong></label>
-        <input type="text" id="manual_ssid" placeholder="Enter SSID (if hidden)">
-        <script>
-            document.getElementById("manual_ssid").addEventListener("input", function() {
-                document.getElementById("ssid").value = this.value;
-            });
-        </script>
+        <input type="text" id="manual_ssid" placeholder="Enter SSID (if hidden)" autocapitalize="none" autocorrect="off" spellcheck="false">
         
         <label><strong>Password:</strong></label>
-        <input type="password" id="password" placeholder="Enter Wi-Fi Password">
+        <input type="password" id="password" placeholder="Enter Wi-Fi Password" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="new-password">
         
         <button class="button btn-save" title="Save WiFi credentials and reboot into STA mode." onclick="connectWiFi()">💾 Save & Connect</button>
         <button class="button btn-info" title="Refresh the list of available WiFi networks." onclick="rescanWiFi()">🔄 Rescan WiFi</button>
 
-        <hr>
-
-        <h3 class="card-title">FRITZ!Box TR-064</h3>
-        <label><strong>TR-064 Username:</strong></label>
-        <input type="text" id="tr064_user" placeholder="TR-064 username">
-
-        <label><strong>TR-064 Password:</strong></label>
-        <input type="password" id="tr064_pass" placeholder="TR-064 password">
-
-        <label><strong>Internal Ring Number:</strong></label>
-        <input type="text" id="tr_number" placeholder="e.g., **9 or **610">
-
-        <button class="button btn-save" title="Save TR-064 credentials and ring number." onclick="saveTr064()">💾 Save TR-064 Settings</button>
+        <div class="flash-stats" id="wifiStatusMsg" style="margin-top: 12px;"></div>
         
         <footer>
             <p class="disclaimer">ESP32-S3 HomeKit Doorbell</p>

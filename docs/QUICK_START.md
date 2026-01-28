@@ -59,7 +59,7 @@ http://192.168.178.188:81/stream
 | Web UI | `http://192.168.178.188` | Configuration |
 | RTSP | `rtsp://192.168.178.188:8554/mjpeg/1` | Scrypted camera |
 | MJPEG | `http://192.168.178.188:81/stream` | Browser preview |
-| MJPEG Audio | `http://192.168.178.188:81/audio` | Companion WAV stream |
+| MJPEG Audio | `http://192.168.178.188:81/audio.aac` | Companion AAC stream |
 | Live A/V | `http://192.168.178.188/live` | MJPEG + audio page |
 | Snapshot | `http://192.168.178.188/capture` | Single frame |
 | Setup Guide | `http://192.168.178.188/guide` | Feature setup instructions |

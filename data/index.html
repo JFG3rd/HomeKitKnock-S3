@@ -118,12 +118,20 @@
                     <span class="info-value" id="metricHttpClients">--</span>
                 </div>
                 <div class="info-item">
-                    <span class="info-label" title="Active HTTP audio stream clients (WAV).">HTTP Audio Clients:</span>
+                    <span class="info-label" title="Active HTTP audio stream clients (AAC).">HTTP Audio Clients:</span>
                     <span class="info-value" id="metricHttpAudioClients">--</span>
                 </div>
                 <div class="info-item">
                     <span class="info-label" title="Count of RTSP UDP send failures since boot or last reset.">RTSP UDP endPacket fails:</span>
                     <span class="info-value" id="metricRtspUdpFails">--</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" title="Total PSRAM detected by the ESP32.">PSRAM Total:</span>
+                    <span class="info-value" id="metricPsramTotal">--</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label" title="Free PSRAM available for allocation.">PSRAM Free:</span>
+                    <span class="info-value" id="metricPsramFree">--</span>
                 </div>
                 <div class="info-item">
                     <span class="info-label" title="Backoff is ON when RTSP UDP sends are throttled to relieve WiFi buffers.">UDP backoff active:</span>
@@ -158,6 +166,8 @@
         const metricRtspUdpFailsEl = document.getElementById("metricRtspUdpFails");
         const metricRtspUdpBackoffActiveEl = document.getElementById("metricRtspUdpBackoffActive");
         const metricRtspUdpBackoffMsEl = document.getElementById("metricRtspUdpBackoffMs");
+        const metricPsramTotalEl = document.getElementById("metricPsramTotal");
+        const metricPsramFreeEl = document.getElementById("metricPsramFree");
         const wifiConnectTime = Date.now();
         const liveStreamLink = document.getElementById("liveStreamLink");
         const liveAudioLink = document.getElementById("liveAudioLink");
@@ -325,6 +335,15 @@
             return `${day}.${month}.${year} ${hours}:${minutes}:${seconds}`;
         }
 
+        function formatBytes(value) {
+            if (value === undefined || value === null) return "--";
+            const num = Number(value);
+            if (!Number.isFinite(num) || num < 0) return "--";
+            if (num >= 1024 * 1024) return `${(num / (1024 * 1024)).toFixed(1)} MB`;
+            if (num >= 1024) return `${Math.round(num / 1024)} KB`;
+            return `${num} B`;
+        }
+
         function fetchDeviceStatus() {
             fetch("/deviceStatus")
                 .then(r => r.json())
@@ -332,11 +351,15 @@
                     rssiEl.textContent = data.rssi;
                     uptimeEl.textContent = formatUptime(data.uptimeSeconds || 0);
                     wifiConnectedEl.textContent = formatDateTime(wifiConnectTime);
+                    metricPsramTotalEl.textContent = formatBytes(data.psramTotal);
+                    metricPsramFreeEl.textContent = formatBytes(data.psramFree);
                 })
                 .catch(() => {
                     rssiEl.textContent = "--";
                     uptimeEl.textContent = "--";
                     wifiConnectedEl.textContent = "--";
+                    metricPsramTotalEl.textContent = "--";
+                    metricPsramFreeEl.textContent = "--";
                 });
         }
 

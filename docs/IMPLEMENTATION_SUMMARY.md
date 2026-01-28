@@ -10,7 +10,7 @@
 
 ## ✅ Project Status: Phase 1 Complete (Audio Companion Stream Added)
 
-All Phase 1 objectives have been implemented, including RTSP audio and a continuous HTTP WAV companion stream.
+All Phase 1 objectives have been implemented, including RTSP audio and a continuous HTTP AAC companion stream.
 
 ### What's Working Now
 
@@ -20,8 +20,8 @@ All Phase 1 objectives have been implemented, including RTSP audio and a continu
 - Snapshot capture endpoint
 
 ✅ **Audio Streaming**
-- RTSP audio (G.711 PCMU) from onboard mic when enabled
-- HTTP WAV preview (`/audio.wav`) plus continuous stream (`http://DEVICE_IP:81/audio`)
+- RTSP audio (AAC-LC / MPEG4-GENERIC) from onboard mic when enabled
+- HTTP WAV preview (`/audio.wav`) plus continuous AAC stream (`http://DEVICE_IP:81/audio.aac`)
 - MAX98357A I2S audio out for gong playback (optional)
 
 ✅ **SIP Integration**
@@ -69,7 +69,7 @@ All Phase 1 objectives have been implemented, including RTSP audio and a continu
 - RTSP (RFC 2326) on port 8554
 - SIP (RFC 3261) on port 5062
 - SIP RTP (G.711 + DTMF) on port 40000
-- HTTP on port 80 (UI/API) and 81 (MJPEG + WAV audio)
+- HTTP on port 80 (UI/API) and 81 (MJPEG + AAC audio)
 
 **Libraries:**
 - Micro-RTSP 0.1.6 - RTSP server
@@ -113,7 +113,7 @@ platformio device monitor
 | `src/main.cpp` | Main application, web UI |
 | `src/sip_client.cpp` | SIP protocol implementation |
 | `src/rtsp_server.cpp` | RTSP streaming server |
-| `src/cameraStream.cpp` | MJPEG + WAV HTTP streaming (port 81) |
+| `src/cameraStream.cpp` | MJPEG + AAC HTTP streaming (port 81) |
 | `src/audio.cpp` | Mic capture + MAX98357A audio out |
 | `src/ota_update.cpp` | OTA update flow + auth |
 | `include/config.h` | Pin definitions, constants |
@@ -128,7 +128,7 @@ After WiFi configuration, all services are available:
 - **Web UI:** http://DEVICE_IP/
 - **RTSP Stream:** rtsp://DEVICE_IP:8554/mjpeg/1
 - **MJPEG Stream:** http://DEVICE_IP:81/stream
-- **MJPEG Audio (WAV):** http://DEVICE_IP:81/audio
+- **MJPEG Audio (AAC):** http://DEVICE_IP:81/audio.aac
 - **Live A/V Page:** http://DEVICE_IP/live
 - **SIP Setup:** http://DEVICE_IP/sip
 - **Test Ring:** http://DEVICE_IP/ring/sip
@@ -151,7 +151,7 @@ Complete documentation available in `/docs`:
 
 All core functionality implemented:
 - ✅ Video streaming (RTSP + MJPEG)
-- ✅ Audio streaming (RTSP PCMU + HTTP WAV)
+- ✅ Audio streaming (RTSP AAC-LC + HTTP AAC)
 - ✅ Doorbell button detection
 - ✅ FRITZ!Box phone ringing (SIP)
 - ✅ Scrypted camera integration

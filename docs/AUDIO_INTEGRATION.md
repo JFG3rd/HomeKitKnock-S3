@@ -8,17 +8,17 @@
 
 This document outlines the plan to integrate the Seeed XIAO ESP32-S3 Sense onboard microphone into the HTTP and RTSP video streams.
 
-## Current Implementation (v1.3.1)
+## Current Implementation (v1.3.3+)
 
-- **RTSP audio**: PCMU/8000 is advertised only when the mic feature is enabled.
+- **RTSP audio**: AAC-LC (MPEG4-GENERIC) is advertised only when the mic feature is enabled.
 - **HTTP audio preview**: `/audio.wav` returns a short WAV clip for browser testing.
-- **Continuous HTTP audio**: `http://ESP32-IP:81/audio` streams 16 kHz mono WAV as a companion to MJPEG.
-- **Browser A/V page**: `http://ESP32-IP/live` pairs MJPEG + WAV (click-to-play audio).
+- **Continuous HTTP audio**: `http://ESP32-IP:81/audio.aac` streams AAC (ADTS) as a companion to MJPEG.
+- **Browser A/V page**: `http://ESP32-IP/live` pairs MJPEG + AAC (click-to-play audio).
 - **Audio out**: MAX98357A I2S DAC plays gong/tone clips when enabled.
 - **SIP intercom audio**: RTP G.711 (PCMU/PCMA) with RFC2833 DTMF support for door opener relay.
-- **HTTP client limit**: MJPEG and WAV streams share the same max client cap.
+- **HTTP client limit**: MJPEG and AAC streams share the same max client cap.
 - **Mic sharing**: RTSP and HTTP audio share the same mic capture path; avoid running both if audio stutters.
-- **HTTP dependency**: WAV streaming is available only when HTTP camera streaming is enabled.
+- **HTTP dependency**: AAC streaming is available only when HTTP camera streaming is enabled.
 - **Compatibility**:
   - **Scrypted/HomeKit**: prefer RTSP for A/V (Scrypted can transcode).
   - **FRITZ!Box**: SIP carries G.711 RTP audio + DTMF; HTTP audio is not used by the intercom.
@@ -89,27 +89,24 @@ i2s_set_clk(I2S_NUM_0, I2S_SAMPLE_RATE, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_M
 
 ### 2. Audio Encoding Options
 
-#### Option A: PCM/G.711 μ-law (Recommended)
-- **Codec**: G.711 μ-law (PCMU)
-- **RTP Payload Type**: 0 (standard)
+#### Option A: AAC-LC (Selected for RTSP + HTTP)
+- **Codec**: AAC-LC (MPEG4-GENERIC)
+- **RTP Payload Type**: 96 (dynamic)
+- **Bitrate**: 16–32 kbps @ 8 kHz, or 24–48 kbps @ 16 kHz (configurable in `/setup`)
+- **Pros**: Good quality at low bitrate, supported by Scrypted/HomeKit via transcoding
+- **Cons**: More CPU than G.711, needs ESP-ADF libs
+
+#### Option B: G.711 (Still used for SIP intercom)
+- **Codec**: G.711 μ-law / A-law (PCMU/PCMA)
 - **Bitrate**: 64 kbps (8 kHz, mono)
-- **Pros**: Universal support, low CPU, simple implementation
-- **Cons**: Lower quality than modern codecs
-- **Note**: If the mic runs at 16 kHz, downsample to 8 kHz before μ-law encoding.
-
-#### Option B: Opus (Best Quality)
-- **Codec**: Opus
-- **RTP Payload Type**: 111 (dynamic)
-- **Bitrate**: 16-32 kbps (configurable)
-- **Pros**: Excellent quality, low bitrate, HomeKit compatible
-- **Cons**: Requires external library, higher CPU usage
-
-**Decision**: Start with G.711 μ-law for simplicity, add Opus later if needed.
+- **Pros**: Universal SIP compatibility, low CPU
+- **Cons**: Lower quality than AAC
 
 ### 2a. HTML/Browser Audio Support
 
 Browsers do not play raw G.711. For HTML views:
-- **Preferred**: `audio/wav` (PCM 16-bit, mono, 8-16 kHz) via `/audio.wav`
+- **Preferred**: `audio/aac` (ADTS) via `/audio.aac` for streaming
+- **Preview**: `audio/wav` (PCM 16-bit, mono, 8-16 kHz) via `/audio.wav`
 - **Alternate**: WebRTC + Opus for full A/V sync (larger scope)
 - **Avoid**: raw PCMU/G.711 in HTML `<audio>` tags (not supported)
 
@@ -131,120 +128,58 @@ sdp += "m=video 0 RTP/AVP 26\r\n";
 sdp += "a=rtpmap:26 JPEG/90000\r\n";
 sdp += "a=control:track1\r\n";
 
-// Audio stream (G.711 μ-law)
-sdp += "m=audio 0 RTP/AVP 0\r\n";
-sdp += "a=rtpmap:0 PCMU/8000\r\n";
+// Audio stream (AAC-LC)
+sdp += "m=audio 0 RTP/AVP 96\r\n";
+sdp += "a=rtpmap:96 MPEG4-GENERIC/16000/1\r\n";
+sdp += "a=fmtp:96 profile-level-id=1;mode=AAC-hbr;config=1408;SizeLength=13;IndexLength=3;IndexDeltaLength=3\r\n";
 sdp += "a=control:track2\r\n";
 ```
 
 Implementation notes:
 - Audio is advertised only when mic is enabled in Feature Setup.
-- Track mapping: `track1` = video, `track2` = audio (PCMU/8000).
+- Track mapping: `track1` = video, `track2` = audio (AAC-LC).
 
-#### RTP Audio Packet Format
+#### RTP Audio Packet Format (AAC-LC / MPEG4-GENERIC)
 
-G.711 μ-law RTP packet structure:
+AAC-LC RTP payload uses AU headers (RFC 3640):
 ```
-[RTP Header 12 bytes] + [G.711 samples]
+[RTP Header 12 bytes] + [AU-headers-length 2 bytes] + [AU-header 2 bytes] + [AAC raw frame]
 ```
 
 RTP header for audio:
 - **Version**: 2
-- **Payload Type**: 0 (PCMU)
+- **Payload Type**: 96 (dynamic)
 - **Sequence Number**: Incremented per packet
-- **Timestamp**: Sample count (8000 Hz clock)
+- **Timestamp**: Sample count (clock = sample rate; +1024 per AAC frame)
 - **SSRC**: Unique audio stream identifier
 
-Sample code:
+AU header fields:
+- **AU-headers-length**: 16 (bits)
+- **AU-header**: `(frame_size_bytes << 3)`
+
+Sample packing:
 ```cpp
-void sendAudioRtp(RtspSession* session, const int16_t* pcm, size_t samples) {
-    // Convert PCM to G.711 μ-law
-    uint8_t ulaw[samples];
-    for (size_t i = 0; i < samples; i++) {
-        ulaw[i] = linear2ulaw(pcm[i]);
-    }
-    
-    // Build RTP packet
-    uint8_t rtpPacket[12 + samples];
-    rtpPacket[0] = 0x80;  // V=2, P=0, X=0, CC=0
-    rtpPacket[1] = 0x00;  // M=0, PT=0 (PCMU)
-    
-    // Sequence number (16-bit, big-endian)
-    rtpPacket[2] = (session->audioSeq >> 8) & 0xFF;
-    rtpPacket[3] = session->audioSeq & 0xFF;
-    
-    // Timestamp (32-bit, big-endian, 8000 Hz clock)
-    rtpPacket[4] = (session->audioTimestamp >> 24) & 0xFF;
-    rtpPacket[5] = (session->audioTimestamp >> 16) & 0xFF;
-    rtpPacket[6] = (session->audioTimestamp >> 8) & 0xFF;
-    rtpPacket[7] = session->audioTimestamp & 0xFF;
-    
-    // SSRC (32-bit, big-endian)
-    rtpPacket[8] = (session->audioSSRC >> 24) & 0xFF;
-    rtpPacket[9] = (session->audioSSRC >> 16) & 0xFF;
-    rtpPacket[10] = (session->audioSSRC >> 8) & 0xFF;
-    rtpPacket[11] = session->audioSSRC & 0xFF;
-    
-    // Copy μ-law samples
-    memcpy(rtpPacket + 12, ulaw, samples);
-    
-    // Send packet (TCP or UDP)
-    if (session->useTcpInterleaved) {
-        sendTcpInterleaved(session, session->interleavedAudioChannel, rtpPacket, 12 + samples);
-    } else {
-        session->rtpSocket.beginPacket(session->clientIP, session->rtpPort + 2);  // Audio on +2
-        session->rtpSocket.write(rtpPacket, 12 + samples);
-        session->rtpSocket.endPacket();
-    }
-    
-    session->audioSeq++;
-    session->audioTimestamp += samples;  // 8000 Hz clock
-}
+const uint16_t auHeaderLenBits = 16;
+const uint16_t auHeader = (frameLen & 0x1FFF) << 3;
+
+payload[0] = auHeaderLenBits >> 8;
+payload[1] = auHeaderLenBits & 0xFF;
+payload[2] = auHeader >> 8;
+payload[3] = auHeader & 0xFF;
+memcpy(payload + 4, frame, frameLen);
 ```
 
-### 4. G.711 μ-law Encoder
+### 4. SIP Audio (G.711)
 
-Simple PCM to μ-law conversion:
-
-```cpp
-// G.711 μ-law encoding table
-static const int16_t seg_end[8] = {0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF, 0x3FFF, 0x7FFF};
-
-uint8_t linear2ulaw(int16_t pcm) {
-    int16_t mask;
-    int16_t seg;
-    uint8_t uval;
-    
-    // Get sign and magnitude
-    if (pcm < 0) {
-        pcm = -pcm;
-        mask = 0x7F;
-    } else {
-        mask = 0xFF;
-    }
-    
-    // Clip to 14-bit signed range
-    if (pcm > 0x3FFF) pcm = 0x3FFF;
-    
-    // Convert to μ-law
-    pcm += 0x84;  // Bias
-    for (seg = 0; seg < 8; seg++) {
-        if (pcm <= seg_end[seg]) break;
-    }
-    
-    if (seg >= 8) return (uint8_t)(0x7F ^ mask);
-    
-    uval = (seg << 4) | ((pcm >> (seg + 3)) & 0x0F);
-    return (uint8_t)(uval ^ mask);
-}
-```
+SIP intercom uses its own RTP path (PCMU/PCMA + RFC2833 DTMF).
+See `docs/SIP_INTEGRATION.md` for the SIP RTP details and door opener handling.
 
 ### 5. HTTP Stream Integration
 
 HTTP MJPEG streams don't natively support audio. Options:
 
 #### Option A: Separate Audio Stream (Implemented)
-- Continuous WAV stream at `http://ESP32-IP:81/audio`
+- Continuous AAC (ADTS) stream at `http://ESP32-IP:81/audio.aac`
 - Short WAV preview at `http://ESP32-IP/audio.wav`
 - MJPEG remains at `http://ESP32-IP:81/stream` (pair manually or use `/live`)
 - Clients must sync audio/video manually
@@ -254,21 +189,22 @@ HTTP MJPEG streams don't natively support audio. Options:
 - Requires significant architectural changes
 - Better browser compatibility and A/V sync
 
-### Streaming WAV vs WebRTC (Pros/Cons)
+### Streaming AAC vs WebRTC (Pros/Cons)
 
-**Streaming WAV (current approach)**
-- **Pros**: Simple, low CPU, easy to debug, works for local browsers and tools
-- **Cons**: No A/V sync, no NAT traversal, limited client support for continuous WAV
+**Streaming AAC (current approach)**
+- **Pros**: Simple, low CPU vs. video, works in modern browsers/tools, small bandwidth
+- **Cons**: No A/V sync, no NAT traversal, depends on browser AAC support
 
 **WebRTC**
 - **Pros**: Built-in A/V sync, low latency, NAT traversal, broad HomeKit/Scrypted compatibility
 - **Cons**: Higher complexity, more CPU/RAM, requires STUN/TURN for remote access
 
-**Recommendation**: Keep HTTP as video-only, use RTSP for audio+video.
+**Recommendation**: Keep HTTP as MJPEG + companion AAC, use RTSP for A/V in Scrypted/HomeKit.
 
 HTML test endpoint:
 - `http://ESP32-IP/audio.wav` returns a short PCM WAV capture for browser testing.
-- Mic enable/mute and sensitivity live in Feature Setup (Scrypted Stream Options).
+- `http://ESP32-IP:81/audio.aac` is the continuous AAC stream.
+- Mic enable/mute and sensitivity live in Feature Setup (Camera Config).
 
 ### 5a. Local Gong Playback (MAX98357A)
 
@@ -305,10 +241,9 @@ struct RtspSession {
 ### 7. Performance Considerations
 
 **CPU Usage**:
-- I2S PDM reading: ~2-3% CPU @ 16 kHz
-- G.711 encoding: ~1% CPU
-- RTP packetization: <1% CPU
-- **Total**: ~4-5% additional CPU load
+- I2S PDM capture is lightweight.
+- AAC encoding is the heaviest step; load depends on bitrate/sample rate.
+- Measure on-device (heap + loop timing) when tuning AAC settings.
 
 **Memory Usage**:
 - I2S DMA buffers: 4 × 512 samples × 2 bytes = **4 KB**
@@ -316,14 +251,14 @@ struct RtspSession {
 - **Total**: ~5 KB additional RAM
 
 **Network Bandwidth**:
-- G.711 @ 8 kHz: **64 kbps**
-- RTP overhead: ~5 kbps
-- **Total**: ~70 kbps additional (acceptable for WiFi)
+- AAC @ 8 kHz: **16–32 kbps** + RTP/UDP overhead
+- AAC @ 16 kHz: **24–48 kbps** + RTP/UDP overhead
+- SIP RTP (G.711) remains **64 kbps** for intercom calls
 
 ### 8. Testing Plan
 
 1. **I2S PDM Test**: Read raw PDM data, verify signal levels
-2. **G.711 Encoding Test**: Convert PCM to μ-law, check waveform
+2. **AAC Encode Test**: Validate AAC frames via `/audio.aac`
 3. **RTSP Audio Test**: Stream audio-only to VLC/ffmpeg
 4. **Combined A/V Test**: Stream audio+video to Scrypted
 5. **HomeKit Integration Test**: Verify audio works in HomeKit doorbell
@@ -334,9 +269,9 @@ struct RtspSession {
 1. ✅ **Fix RTSP UDP streaming** (completed)
 2. ✅ Add I2S PDM initialization (audio module)
 3. ✅ Add audio capture path (on-demand for RTP + WAV endpoint)
-4. ✅ Implement G.711 μ-law encoder
-5. ✅ Update RTSP SDP to include audio track
-6. ✅ Implement audio RTP packet sending
+4. ✅ Add AAC-LC encoder (ESP-ADF)
+5. ✅ Update RTSP SDP to include AAC track
+6. ✅ Implement AAC RTP packet sending (AU headers)
 7. ✅ Add audio session fields to `RtspSession`
 8. ⬜ Test with VLC/ffmpeg
 9. ⬜ Test with Scrypted
@@ -347,11 +282,11 @@ struct RtspSession {
 
 - [ESP-IDF I2S PDM Documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/peripherals/i2s.html)
 - [RFC 3551 - RTP Audio/Video Profile](https://tools.ietf.org/html/rfc3551)
-- [RFC 5391 - RTP Payload Format for ITU-T G.711.1](https://tools.ietf.org/html/rfc5391)
+- [RFC 3640 - RTP Payload for MPEG-4 Audio](https://datatracker.ietf.org/doc/html/rfc3640)
 - [Seeed XIAO ESP32-S3 Sense Schematic](https://files.seeedstudio.com/wiki/SeeedStudio-XIAO-ESP32S3/res/XIAO_ESP32S3_SCH_v1.1.pdf)
 
 ## Status
 
-**Current**: Mic + gong scaffolding wired; RTSP audio track sending PCMU
-**Next**: Validate audio in VLC/Scrypted/HomeKit and tune capture pacing
+**Current**: AAC-LC for RTSP + HTTP; SIP intercom remains G.711
+**Next**: Validate audio in VLC/Scrypted/HomeKit and tune bitrate/sample rate
 **Priority**: Medium (video streaming is primary, audio is enhancement)

@@ -37,9 +37,9 @@
                 </p>
             </div>
             <div class="flash-stats">
-                <strong>HTTP Audio (WAV):</strong>
+                <strong>HTTP Audio (AAC):</strong>
                 <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;">
-                    http://{{LOCAL_IP}}:81/audio
+                    http://{{LOCAL_IP}}:81/audio.aac
                 </p>
                 <p style="font-size: 0.85em;">
                     Companion audio stream for MJPEG. For combined A/V, open <code>/live</code>.
@@ -67,7 +67,7 @@
             <div class="flash-stats">
                 <ol style="margin: 8px 0 0 16px; padding: 0; font-size: 0.9em;">
                     <li>Add a camera in Scrypted.</li>
-                    <li>Use <strong>HTTP Camera</strong> with <code>http://ESP32-IP:81/stream</code>, or <strong>RTSP Camera</strong> with <code>rtsp://ESP32-IP:8554/mjpeg/1</code>.</li>
+                    <li>Use <strong>HTTP Camera</strong> with <code>http://ESP32-IP:81/stream</code> and optional audio <code>http://ESP32-IP:81/audio.aac</code>, or <strong>RTSP Camera</strong> with <code>rtsp://ESP32-IP:8554/mjpeg/1</code>.</li>
                     <li>If using FFmpeg Camera for HomeKit, set Output Prefix to:</li>
                 </ol>
                 <p style="font-family: monospace; font-size: 0.85em; word-break: break-word; margin-top: 8px;">

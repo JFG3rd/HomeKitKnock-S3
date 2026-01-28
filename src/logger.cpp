@@ -128,10 +128,10 @@ void logEvent(LogLevel level, const String &message) {
     Serial.print(emoji);
     Serial.print(" ");
     Serial.print(timeStr);
-    Serial.printf(" [ %lums] %s\n", ms, messageText.c_str());
+    Serial.printf(" [ %lums] %s\n", static_cast<unsigned long>(ms), messageText.c_str());
   } else {
     Serial.print(timeStr);
-    Serial.printf(" [ %lums] %s\n", ms, message.c_str());
+    Serial.printf(" [ %lums] %s\n", static_cast<unsigned long>(ms), message.c_str());
   }
 
   // Store in ring buffer for web UI.

@@ -21,13 +21,13 @@
 
     <div class="header-container">
         <h1 class="main-title">Live Stream + Audio</h1>
-        <p>MJPEG video with the companion WAV audio stream.</p>
+        <p>MJPEG video with the companion AAC audio stream.</p>
     </div>
 
     <div class="container full-width">
         <div class="flash-stats">
             <strong>Video:</strong> http://{{LOCAL_IP}}:81/stream<br>
-            <strong>Audio:</strong> http://{{LOCAL_IP}}:81/audio<br>
+            <strong>Audio:</strong> http://{{LOCAL_IP}}:81/audio.aac<br>
             <span style="font-size: 0.85em;">Audio playback requires a click to comply with browser autoplay rules.</span>
         </div>
 
@@ -47,7 +47,7 @@
         const audioEl = document.getElementById("liveAudio");
         const startAudioBtn = document.getElementById("startAudio");
         const stopAudioBtn = document.getElementById("stopAudio");
-        const audioUrl = "http://{{LOCAL_IP}}:81/audio";
+        const audioUrl = "http://{{LOCAL_IP}}:81/audio.aac";
 
         function setDarkMode(enabled) {
             document.body.classList.toggle("dark-mode", enabled);

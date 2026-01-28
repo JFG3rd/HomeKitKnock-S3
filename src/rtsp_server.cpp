@@ -22,6 +22,7 @@
 #include <string.h>
 #include "logger.h"
 #include "audio.h"
+#include "aac_stream.h"
 
 // JPEG marker constants
 #define JPEG_MARKER_SOI   0xFFD8  // Start of Image
@@ -57,7 +58,6 @@ static size_t findJpegScanData(const uint8_t* jpeg, size_t len, uint8_t &type, u
     // SOF0 marker - read to determine chroma subsampling
     if (marker == 0xC0) {
       if (i + 9 > len) return 0;
-      uint16_t sofLen = (jpeg[i] << 8) | jpeg[i + 1];
       // Byte 5 = number of components (should be 3 for YUV)
       // Bytes 6-8 = Y component (ID, H/V sampling, Q table)
       // Check Y component H/V sampling factor at offset i+6
@@ -316,8 +316,9 @@ static void handleDescribe(WiFiClient &client, int cseq) {
   sdp += "a=control:" + rtspUrl + "/track1\r\n";
   // Only advertise audio when the mic is enabled so clients don't SETUP a dead track.
   if (isMicEnabled()) {
-    sdp += "m=audio 0 RTP/AVP 0\r\n";
-    sdp += "a=rtpmap:0 PCMU/8000\r\n";
+    sdp += "m=audio 0 RTP/AVP 96\r\n";
+    sdp += "a=rtpmap:96 " + getAacSdpRtpmap() + "\r\n";
+    sdp += "a=fmtp:96 " + getAacSdpFmtp() + "\r\n";
     sdp += "a=control:" + rtspUrl + "/track2\r\n";
   }
 
@@ -761,50 +762,6 @@ static void sendRtpJpeg(RtspSession* session, camera_fb_t* fb) {
   }
 }
 
-// Mic capture runs at AUDIO_SAMPLE_RATE; RTSP advertises 8kHz PCMU.
-// Downsample to 8kHz and packetize 20ms frames (160 samples).
-static const uint32_t kAudioRtpSampleRate = 8000;
-static const size_t kAudioSamplesPerPacket = 160;  // 20ms at 8kHz
-static const size_t kMicSamplesPerPacket = (AUDIO_SAMPLE_RATE / kAudioRtpSampleRate) * kAudioSamplesPerPacket;
-
-static uint8_t linear2ulaw(int16_t pcm) {
-  static const int16_t seg_end[8] = {0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF, 0x3FFF, 0x7FFF};
-  int16_t mask;
-  int16_t seg;
-  uint8_t uval;
-
-  if (pcm < 0) {
-    pcm = -pcm;
-    mask = 0x7F;
-  } else {
-    mask = 0xFF;
-  }
-
-  if (pcm > 0x3FFF) {
-    pcm = 0x3FFF;
-  }
-
-  pcm += 0x84;
-  for (seg = 0; seg < 8; seg++) {
-    if (pcm <= seg_end[seg]) {
-      break;
-    }
-  }
-
-  if (seg >= 8) {
-    return static_cast<uint8_t>(0x7F ^ mask);
-  }
-
-  uval = (seg << 4) | ((pcm >> (seg + 3)) & 0x0F);
-  return static_cast<uint8_t>(uval ^ mask);
-}
-
-static void encodeUlaw(const int16_t *pcm, size_t samples, uint8_t *ulaw) {
-  for (size_t i = 0; i < samples; i++) {
-    ulaw[i] = linear2ulaw(pcm[i]);
-  }
-}
-
 static bool sendInterleaved(WiFiClient &client, uint8_t channel, const uint8_t *payload, size_t payloadLen) {
   uint8_t interleavedHeader[4];
   interleavedHeader[0] = '$';
@@ -817,29 +774,6 @@ static bool sendInterleaved(WiFiClient &client, uint8_t channel, const uint8_t *
   return headerWritten == 4 && payloadWritten == payloadLen;
 }
 
-static void downsampleTo8k(const int16_t *in, size_t inSamples, int16_t *out, size_t outSamples) {
-  if (AUDIO_SAMPLE_RATE == kAudioRtpSampleRate) {
-    size_t samplesToCopy = min(inSamples, outSamples);
-    memcpy(out, in, samplesToCopy * sizeof(int16_t));
-    if (samplesToCopy < outSamples) {
-      memset(out + samplesToCopy, 0, (outSamples - samplesToCopy) * sizeof(int16_t));
-    }
-    return;
-  }
-  size_t step = AUDIO_SAMPLE_RATE / kAudioRtpSampleRate;
-  if (step < 1) {
-    step = 1;
-  }
-  for (size_t i = 0; i < outSamples; i++) {
-    size_t idx = i * step;
-    if (idx < inSamples) {
-      out[i] = in[idx];
-    } else {
-      out[i] = 0;
-    }
-  }
-}
-
 static void sendRtpAudio(RtspSession* session) {
   if (!session || !session->isPlaying || !session->audioSetup) {
     return;
@@ -848,22 +782,16 @@ static void sendRtpAudio(RtspSession* session) {
     return;
   }
 
-  int16_t micBuffer[kMicSamplesPerPacket];
-  int16_t audioBuffer[kAudioSamplesPerPacket];
-  uint8_t ulawBuffer[kAudioSamplesPerPacket];
-
-  bool hasMic = !isMicMuted() && captureMicSamples(micBuffer, kMicSamplesPerPacket, 10);
-  if (hasMic) {
-    downsampleTo8k(micBuffer, kMicSamplesPerPacket, audioBuffer, kAudioSamplesPerPacket);
-    encodeUlaw(audioBuffer, kAudioSamplesPerPacket, ulawBuffer);
-  } else {
-    // G.711 mu-law "silence" is 0xFF; use it when muted or capture fails.
-    memset(ulawBuffer, 0xFF, sizeof(ulawBuffer));
+  static uint8_t rawFrame[2048];
+  static uint8_t rtpPacket[12 + 4 + 2048];
+  size_t rawLen = 0;
+  if (!getAacRawFrameFromMic(rawFrame, sizeof(rawFrame), rawLen)) {
+    return;
   }
 
-  uint8_t rtpPacket[12 + kAudioSamplesPerPacket];
+  const uint8_t payloadType = 96;
   rtpPacket[0] = 0x80;
-  rtpPacket[1] = 0x00;  // PT=0 (PCMU)
+  rtpPacket[1] = payloadType;
   rtpPacket[2] = (session->audioSequenceNumber >> 8) & 0xFF;
   rtpPacket[3] = session->audioSequenceNumber & 0xFF;
   rtpPacket[4] = (session->audioTimestamp >> 24) & 0xFF;
@@ -874,9 +802,16 @@ static void sendRtpAudio(RtspSession* session) {
   rtpPacket[9] = (session->audioSsrc >> 16) & 0xFF;
   rtpPacket[10] = (session->audioSsrc >> 8) & 0xFF;
   rtpPacket[11] = session->audioSsrc & 0xFF;
-  memcpy(rtpPacket + 12, ulawBuffer, kAudioSamplesPerPacket);
 
-  size_t packetLen = 12 + kAudioSamplesPerPacket;
+  // AU-headers-length = 16 bits, followed by 1 AU header (13-bit size + 3-bit index).
+  rtpPacket[12] = 0x00;
+  rtpPacket[13] = 0x10;
+  uint16_t auHeader = static_cast<uint16_t>((rawLen << 3) & 0xFFF8);
+  rtpPacket[14] = (auHeader >> 8) & 0xFF;
+  rtpPacket[15] = auHeader & 0xFF;
+  memcpy(rtpPacket + 16, rawFrame, rawLen);
+
+  size_t packetLen = 12 + 4 + rawLen;
   if (session->audioUseTcpInterleaved) {
     if (!sendInterleaved(session->client, session->interleavedAudioRtpChannel, rtpPacket, packetLen)) {
       logEvent(LOG_WARN, "⚠️ RTSP audio TCP write failed");
@@ -915,7 +850,7 @@ static void sendRtpAudio(RtspSession* session) {
   }
 
   session->audioSequenceNumber++;
-  session->audioTimestamp += kAudioSamplesPerPacket;
+  session->audioTimestamp += getAacFrameSamples();
 }
 
 bool startRtspServer() {
@@ -1227,10 +1162,17 @@ void handleRtspClient() {
         }
       }
 
-      // Send audio at 20ms cadence when enabled.
-      const unsigned long AUDIO_INTERVAL_MS = 20;
+      // Send AAC audio at one-frame cadence (1024 samples per frame).
+      AacStreamConfig aacCfg = getAacStreamConfig();
+      unsigned long audioIntervalMs = 64;
+      if (aacCfg.sampleRateHz > 0) {
+        audioIntervalMs = (getAacFrameSamples() * 1000UL) / aacCfg.sampleRateHz;
+      }
+      if (audioIntervalMs < 20) {
+        audioIntervalMs = 20;
+      }
       if (session->audioSetup && isMicEnabled()) {
-        if (now - session->lastAudioMs >= AUDIO_INTERVAL_MS) {
+        if (now - session->lastAudioMs >= audioIntervalMs) {
           sendRtpAudio(session);
           session->lastAudioMs = now;
           session->lastActivityMs = now;

@@ -184,8 +184,19 @@
                 <input type="range" id="mic_sensitivity" class="range-input" min="0" max="100" value="{{MIC_SENSITIVITY}}" data-unit="%">
                 <span class="range-value" id="micSensitivityValue">{{MIC_SENSITIVITY}}</span>
             </div>
+            <label><strong>AAC Stream Sample Rate</strong></label>
+            <select id="aac_sample_rate">
+                <option value="16" {{AAC_RATE_16_SELECTED}}>16 kHz (recommended)</option>
+                <option value="8" {{AAC_RATE_8_SELECTED}}>8 kHz (lower bandwidth)</option>
+            </select>
+
+            <label><strong>AAC Bitrate</strong></label>
+            <div class="range-wrap">
+                <input type="range" id="aac_bitrate" class="range-input" min="16" max="48" value="{{AAC_BITRATE}}" data-unit="kbps">
+                <span class="range-value" id="aacBitrateValue">{{AAC_BITRATE}}</span>
+            </div>
             <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                Preview mic capture at http://ESP32-IP/audio.wav (RTSP audio planned).
+                16 kHz supports 24–48 kbps, 8 kHz supports 16–32 kbps. Preview mic capture at http://ESP32-IP/audio.wav.
             </div>
 
             <div style="margin-top: 12px;">
@@ -326,6 +337,8 @@
                 mic_enabled: document.getElementById("mic_enabled").checked,
                 mic_muted: document.getElementById("mic_muted").checked,
                 mic_sensitivity: parseInt(document.getElementById("mic_sensitivity").value || "70", 10),
+                aac_sample_rate: parseInt(document.getElementById("aac_sample_rate").value || "16", 10),
+                aac_bitrate: parseInt(document.getElementById("aac_bitrate").value || "32", 10),
                 audio_out_enabled: document.getElementById("audio_out_enabled").checked,
                 audio_out_muted: document.getElementById("audio_out_muted").checked,
                 audio_out_volume: parseInt(document.getElementById("audio_out_volume").value || "70", 10)
@@ -364,6 +377,9 @@
         const scryptedInputArgsEl = document.getElementById("scrypted_input_args");
         const scryptedOutputPrefixEl = document.getElementById("scrypted_output_prefix");
         const micSensitivityValueEl = document.getElementById("micSensitivityValue");
+        const aacRateEl = document.getElementById("aac_sample_rate");
+        const aacBitrateEl = document.getElementById("aac_bitrate");
+        const aacBitrateValueEl = document.getElementById("aacBitrateValue");
         const audioOutVolumeValueEl = document.getElementById("audioOutVolumeValue");
         const otaStatusEl = document.getElementById("otaStatus");
         const otaUserEl = document.getElementById("ota_user");
@@ -419,6 +435,21 @@
             const update = () => updateRangeDisplay(input, label);
             input.addEventListener("input", update);
             update();
+        }
+
+        function applyAacBitrateBounds() {
+            if (!aacRateEl || !aacBitrateEl || !aacBitrateValueEl) return;
+            const rate = parseInt(aacRateEl.value || "16", 10);
+            const is8k = rate === 8;
+            const min = is8k ? 16 : 24;
+            const max = is8k ? 32 : 48;
+            aacBitrateEl.min = String(min);
+            aacBitrateEl.max = String(max);
+            let val = parseInt(aacBitrateEl.value || String(min), 10);
+            if (val < min) val = min;
+            if (val > max) val = max;
+            aacBitrateEl.value = String(val);
+            updateRangeDisplay(aacBitrateEl, aacBitrateValueEl);
         }
 
         function fetchOtaStatus() {
@@ -555,7 +586,13 @@
         bindRange("brightness", "brightnessValue");
         bindRange("contrast", "contrastValue");
         bindRange("mic_sensitivity", "micSensitivityValue");
+        bindRange("aac_bitrate", "aacBitrateValue");
         bindRange("audio_out_volume", "audioOutVolumeValue");
+
+        if (aacRateEl) {
+            aacRateEl.addEventListener("change", applyAacBitrateBounds);
+        }
+        applyAacBitrateBounds();
 
         function updateAudioUi() {
             const micEnabled = document.getElementById("mic_enabled").checked;

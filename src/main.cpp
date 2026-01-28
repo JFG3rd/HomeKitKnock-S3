@@ -12,7 +12,11 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <esp_err.h>
+#include <esp_partition.h>
+#include <nvs_flash.h>
 #include <string.h>
+#include <esp_littlefs.h>
 #include "wifi_ap.h"
 #include "config.h"
 #include "tr064_client.h"
@@ -21,6 +25,7 @@
 #include "cameraStream.h"
 #include "rtsp_server.h"
 #include "audio.h"
+#include "aac_stream.h"
 #include "logger.h"
 #include "ota_update.h"
 #include "version_info.h"
@@ -42,6 +47,8 @@ static const char *kFeatMicSensitivityKey = "mic_sens";
 static const char *kFeatAudioOutEnabledKey = "aud_en";
 static const char *kFeatAudioOutMutedKey = "aud_mute";
 static const char *kFeatAudioOutVolumeKey = "aud_vol";
+static const char *kFeatAacSampleRateKey = "aac_sr";
+static const char *kFeatAacBitrateKey = "aac_br";
 // NVS keys must be <= 15 chars; keep feature keys short.
 static const char *kFeatSipEnabledKey = "sip_en";
 static const char *kFeatTr064EnabledKey = "tr064_en";
@@ -72,6 +79,8 @@ uint8_t micSensitivity = DEFAULT_MIC_SENSITIVITY;
 bool audioOutEnabled = true;
 bool audioOutMuted = false;
 uint8_t audioOutVolume = DEFAULT_AUDIO_OUT_VOLUME;
+uint32_t aacSampleRate = 16000;
+uint32_t aacBitrate = 32000;
 String timezone = "PST8PDT,M3.2.0,M11.1.0";
 bool lastButtonPressed = false;
 unsigned long lastButtonChangeMs = 0;
@@ -84,14 +93,65 @@ static unsigned long gongRelayUntilMs = 0;
 static String dtmfBuffer;
 static unsigned long lastDtmfMs = 0;
 
-bool initFileSystem(AsyncWebServer &server) {
-  // Mount LittleFS and expose static assets for the UI.
-  if (!LittleFS.begin(true)) {
-    logEvent(LOG_ERROR, "❌ LittleFS mount failed");
+static bool formatLittlefsByLabel(const char *label) {
+  const esp_partition_t *part = esp_partition_find_first(
+      ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, label);
+  if (!part) {
+    logEvent(LOG_ERROR,
+             "❌ LittleFS partition not found: " + String(label));
     return false;
+  }
+  logEvent(LOG_INFO, "📦 LittleFS partition " + String(label) +
+                          " offset=0x" + String(part->address, HEX) +
+                          " size=" + String(part->size));
+  esp_err_t err = esp_littlefs_format_partition(part);
+  if (err != ESP_OK) {
+    logEvent(LOG_ERROR,
+             "❌ LittleFS format failed: " + String(esp_err_to_name(err)));
+    return false;
+  }
+  return true;
+}
+
+bool initFileSystem(AsyncWebServer &server) {
+  constexpr const char *kFsLabel = "littlefs";
+  // Mount LittleFS and expose static assets for the UI.
+  // Try WITHOUT auto-format first to avoid boot loop if format fails
+  if (!LittleFS.begin(false, "/littlefs", 10, kFsLabel)) {
+    logEvent(LOG_ERROR, "❌ LittleFS mount failed");
+    logEvent(LOG_WARN,
+             "⚠️ Web UI will not be available (filesystem required)");
+    logEvent(LOG_WARN,
+             "⚠️ Upload filesystem via 'pio run -t uploadfs' to fix");
+    // Don't attempt format - it causes boot loop with error 261
+    return false;
+  } else {
+    logEvent(LOG_INFO, "✅ LittleFS mounted");
   }
   server.serveStatic("/style.css", LittleFS, "/style.css");
   server.serveStatic("/favicon.ico", LittleFS, "/favicon.ico");
+  return true;
+}
+
+static bool initNvs() {
+  // Ensure NVS is ready before Preferences/Wi-Fi use it.
+  esp_err_t err = nvs_flash_init();
+  if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
+      err == ESP_ERR_NVS_NEW_VERSION_FOUND ||
+      err == ESP_ERR_NVS_INVALID_STATE) {
+    logEvent(LOG_WARN, "⚠️ NVS init failed, erasing...");
+    esp_err_t eraseErr = nvs_flash_erase();
+    if (eraseErr != ESP_OK) {
+      logEvent(LOG_ERROR,
+               "❌ NVS erase failed: " + String(esp_err_to_name(eraseErr)));
+      return false;
+    }
+    err = nvs_flash_init();
+  }
+  if (err != ESP_OK) {
+    logEvent(LOG_ERROR, "❌ NVS init failed: " + String(esp_err_to_name(err)));
+    return false;
+  }
   return true;
 }
 
@@ -150,8 +210,8 @@ static const uint8_t kLedDutyRtspTick = 200;
 static const int kStatusLedcChannel = 0;
 static const int kStatusLedcFreq = 5000;
 static const int kStatusLedcResolution = 8;
-static const uint8_t kStatusLedcMaxDuty = (1 << kStatusLedcResolution) - 1;
-static uint8_t lastLedDuty = 255;
+static const uint16_t kStatusLedcMaxDuty = (1 << kStatusLedcResolution) - 1;
+static uint16_t lastLedDuty = 255;
 static uint32_t ringLedUntilMs = 0;
 
 static void initStatusLed() {
@@ -160,7 +220,7 @@ static void initStatusLed() {
   ledcWrite(kStatusLedcChannel, STATUS_LED_ACTIVE_LOW ? kStatusLedcMaxDuty : 0);
 }
 
-static void setStatusLedDuty(uint8_t duty) {
+static void setStatusLedDuty(uint16_t duty) {
   if (duty > kStatusLedcMaxDuty) {
     duty = kStatusLedcMaxDuty;
   }
@@ -376,6 +436,12 @@ void setup() {
   initEventLog();
   logEvent(LOG_INFO, "\n\n🔔 ESP32-S3 Doorbell Starting...");
   logEvent(LOG_INFO, "====================================");
+  logEvent(LOG_INFO, "🧠 PSRAM total=" + String(ESP.getPsramSize()) +
+                     " bytes, free=" + String(ESP.getFreePsram()) + " bytes");
+
+  if (!initNvs()) {
+    logEvent(LOG_ERROR, "❌ NVS not ready; Wi-Fi/AP may fail.");
+  }
 
   // Mount filesystem early so both AP and normal mode can serve CSS.
   initFileSystem(server);
@@ -496,6 +562,8 @@ void setup() {
   ensureBoolPref(kFeatAudioOutEnabledKey, true);
   ensureBoolPref(kFeatAudioOutMutedKey, false);
   ensureUCharPref(kFeatAudioOutVolumeKey, DEFAULT_AUDIO_OUT_VOLUME);
+  ensureUCharPref(kFeatAacSampleRateKey, 16);
+  ensureUCharPref(kFeatAacBitrateKey, 32);
   ensureStringPref(kFeatTimezoneKey, "PST8PDT,M3.2.0,M11.1.0");  // Default: Pacific Time with auto DST
   bool httpEnabledPref = featPrefs.getBool(kFeatHttpCamEnabledKey, true);
   bool rtspEnabledPref = featPrefs.getBool(kFeatRtspEnabledKey, true);
@@ -524,18 +592,35 @@ void setup() {
   audioOutEnabled = featPrefs.getBool(kFeatAudioOutEnabledKey, true);
   audioOutMuted = featPrefs.getBool(kFeatAudioOutMutedKey, false);
   audioOutVolume = featPrefs.getUChar(kFeatAudioOutVolumeKey, DEFAULT_AUDIO_OUT_VOLUME);
+  uint8_t aacRateKHz = featPrefs.getUChar(kFeatAacSampleRateKey, 16);
+  uint8_t aacBitrateKbps = featPrefs.getUChar(kFeatAacBitrateKey, 32);
   featPrefs.end();
+
+  if (aacRateKHz != 8 && aacRateKHz != 16) {
+    aacRateKHz = 16;
+  }
+  if (aacRateKHz == 8) {
+    if (aacBitrateKbps < 16) aacBitrateKbps = 16;
+    if (aacBitrateKbps > 32) aacBitrateKbps = 32;
+  } else {
+    if (aacBitrateKbps < 24) aacBitrateKbps = 24;
+    if (aacBitrateKbps > 48) aacBitrateKbps = 48;
+  }
+  aacSampleRate = static_cast<uint32_t>(aacRateKHz) * 1000UL;
+  aacBitrate = static_cast<uint32_t>(aacBitrateKbps) * 1000UL;
   logEvent(LOG_INFO, "📋 Features loaded: SIP=" + String(sipEnabled) +
                      " TR-064=" + String(tr064Enabled) +
                      " HTTP=" + String(httpCamEnabled) +
                      " RTSP=" + String(rtspEnabled) +
-                     " HTTP max clients=" + String(httpCamMaxClients));
+                     " HTTP max clients=" + String(httpCamMaxClients) +
+                     " AAC=" + String(aacSampleRate / 1000) + "k@" + String(aacBitrate / 1000) + "kbps");
 
   #ifdef CAMERA
   setCameraStreamMaxClients(httpCamMaxClients);
   setRtspAllowUdp(scryptedRtspUdp);
   #endif
   configureAudio(micEnabled, micMuted, micSensitivity, audioOutEnabled, audioOutMuted, audioOutVolume);
+  setAacStreamConfig(aacSampleRate, aacBitrate);
 
   // Initialize status LED PWM (off until state machine runs).
   initStatusLed();
@@ -599,9 +684,9 @@ void setup() {
                         "</div>";
           if (micEnabled) {
             streamInfo += "<div class=\"flash-stats\">"
-                          "<strong>🎧 HTTP Audio (WAV):</strong>"
+                          "<strong>🎧 HTTP Audio (AAC):</strong>"
                           "<p style=\"font-family: monospace; font-size: 0.9em; word-break: break-all;\">"
-                          "http://" + WiFi.localIP().toString() + ":81/audio"
+                          "http://" + WiFi.localIP().toString() + ":81/audio.aac"
                           "</p>"
                           "</div>";
           } else {
@@ -799,6 +884,8 @@ void setup() {
         bool audio_out_enabled = prefs.getBool(kFeatAudioOutEnabledKey, true);
         bool audio_out_muted = prefs.getBool(kFeatAudioOutMutedKey, false);
         uint8_t audio_out_volume = prefs.getUChar(kFeatAudioOutVolumeKey, DEFAULT_AUDIO_OUT_VOLUME);
+        uint8_t aac_rate_khz = prefs.getUChar(kFeatAacSampleRateKey, 16);
+        uint8_t aac_bitrate_kbps = prefs.getUChar(kFeatAacBitrateKey, 32);
         String timezone = prefs.getString(kFeatTimezoneKey, "PST8PDT,M3.2.0,M11.1.0");
         prefs.end();
 
@@ -806,6 +893,17 @@ void setup() {
           http_cam_max_clients = 1;
         } else if (http_cam_max_clients > 4) {
           http_cam_max_clients = 4;
+        }
+
+        if (aac_rate_khz != 8 && aac_rate_khz != 16) {
+          aac_rate_khz = 16;
+        }
+        if (aac_rate_khz == 8) {
+          if (aac_bitrate_kbps < 16) aac_bitrate_kbps = 16;
+          if (aac_bitrate_kbps > 32) aac_bitrate_kbps = 32;
+        } else {
+          if (aac_bitrate_kbps < 24) aac_bitrate_kbps = 24;
+          if (aac_bitrate_kbps > 48) aac_bitrate_kbps = 48;
         }
 
         String page = loadUiTemplate("/setup.html");
@@ -826,6 +924,9 @@ void setup() {
         page.replace("{{MIC_ENABLED_CHECKED}}", mic_enabled ? "checked" : "");
         page.replace("{{MIC_MUTED_CHECKED}}", mic_muted ? "checked" : "");
         page.replace("{{MIC_SENSITIVITY}}", String(mic_sensitivity));
+        page.replace("{{AAC_RATE_8_SELECTED}}", aac_rate_khz == 8 ? "selected" : "");
+        page.replace("{{AAC_RATE_16_SELECTED}}", aac_rate_khz == 16 ? "selected" : "");
+        page.replace("{{AAC_BITRATE}}", String(aac_bitrate_kbps));
         page.replace("{{AUDIO_OUT_ENABLED_CHECKED}}", audio_out_enabled ? "checked" : "");
         page.replace("{{AUDIO_OUT_MUTED_CHECKED}}", audio_out_muted ? "checked" : "");
         page.replace("{{AUDIO_OUT_VOLUME}}", String(audio_out_volume));
@@ -959,6 +1060,15 @@ void setup() {
           int audio_out_volume = doc["audio_out_volume"].isNull()
             ? audioOutVolume
             : doc["audio_out_volume"].as<int>();
+          int aac_rate_khz = doc["aac_sample_rate"].isNull()
+            ? static_cast<int>(aacSampleRate / 1000)
+            : doc["aac_sample_rate"].as<int>();
+          int aac_bitrate_kbps = doc["aac_bitrate"].isNull()
+            ? static_cast<int>(aacBitrate / 1000)
+            : doc["aac_bitrate"].as<int>();
+          if (aac_rate_khz >= 1000) {
+            aac_rate_khz /= 1000;
+          }
           if (scrypted_source != "http" && scrypted_source != "rtsp") {
             scrypted_source = "http";
           }
@@ -982,6 +1092,16 @@ void setup() {
           if (audio_out_volume < 0) {
             audio_out_volume = 0;
           }
+          if (aac_rate_khz != 8 && aac_rate_khz != 16) {
+            aac_rate_khz = 16;
+          }
+          if (aac_rate_khz == 8) {
+            if (aac_bitrate_kbps < 16) aac_bitrate_kbps = 16;
+            if (aac_bitrate_kbps > 32) aac_bitrate_kbps = 32;
+          } else {
+            if (aac_bitrate_kbps < 24) aac_bitrate_kbps = 24;
+            if (aac_bitrate_kbps > 48) aac_bitrate_kbps = 48;
+          }
 
           Preferences prefs;
           prefs.begin("features", false);
@@ -1001,6 +1121,8 @@ void setup() {
           prefs.putBool(kFeatAudioOutEnabledKey, audio_out_enabled);
           prefs.putBool(kFeatAudioOutMutedKey, audio_out_muted);
           prefs.putUChar(kFeatAudioOutVolumeKey, static_cast<uint8_t>(audio_out_volume));
+          prefs.putUChar(kFeatAacSampleRateKey, static_cast<uint8_t>(aac_rate_khz));
+          prefs.putUChar(kFeatAacBitrateKey, static_cast<uint8_t>(aac_bitrate_kbps));
           prefs.putString(kFeatTimezoneKey, tz);
           prefs.end();
 
@@ -1021,12 +1143,15 @@ void setup() {
           audioOutEnabled = audio_out_enabled;
           audioOutMuted = audio_out_muted;
           audioOutVolume = static_cast<uint8_t>(audio_out_volume);
+          aacSampleRate = static_cast<uint32_t>(aac_rate_khz) * 1000UL;
+          aacBitrate = static_cast<uint32_t>(aac_bitrate_kbps) * 1000UL;
           timezone = tz;
           #ifdef CAMERA
           setCameraStreamMaxClients(httpCamMaxClients);
           setRtspAllowUdp(scryptedRtspUdp);
           #endif
           configureAudio(micEnabled, micMuted, micSensitivity, audioOutEnabled, audioOutMuted, audioOutVolume);
+          setAacStreamConfig(aacSampleRate, aacBitrate);
 
           String summary = "Feature settings saved: timezone=" + tz +
                            " SIP=" + String(sip_enabled ? "on" : "off") +
@@ -1045,6 +1170,7 @@ void setup() {
                            " audio-out=" + String(audio_out_enabled ? "on" : "off") +
                            " audio-mute=" + String(audio_out_muted ? "on" : "off") +
                            " audio-vol=" + String(audio_out_volume) +
+                           " aac=" + String(aac_rate_khz) + "k@" + String(aac_bitrate_kbps) + "kbps" +
                            ". Restarting ESP32...";
           logEvent(LOG_INFO, "✅ " + summary);
           request->send(200, "text/plain", summary);
@@ -1158,7 +1284,10 @@ void setup() {
       );
 
       server.on("/deviceStatus", HTTP_GET, [](AsyncWebServerRequest *request) {
-        String json = "{\"rssi\":" + String(WiFi.RSSI()) + ",\"uptimeSeconds\":" + String(millis() / 1000) + "}";
+        String json = "{\"rssi\":" + String(WiFi.RSSI()) +
+                      ",\"uptimeSeconds\":" + String(millis() / 1000) +
+                      ",\"psramTotal\":" + String(ESP.getPsramSize()) +
+                      ",\"psramFree\":" + String(ESP.getFreePsram()) + "}";
         request->send(200, "application/json", json);
       });
       #ifdef CAMERA

@@ -41,9 +41,9 @@ You can find this URL in the web UI under **Camera Settings** → **RTSP Stream 
 
 ## Audio Support
 
-- The RTSP stream advertises **PCMU/8000** audio when the mic feature is enabled in **Feature Setup**.
+- The RTSP stream advertises **AAC-LC (MPEG4-GENERIC)** audio when the mic feature is enabled in **Feature Setup**.
 - If the mic is disabled, the audio track is not advertised.
-- HTTP MJPEG remains video-only for Scrypted; a companion WAV audio stream is available at `http://ESP32-IP:81/audio` for browser testing.
+- HTTP MJPEG remains video-only for Scrypted; a companion AAC audio stream is available at `http://ESP32-IP:81/audio.aac` for browser testing.
 
 ## Scrypted Setup Instructions
 

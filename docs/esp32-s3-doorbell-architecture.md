@@ -18,7 +18,7 @@ Build a DIY Audio/Video doorbell using:
 	•	HomeKit Secure Video doorbell integration
 
 Objectives:
-	•	Stream video + audio from ESP32-S3 to Scrypted (RTSP), with HTTP MJPEG + WAV for browser preview
+	•	Stream video + audio from ESP32-S3 to Scrypted (RTSP), with HTTP MJPEG + AAC for browser preview
 	•	Trigger doorbell rings using a physical button → GPIO → HTTP webhook
 	•	Trigger FRITZ!Box SIP internal ring for a DECT phone group
 	•	Let Apple’s Home app handle:
@@ -75,7 +75,7 @@ is handled by the Home hub (Apple TV / HomePod), not by ESP32 or Scrypted.
 Preferred workflow:
 	•	VS Code
 	•	PlatformIO
-	•	Framework: Arduino (inside PlatformIO)
+	•	Framework: Arduino / ESP-ADF (inside PlatformIO)
 
 Board:
 
@@ -87,7 +87,7 @@ Key PlatformIO flags:
 
 Used with:
 	•	✅ RTSP streaming (Phase 1 - COMPLETE, includes audio)
-	•	✅ MJPEG HTTP streaming (Phase 1 - COMPLETE, companion WAV audio)
+	•	✅ MJPEG HTTP streaming (Phase 1 - COMPLETE, companion AAC audio)
 	•	Later upgrade to H.264 + WebRTC/two-way audio (Phase 2)
 
 ⸻
@@ -103,8 +103,8 @@ Components:
 	•	ESP32-S3 Sense running:
 	•	✅ RTSP server (port 8554) for Scrypted
 	•	✅ MJPEG HTTP stream (port 81) for browser
-	•	✅ RTSP audio (PCMU) from onboard mic
-	•	✅ HTTP WAV audio stream (port 81) for MJPEG companion audio
+	•	✅ RTSP audio (AAC-LC) from onboard mic
+	•	✅ HTTP AAC audio stream (port 81) for MJPEG companion audio
 	•	✅ Button GPIO input (debounced)
 	•	✅ SIP client for FRITZ!Box IP-phone registration (Digest auth)
 	•	✅ SIP INVITE/CANCEL for ringing internal phones
@@ -123,7 +123,7 @@ Expected result:
 	•	✅ FRITZ!Box DECT phones ring when button pressed
 	•	✅ Event appears in HSV timeline (if enabled)
 
-Audio streaming is now implemented for RTSP (PCMU) and a companion HTTP WAV stream. Use RTSP for Scrypted/HomeKit; the HTTP stream is for local browser/tools. Advanced A/V sync and two-way audio remain Phase 2.
+Audio streaming is now implemented for RTSP (AAC-LC) and a companion HTTP AAC stream. Use RTSP for Scrypted/HomeKit; the HTTP stream is for local browser/tools. SIP intercom audio still uses PCMU/PCMA. Advanced A/V sync and two-way audio remain Phase 2.
 
 ⸻
 
@@ -133,8 +133,8 @@ Goal:
 	•	Improve A/V sync, codec efficiency, and enable talk-back audio
 
 Approach:
-	•	Evaluate H.264 + AAC over RTSP or a WebRTC pipeline
-	•	Consider ESP-IDF / ESP-ADF for an integrated A/V pipeline
+	•	Evaluate H.264 + WebRTC pipeline for two‑way A/V
+	•	Keep ESP‑ADF for AAC encode/decode and future audio processing
 	•	Add two-way audio (speaker + mic) and echo handling
 
 ⸻
@@ -152,9 +152,9 @@ Notes:
 	•	MAX98357A I2S DAC: GPIO7 = BCLK, GPIO8 = LRCLK/WS, GPIO9 = DIN (I2S1 TX)
 	•	MAX98357A SC/SD: tie to 3V3 (always on)
 	•	GPIO7/8/9 are default SPI pins; avoid SPI on those pins or remap if needed
-	•	Feature setup exposes mic enable/mute + sensitivity and audio out enable/mute + volume
-	•	HTTP audio preview: http://ESP32-IP/audio.wav
-	•	Continuous HTTP audio (MJPEG companion): http://ESP32-IP:81/audio
+	•	Feature setup exposes mic enable/mute + sensitivity, AAC sample-rate/bitrate, and audio out enable/mute + volume
+	•	HTTP audio preview (WAV): http://ESP32-IP/audio.wav
+	•	Continuous HTTP audio (AAC): http://ESP32-IP:81/audio.aac
 	•	Browser A/V page: http://ESP32-IP/live
 	•	SIP intercom audio: RTP on UDP port 40000 (PCMU/PCMA + DTMF)
 	•	Local gong playback uses `/gong.pcm` from LittleFS when present
@@ -265,9 +265,10 @@ Current direction:
 	•	RTSP handling runs on core 1 task
 	•	Main loop remains lightweight (SIP/TR-064, button debounce)
 
-Future audio plan:
+Current audio plan:
 	•	I2S mic capture + DAC playback on core 1
-	•	Avoid heavy CPU work on Wi-Fi core to reduce jitter
+	•	AAC encode tasks pinned to core 1 via ESP‑ADF
+	•	Avoid heavy CPU work on Wi‑Fi core to reduce jitter
 
 ⸻
 
@@ -332,7 +333,7 @@ After MVP works:
 	•	AC detector vs dry contact + relay
 	•	Confirm I2C sensor selection + pull-up values
 	•	Confirm DECT group number and FRITZ!Box SIP account settings
-	•	Decide target RTSP audio codec (AAC vs G.711)
+	•	Tune AAC sample-rate/bitrate defaults for best quality vs bandwidth
 	•	Verify I2S pin mapping for mic + MAX98357A on hardware (GPIO42/41 + GPIO7/8/9)
 	•	Confirm speaker power + enclosure placement
 	•	Evaluate latency + HomeKit experience

@@ -23,7 +23,7 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
 void stopAPMode();
 // Attempt STA connection with stored SSID/pass.
 void attemptWiFiConnection(const String& ssid, const String& password);
-// Build the WiFi + TR-064 setup HTML page.
+// Build the WiFi setup HTML page.
 String generateWiFiSetupPage();
 // Expose current AP mode state to main loop.
 bool isAPModeActive();

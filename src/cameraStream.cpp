@@ -15,15 +15,12 @@
 #include "logger.h"
 #include "config.h"
 #include "audio.h"
+#include "aac_stream.h"
 
 #define PART_BOUNDARY "123456789000000000000987654321"
 static const char *kStreamContentType = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
 static const char *kStreamBoundary = "\r\n--" PART_BOUNDARY "\r\n";
 static const char *kStreamPartHeader = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
-static const uint16_t kAudioStreamChannels = 1;
-static const uint32_t kAudioStreamDataBytes = 0x7fffffff;
-static const size_t kAudioSamplesPerChunk = 512;
-
 static const uint8_t kStreamPort = 81;
 static const uint8_t kClientSlots = 4;
 
@@ -66,39 +63,12 @@ static void sendStreamHeaders(WiFiClient &client) {
     client.print("Connection: close\r\n\r\n");
 }
 
-static void writeWavStreamHeader(WiFiClient &client,
-                                 uint32_t sampleRate,
-                                 uint16_t bitsPerSample,
-                                 uint16_t channels) {
-    uint32_t dataBytes = kAudioStreamDataBytes;
-    uint32_t byteRate = sampleRate * channels * bitsPerSample / 8;
-    uint16_t blockAlign = channels * bitsPerSample / 8;
-    uint32_t chunkSize = 36 + dataBytes;
-
-    client.write(reinterpret_cast<const uint8_t *>("RIFF"), 4);
-    client.write(reinterpret_cast<const uint8_t *>(&chunkSize), 4);
-    client.write(reinterpret_cast<const uint8_t *>("WAVE"), 4);
-    client.write(reinterpret_cast<const uint8_t *>("fmt "), 4);
-    uint32_t subchunk1Size = 16;
-    uint16_t audioFormat = 1;
-    client.write(reinterpret_cast<const uint8_t *>(&subchunk1Size), 4);
-    client.write(reinterpret_cast<const uint8_t *>(&audioFormat), 2);
-    client.write(reinterpret_cast<const uint8_t *>(&channels), 2);
-    client.write(reinterpret_cast<const uint8_t *>(&sampleRate), 4);
-    client.write(reinterpret_cast<const uint8_t *>(&byteRate), 4);
-    client.write(reinterpret_cast<const uint8_t *>(&blockAlign), 2);
-    client.write(reinterpret_cast<const uint8_t *>(&bitsPerSample), 2);
-    client.write(reinterpret_cast<const uint8_t *>("data"), 4);
-    client.write(reinterpret_cast<const uint8_t *>(&dataBytes), 4);
-}
-
 static void sendAudioHeaders(WiFiClient &client) {
     client.print("HTTP/1.1 200 OK\r\n");
     client.print("Access-Control-Allow-Origin: *\r\n");
     client.print("Cache-Control: no-store\r\n");
-    client.print("Content-Type: audio/wav\r\n");
+    client.print("Content-Type: audio/aac\r\n");
     client.print("Connection: close\r\n\r\n");
-    writeWavStreamHeader(client, AUDIO_SAMPLE_RATE, AUDIO_SAMPLE_BITS, kAudioStreamChannels);
 }
 
 static StreamRequestType parseStreamRequest(WiFiClient &client) {
@@ -106,7 +76,7 @@ static StreamRequestType parseStreamRequest(WiFiClient &client) {
     String requestLine = client.readStringUntil('\n');
     requestLine.trim();
     bool isStream = requestLine.startsWith("GET /stream");
-    bool isAudio = requestLine.startsWith("GET /audio");
+    bool isAudio = requestLine.startsWith("GET /audio") || requestLine.startsWith("GET /audio.aac");
 
     // Drain the remaining HTTP headers so the socket is ready for streaming.
     while (client.connected()) {
@@ -255,19 +225,19 @@ static void stream_client_task(void *pvParameters) {
 
         sendAudioHeaders(*client);
 
-        int16_t samples[kAudioSamplesPerChunk];
-        const size_t bytesPerChunk = sizeof(samples);
-
         while (stream_server_running && client->connected()) {
             if (!isMicEnabled()) {
                 break;
             }
-            bool ok = captureMicSamples(samples, kAudioSamplesPerChunk, 80);
-            if (!ok) {
-                memset(samples, 0, bytesPerChunk);
+            uint8_t aacFrame[2048];
+            size_t aacLen = 0;
+            bool ok = getAacAdtsFrameFromMic(aacFrame, sizeof(aacFrame), aacLen);
+            if (!ok || aacLen == 0) {
+                vTaskDelay(1);
+                continue;
             }
-            size_t written = client->write(reinterpret_cast<const uint8_t *>(samples), bytesPerChunk);
-            if (written != bytesPerChunk) {
+            size_t written = client->write(aacFrame, aacLen);
+            if (written != aacLen) {
                 break;
             }
 

@@ -1235,7 +1235,7 @@ static bool responseMatches(const String& response, const String& callID, uint32
 }
 
 // Wait for a matching SIP response for a specific Call-ID/CSeq/method.
-static String waitForMatchingSipResponse(const String& callID, uint32_t cseq, const char* method, unsigned long timeoutMs = 2000) {
+static String __attribute__((unused)) waitForMatchingSipResponse(const String& callID, uint32_t cseq, const char* method, unsigned long timeoutMs = 2000) {
   unsigned long start = millis();
   while (millis() - start < timeoutMs) {
     int packetSize = sipUdp.parsePacket();
@@ -1265,7 +1265,7 @@ static bool isSuccess(const String& response) {
   return response.startsWith("SIP/2.0 2");
 }
 
-static bool isProvisional(const String& response) {
+static bool __attribute__((unused)) isProvisional(const String& response) {
   return response.startsWith("SIP/2.0 1");
 }
 
@@ -1301,7 +1301,7 @@ static uint8_t linear2ulaw(int16_t pcm) {
   return static_cast<uint8_t>(uval ^ mask);
 }
 
-static uint8_t linear2alaw(int16_t pcm) {
+static uint8_t linear2alaw(int32_t pcm) {
   static const int16_t seg_end[8] = {0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF, 0x3FFF, 0x7FFF};
   int16_t mask;
   int16_t seg;

@@ -15,6 +15,23 @@ static std::vector<String> cachedSSIDs;
 static unsigned long lastScanMs = 0;
 static bool scanInProgress = false;
 
+static String escapeHtml(const String &input) {
+    String out;
+    out.reserve(input.length());
+    for (size_t i = 0; i < input.length(); i++) {
+        char c = input[i];
+        switch (c) {
+            case '&': out += "&amp;"; break;
+            case '<': out += "&lt;"; break;
+            case '>': out += "&gt;"; break;
+            case '"': out += "&quot;"; break;
+            case '\'': out += "&#39;"; break;
+            default: out += c; break;
+        }
+    }
+    return out;
+}
+
 // Kick off or complete an async scan and refresh cached results when ready.
 static void refreshWiFiScanCache() {
     // If a scan is already running, poll for completion.
@@ -51,7 +68,7 @@ static void refreshWiFiScanCache() {
     // If no scan has run recently, start a new async scan.
     unsigned long nowMs = millis();
     if (!scanInProgress && (nowMs - lastScanMs > 15000)) {
-        WiFi.scanNetworks(true);
+        WiFi.scanNetworks(true, true);
         scanInProgress = true;
     }
 }
@@ -59,7 +76,7 @@ static void refreshWiFiScanCache() {
 // Force a new async scan on demand.
 static void triggerWiFiRescan() {
     WiFi.scanDelete();
-    WiFi.scanNetworks(true);
+    WiFi.scanNetworks(true, true);
     scanInProgress = true;
     lastScanMs = 0;
 }
@@ -93,7 +110,8 @@ static String loadUiTemplate(const char *path) {
 static String buildSsidOptions() {
     String options;
     for (size_t i = 0; i < cachedSSIDs.size(); i++) {
-        options += "            <option value='" + cachedSSIDs[i] + "'>" + cachedSSIDs[i] + "</option>\n";
+        String safeSsid = escapeHtml(cachedSSIDs[i]);
+        options += "            <option value=\"" + safeSsid + "\">" + safeSsid + "</option>\n";
     }
 
     if (cachedSSIDs.empty()) {
@@ -121,6 +139,7 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
     WiFi.disconnect(true, true);
     delay(100);
     WiFi.mode(WIFI_AP_STA);
+    WiFi.setSleep(false);
 
     bool apStarted = WiFi.softAP(AP_SSID);
     if (!apStarted) {
@@ -131,6 +150,7 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
 
     apMode = true;
     dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+    triggerWiFiRescan();
 
     Serial.printf("📡 AP Mode Active. Connect to: %s\n", WiFi.softAPIP().toString().c_str());
     Serial.printf("    SSID: %s\n", AP_SSID);
@@ -141,7 +161,7 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
         request->redirect("/wifiSetup");
     });
 
-    // WiFi + TR-064 setup page.
+    // WiFi setup page.
     server.on("/wifiSetup", HTTP_GET, [](AsyncWebServerRequest *request) {
         String page = generateWiFiSetupPage();
         if (page.isEmpty()) {
@@ -150,6 +170,18 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
         }
         request->send(200, "text/html", page);
     });
+
+    // Captive portal helpers for iOS/macOS/Android/Windows.
+    auto redirectToSetup = [](AsyncWebServerRequest *request) {
+        request->redirect("/wifiSetup");
+    };
+    server.on("/hotspot-detect.html", HTTP_GET, redirectToSetup);
+    server.on("/library/test/success.html", HTTP_GET, redirectToSetup);
+    server.on("/generate_204", HTTP_GET, redirectToSetup);
+    server.on("/gen_204", HTTP_GET, redirectToSetup);
+    server.on("/ncsi.txt", HTTP_GET, redirectToSetup);
+    server.on("/connecttest.txt", HTTP_GET, redirectToSetup);
+    server.on("/wpad.dat", HTTP_GET, redirectToSetup);
 
     // WiFi status endpoint for troubleshooting/UX.
     server.on("/wifiStatus", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -160,6 +192,21 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
         doc["apMode"] = apMode;
         doc["apIP"] = WiFi.softAPIP().toString();
 
+        String jsonResponse;
+        serializeJson(doc, jsonResponse);
+        request->send(200, "application/json", jsonResponse);
+    });
+
+    // WiFi scan results for dynamic UI refresh.
+    server.on("/wifiScanResults", HTTP_GET, [](AsyncWebServerRequest *request) {
+        refreshWiFiScanCache();
+        JsonDocument doc;
+        doc["inProgress"] = scanInProgress;
+        doc["lastScanMs"] = lastScanMs;
+        JsonArray ssids = doc["ssids"].to<JsonArray>();
+        for (const auto &ssid : cachedSSIDs) {
+            ssids.add(ssid);
+        }
         String jsonResponse;
         serializeJson(doc, jsonResponse);
         request->send(200, "application/json", jsonResponse);
@@ -247,6 +294,14 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
     server.on("/scanWifi", HTTP_GET, [](AsyncWebServerRequest *request) {
         triggerWiFiRescan();
         request->send(200, "text/plain", "WiFi scan started");
+    });
+
+    server.onNotFound([](AsyncWebServerRequest *request) {
+        if (isAPModeActive()) {
+            request->redirect("/wifiSetup");
+            return;
+        }
+        request->send(404, "text/plain", "Not found");
     });
 
     server.begin();
