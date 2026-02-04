@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 
 #include "embedded_index.h"
 #include "embedded_style.h"
@@ -15,6 +16,7 @@
 #include "embedded_ota.h"
 #include "embedded_sip.h"
 #include "embedded_tr064.h"
+#include "embedded_logs.h"
 #include "embedded_logs-doorbell.h"
 #include "embedded_logs-camera.h"
 
@@ -27,7 +29,7 @@ struct EmbeddedFile {
 };
 
 // Registry of all embedded files
-const EmbeddedFile PROGMEM embedded_files[] = {
+const struct EmbeddedFile embedded_files[] = {
     {"index.html", index_data, index_size, index_mime},
     {"style.css", style_data, style_size, style_mime},
     {"setup.html", setup_data, setup_size, setup_mime},
@@ -37,18 +39,19 @@ const EmbeddedFile PROGMEM embedded_files[] = {
     {"ota.html", ota_data, ota_size, ota_mime},
     {"sip.html", sip_data, sip_size, sip_mime},
     {"tr064.html", tr064_data, tr064_size, tr064_mime},
+    {"logs.html", logs_data, logs_size, logs_mime},
     {"logs-doorbell.html", logs_doorbell_data, logs_doorbell_size, logs_doorbell_mime},
     {"logs-camera.html", logs_camera_data, logs_camera_size, logs_camera_mime}
 };
 
-const size_t embedded_files_count = 11;
+const size_t embedded_files_count = 12;
 
 // Helper function to find file by name
-inline const EmbeddedFile* find_embedded_file(const char* filename) {
+static inline const struct EmbeddedFile* find_embedded_file(const char* filename) {
     for (size_t i = 0; i < embedded_files_count; i++) {
-        if (strcmp_P(filename, (const char*)pgm_read_ptr(&embedded_files[i].filename)) == 0) {
+        if (strcmp(filename, embedded_files[i].filename) == 0) {
             return &embedded_files[i];
         }
     }
-    return nullptr;
+    return NULL;
 }

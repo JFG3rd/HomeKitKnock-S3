@@ -110,7 +110,7 @@
                     manualSsid.value = "";
                 }
             });
-            pollWifiScanResults(2);
+            pollWifiScanResults(8);
         });
     </script>
 </head>
@@ -126,7 +126,7 @@
         </select>
         
         <label><strong>Or Enter SSID Manually:</strong></label>
-        <input type="text" id="manual_ssid" placeholder="Enter SSID (if hidden)" autocapitalize="none" autocorrect="off" spellcheck="false">
+        <input type="text" id="manual_ssid" placeholder="Enter SSID (if hidden)" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
         
         <label><strong>Password:</strong></label>
         <input type="password" id="password" placeholder="Enter Wi-Fi Password" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="new-password">

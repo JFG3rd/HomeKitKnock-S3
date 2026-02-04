@@ -1,5 +1,10 @@
 ESP32-FritzBox-SIP-Doorbell.md
-1. Correct ESP32 SIP INVITE with full digest auth
+
+⚠️ **STATUS:** SIP code complete and compiles, but cannot test due to NVS boot loop preventing WiFi initialization. See [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md) for details on current blocker.
+
+---
+
+## 1. Correct ESP32 SIP INVITE with full digest auth
 1.1 Initial unauthenticated INVITE
 
 INVITE sip:**11@fritz.box SIP/2.0

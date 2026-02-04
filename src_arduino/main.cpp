@@ -14,6 +14,7 @@
 #include <esp_err.h>
 #include <esp_partition.h>
 #include <nvs_flash.h>
+#include <nvs.h>
 #include <string.h>
 #include "wifi_ap.h"
 #include "config.h"
@@ -109,22 +110,61 @@ bool initFileSystem(AsyncWebServer &server) {
 static bool initNvs() {
   // Ensure NVS is ready before Preferences/Wi-Fi use it.
   esp_err_t err = nvs_flash_init();
+  // ESP_ERR_NVS_CORRUPT = 0x110e = 4366; also handle 4363 (0x110b = wifi osi_nvs_open fail)
   if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
       err == ESP_ERR_NVS_NEW_VERSION_FOUND ||
-      err == ESP_ERR_NVS_INVALID_STATE) {
-    logEvent(LOG_WARN, "⚠️ NVS init failed, erasing...");
+      err == ESP_ERR_NVS_INVALID_STATE ||
+      err == 0x110e ||  // ESP_ERR_NVS_CORRUPT
+      err == 0x110b) {  // NVS corruption variant (4363)
+    logEvent(LOG_WARN, "⚠️ NVS init failed (0x" + String(err, HEX) + "), performing deep erase...");
+    
+    // Physical partition erase for severe corruption (fixes WiFi osi_nvs_open error 4363)
+    const esp_partition_t* nvs_partition = esp_partition_find_first(
+      ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, "nvs");
+    
+    if (nvs_partition != NULL) {
+      logEvent(LOG_INFO, "🔧 Physically erasing NVS partition...");
+      esp_err_t erase_err = esp_partition_erase_range(nvs_partition, 0, nvs_partition->size);
+      if (erase_err != ESP_OK) {
+        logEvent(LOG_ERROR, "❌ Physical erase failed: " + String(esp_err_to_name(erase_err)));
+        return false;
+      }
+      logEvent(LOG_INFO, "✅ NVS partition physically erased");
+    }
+    
+    // Now do standard NVS erase and reinit
     esp_err_t eraseErr = nvs_flash_erase();
     if (eraseErr != ESP_OK) {
-      logEvent(LOG_ERROR,
-               "❌ NVS erase failed: " + String(esp_err_to_name(eraseErr)));
+      logEvent(LOG_ERROR, "❌ NVS erase failed: " + String(esp_err_to_name(eraseErr)));
       return false;
     }
+    
+    delay(500);
     err = nvs_flash_init();
+    
+    // Retry if needed
+    if (err != ESP_OK) {
+      logEvent(LOG_WARN, "⚠️ First reinit failed, retrying...");
+      delay(500);
+      err = nvs_flash_init();
+    }
   }
+  
   if (err != ESP_OK) {
     logEvent(LOG_ERROR, "❌ NVS init failed: " + String(esp_err_to_name(err)));
     return false;
   }
+  
+  // CRITICAL: Force NVS to commit initial structure before WiFi tries to use it
+  // Create and immediately close a dummy namespace to ensure NVS is fully initialized
+  nvs_handle_t dummy_handle;
+  esp_err_t commit_err = nvs_open("init_commit", NVS_READWRITE, &dummy_handle);
+  if (commit_err == ESP_OK) {
+    nvs_commit(dummy_handle);
+    nvs_close(dummy_handle);
+  }
+  
+  logEvent(LOG_INFO, "✅ NVS initialized successfully");
   return true;
 }
 
@@ -413,27 +453,52 @@ void setup() {
     logEvent(LOG_ERROR, "❌ NVS not ready; Wi-Fi/AP may fail.");
   }
 
+  // Give NVS and WiFi stack time to fully stabilize after initialization
+  delay(1000);
+
   // Mount filesystem early so both AP and normal mode can serve CSS.
   initFileSystem(server);
 
-  // Load TR-064 config once at boot; UI can update it later.
-  loadTr064Config(tr064Config);
-  
-  // Load SIP config once at boot; UI can update it later.
-  loadSipConfig(sipConfig);
+  // Check if NVS is usable - if not, skip all preference loading and use safe defaults
+  Preferences nvsTest;
+  bool nvsAccessible = nvsTest.begin("nvs_check", false);  // Try read-write to test creation
+  if (nvsAccessible) {
+    nvsTest.end();
+  }
 
-  // Initialize feature toggles with defaults if not already set
-  Preferences featPrefs;
-  if (!featPrefs.begin("features", false)) {
-    logEvent(LOG_WARN, "⚠️ Failed to open features namespace, creating...");
-  }
-  bool audioPrefsMigrated = false;
-  if (!featPrefs.isKey(kFeatMicEnabledKey) && featPrefs.isKey("mic_enabled")) {
-    featPrefs.putBool(kFeatMicEnabledKey, featPrefs.getBool("mic_enabled", false));
-    featPrefs.remove("mic_enabled");
-    audioPrefsMigrated = true;
-  }
-  if (!featPrefs.isKey(kFeatMicMutedKey) && featPrefs.isKey("mic_muted")) {
+  if (nvsAccessible) {
+    // NVS is accessible, proceed with normal config loading
+    // Load TR-064 config once at boot; UI can update it later.
+    loadTr064Config(tr064Config);
+    
+    // Load SIP config once at boot; UI can update it later.
+    loadSipConfig(sipConfig);
+
+    // Initialize feature toggles with defaults if not already set
+    Preferences featPrefs;
+    bool featPrefsOpened = featPrefs.begin("features", false);
+    
+    if (!featPrefsOpened) {
+      logEvent(LOG_WARN, "⚠️ Failed to open features namespace");
+      // If we can't open preferences, use safe defaults
+      sipEnabled = false;
+      tr064Enabled = false;
+      httpCamEnabled = false;
+      rtspEnabled = false;
+      micEnabled = false;
+      audioOutEnabled = false;
+      httpCamMaxClients = 2;
+      aacSampleRate = 16000;
+      aacBitrate = 32000;
+    } else {
+      // Features namespace opened successfully - proceed with migration and loading
+      bool audioPrefsMigrated = false;
+      if (!featPrefs.isKey(kFeatMicEnabledKey) && featPrefs.isKey("mic_enabled")) {
+        featPrefs.putBool(kFeatMicEnabledKey, featPrefs.getBool("mic_enabled", false));
+        featPrefs.remove("mic_enabled");
+        audioPrefsMigrated = true;
+      }
+      if (!featPrefs.isKey(kFeatMicMutedKey) && featPrefs.isKey("mic_muted")) {
     featPrefs.putBool(kFeatMicMutedKey, featPrefs.getBool("mic_muted", false));
     featPrefs.remove("mic_muted");
     audioPrefsMigrated = true;
@@ -578,7 +643,23 @@ void setup() {
   }
   aacSampleRate = static_cast<uint32_t>(aacRateKHz) * 1000UL;
   aacBitrate = static_cast<uint32_t>(aacBitrateKbps) * 1000UL;
-  logEvent(LOG_INFO, "📋 Features loaded: SIP=" + String(sipEnabled) +
+    }  // End else block (featPrefsOpened == true)
+    featPrefs.end();
+  } else {
+    // NVS not accessible - use safe defaults
+    logEvent(LOG_WARN, "⚠️ NVS not accessible - using safe defaults (all features disabled)");
+    sipEnabled = false;
+    tr064Enabled = false;
+    httpCamEnabled = false;
+    rtspEnabled = false;
+    micEnabled = false;
+    audioOutEnabled = false;
+    httpCamMaxClients = 2;
+    aacSampleRate = 16000;
+    aacBitrate = 32000;
+  }  // End if (nvsAccessible)
+  
+  logEvent(LOG_INFO, "📋 Features: SIP=" + String(sipEnabled) +
                      " TR-064=" + String(tr064Enabled) +
                      " HTTP=" + String(httpCamEnabled) +
                      " RTSP=" + String(rtspEnabled) +

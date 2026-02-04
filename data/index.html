@@ -38,7 +38,7 @@
                 </div>
                 <div class="info-item">
                     <span class="info-label">IP Address:</span>
-                    <span class="info-value">{{LOCAL_IP}}</span>
+                    <span class="info-value" id="ipAddress">--</span>
                 </div>
                 <div class="info-item">
                     <span class="info-label">Version:</span>
@@ -62,10 +62,10 @@
                 </div>
             </div>
             <hr>
-            <button class="danger-btn" title="Clear saved WiFi credentials and reboot into AP mode." onclick="location.href='/forget';">Forget WiFi</button>
+            <button class="danger-btn" title="Clear saved WiFi credentials and reboot into AP mode." onclick="forgetWifi()">Forget WiFi</button>
             <div class="button-row button-grid" style="margin-top: 12px;">
                 <a class="button btn-nav" href="/setup" title="Configure features, streams, and Scrypted options.">⚙️ Feature Setup</a>
-                <button class="button danger-btn" title="Reboot the ESP32 device." onclick="location.href='/restart';">🔄 Restart</button>
+                <button class="button danger-btn" title="Reboot the ESP32 device." onclick="restartDevice()">🔄 Restart</button>
             </div>
         </div>
 
@@ -144,10 +144,10 @@
             </div>
             <hr>
             <div class="button-row button-grid">
-                <a class="button btn-info" href="/logs/camera" target="_blank" title="Open filtered camera/streaming logs.">📹 Camera Logs</a>
-                <a class="button btn-info" href="/logs/doorbell" target="_blank" title="Open filtered doorbell/SIP/TR-064 logs.">☎️ Doorbell Logs</a>
-                <button class="button danger-btn" title="Reset the RTSP UDP fail counter." onclick="resetRtspUdpFails()">♻️ Reset UDP Fail Count</button>
-                <button class="button danger-btn" title="Clear active RTSP UDP backoff state." onclick="resetRtspUdpBackoff()">🧹 Clear UDP Backoff</button>
+                <a class="button btn-info" href="/logs.html" title="View all system logs.">All Logs</a>
+                <a class="button btn-info" href="/logs.html?filter=core" title="View core system logs (WiFi, NVS, web server).">Core Logs</a>
+                <a class="button btn-info" href="/logs.html?filter=camera" title="View camera/streaming logs.">Camera Logs</a>
+                <a class="button btn-info" href="/logs.html?filter=doorbell" title="View doorbell/SIP logs.">Doorbell Logs</a>
             </div>
         </div>
     </div>
@@ -156,6 +156,7 @@
         const statusEl = document.getElementById("cameraStatus");
         const trStatusEl = document.getElementById("tr064Status");
         const darkToggle = document.getElementById("darkModeToggle");
+        const ipAddressEl = document.getElementById("ipAddress");
         const rssiEl = document.getElementById("rssi");
         const uptimeEl = document.getElementById("uptime");
         const wifiConnectedEl = document.getElementById("wifiConnected");
@@ -345,22 +346,64 @@
         }
 
         function fetchDeviceStatus() {
-            fetch("/deviceStatus")
+            fetch("/api/status")
                 .then(r => r.json())
                 .then(data => {
-                    rssiEl.textContent = data.rssi;
-                    uptimeEl.textContent = formatUptime(data.uptimeSeconds || 0);
+                    // Update system info fields
+                    ipAddressEl.textContent = data.ip || "--";
+                    rssiEl.textContent = data.rssi || "--";
+                    uptimeEl.textContent = formatUptime(data.uptime || 0);
                     wifiConnectedEl.textContent = formatDateTime(wifiConnectTime);
-                    metricPsramTotalEl.textContent = formatBytes(data.psramTotal);
-                    metricPsramFreeEl.textContent = formatBytes(data.psramFree);
+
+                    // Update PSRAM metrics
+                    metricPsramTotalEl.textContent = formatBytes(data.psram_total);
+                    metricPsramFreeEl.textContent = formatBytes(data.psram_free);
                 })
                 .catch(() => {
+                    ipAddressEl.textContent = "--";
                     rssiEl.textContent = "--";
                     uptimeEl.textContent = "--";
                     wifiConnectedEl.textContent = "--";
                     metricPsramTotalEl.textContent = "--";
                     metricPsramFreeEl.textContent = "--";
                 });
+        }
+
+        function forgetWifi() {
+            if (!confirm("Are you sure you want to clear WiFi credentials? The device will reboot into AP mode.")) {
+                return;
+            }
+
+            fetch("/api/wifi", { method: "DELETE" })
+                .then(r => {
+                    if (!r.ok) {
+                        throw new Error("HTTP " + r.status);
+                    }
+                    return r.json();
+                })
+                .then(data => {
+                    if (data.success) {
+                        alert("WiFi credentials cleared. Device will restart now.");
+                        setTimeout(() => {
+                            location.href = "/restart";
+                        }, 1000);
+                    } else {
+                        alert("Failed to clear WiFi credentials: " + (data.message || "Unknown error"));
+                    }
+                })
+                .catch((err) => {
+                    alert("Failed to clear WiFi credentials: " + err.message);
+                    console.error("Forget WiFi error:", err);
+                });
+        }
+
+        function restartDevice() {
+            if (!confirm("Are you sure you want to restart the device?")) {
+                return;
+            }
+
+            alert("Device restarting...");
+            location.href = "/restart";
         }
 
         async function testRingSip() {

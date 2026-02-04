@@ -2,173 +2,229 @@
  Project: HomeKitKnock-S3
  File: docs/IMPLEMENTATION_SUMMARY.md
  Author: Jesse Greene
+ Last Updated: February 4, 2026
  -->
 
-# ESP32-S3 Doorbell - Complete Implementation Summary
+# ESP32-S3 Doorbell - Implementation Summary
 
-[View full implementation details in this document]
+## Project Status: ESP-IDF Migration Phase 2 Complete ✅
 
-## ✅ Project Status: Phase 1 Complete (Audio Companion Stream Added)
-
-All Phase 1 objectives have been implemented, including RTSP audio and a continuous HTTP AAC companion stream.
-
-### What's Working Now
-
-✅ **Video Streaming**
-- RTSP server (port 8554) for Scrypted integration  
-- MJPEG HTTP stream (port 81) for browser viewing
-- Snapshot capture endpoint
-
-✅ **Audio Streaming**
-- RTSP audio (AAC-LC / MPEG4-GENERIC) from onboard mic when enabled
-- HTTP WAV preview (`/audio.wav`) plus continuous AAC stream (`http://DEVICE_IP:81/audio.aac`)
-- MAX98357A I2S audio out for gong playback (optional)
-
-✅ **SIP Integration**
-- Full SIP client implementation (RFC 3261)
-- Registers as IP phone with FRITZ!Box
-- Handles SIP Digest auth challenges (401/407)
-- Rings internal DECT phones (**610 group)
-- RTP audio (G.711 PCMU/PCMA) with DTMF door opener support
-- 30-second ring duration with INVITE/CANCEL flow
-
-✅ **Doorbell Functionality**
-- GPIO button with debouncing
-- Triggers SIP ring to FRITZ!Box
-- DTMF door opener relay output (GPIO1)
-- Ready for Scrypted webhook integration
-- HomeKit notification support (via Scrypted)
-
-✅ **Web Interface**
-- Dark mode UI with live system stats
-- SIP credential configuration
-- Camera settings (resolution, quality)
-- Test buttons for all functions
-- Metrics card (RTSP sessions, UDP fail/backoff indicators)
-- Reset actions for RTSP UDP fail count and backoff state
-- Dedicated log pages for camera and doorbell events
-- WiFi provisioning via AP mode
-- OTA update page with local-only auth controls
-- Version/build info displayed across UI pages
-
-✅ **Scrypted Ready**
-- RTSP URL displayed in web UI
-- Standard RTSP protocol implementation
-- Compatible with Scrypted RTSP camera plugin
-- Doorbell device integration ready
-
-## 📊 Technical Specifications
-
-**Hardware:** Seeed XIAO ESP32-S3 Sense  
-**Camera:** OV2640 (MJPEG)  
-**Memory Usage:**
-- RAM: 15.8% (51,732 bytes)
-- Flash: 33.8% (1,128,093 bytes)
-
-**Protocols:**
-- RTSP (RFC 2326) on port 8554
-- SIP (RFC 3261) on port 5062
-- SIP RTP (G.711 + DTMF) on port 40000
-- HTTP on port 80 (UI/API) and 81 (MJPEG + AAC audio)
-
-**Libraries:**
-- Micro-RTSP 0.1.6 - RTSP server
-- ESP Async WebServer 3.4.0 - Web UI
-- ArduinoJson 7.4.2 - Configuration
-- Custom SIP client - FRITZ!Box integration
-
-## 🚀 Quick Start
-
-### 1. Upload Firmware
-```bash
-platformio run -t upload
-platformio device monitor
-```
-
-### 2. Configure WiFi
-- Connect to `ESP32-Doorbell-Setup` AP
-- Navigate to http://192.168.4.1
-- Enter WiFi credentials
-
-### 3. Configure SIP (Optional)
-- Open http://DEVICE_IP/sip
-- Enter FRITZ!Box IP phone credentials
-- Set target to **610
-
-### 4. Add to Scrypted
-- Scrypted → Add Device → RTSP Camera
-- URL: `rtsp://DEVICE_IP:8554/mjpeg/1`
-- Create Doorbell device
-- Enable HomeKit
-
-### 5. Test
-- Press physical button (GPIO4)
-- OR visit http://DEVICE_IP/ring/sip
-- Phones should ring, HomeKit notification appears
-
-## 📁 Key Files
-
-| File | Purpose |
-|------|---------|
-| `src/main.cpp` | Main application, web UI |
-| `src/sip_client.cpp` | SIP protocol implementation |
-| `src/rtsp_server.cpp` | RTSP streaming server |
-| `src/cameraStream.cpp` | MJPEG + AAC HTTP streaming (port 81) |
-| `src/audio.cpp` | Mic capture + MAX98357A audio out |
-| `src/ota_update.cpp` | OTA update flow + auth |
-| `include/config.h` | Pin definitions, constants |
-| `docs/SCRYPTED_RTSP_SETUP.md` | Scrypted integration guide |
-| `docs/SIP_INTEGRATION.md` | SIP configuration guide |
-| `docs/QUICK_START.md` | Quick reference |
-
-## 🔗 Important URLs
-
-After WiFi configuration, all services are available:
-
-- **Web UI:** http://DEVICE_IP/
-- **RTSP Stream:** rtsp://DEVICE_IP:8554/mjpeg/1
-- **MJPEG Stream:** http://DEVICE_IP:81/stream
-- **MJPEG Audio (AAC):** http://DEVICE_IP:81/audio.aac
-- **Live A/V Page:** http://DEVICE_IP/live
-- **SIP Setup:** http://DEVICE_IP/sip
-- **Test Ring:** http://DEVICE_IP/ring/sip
-- **Camera Logs:** http://DEVICE_IP/logs/camera
-- **Doorbell Logs:** http://DEVICE_IP/logs/doorbell
-- **OTA Update:** http://DEVICE_IP/ota (local-only)
-
-## 📚 Documentation
-
-Complete documentation available in `/docs`:
-
-1. **QUICK_START.md** - 30-second setup
-2. **SCRYPTED_RTSP_SETUP.md** - Scrypted integration
-3. **SIP_INTEGRATION.md** - FRITZ!Box phone integration
-4. **esp32-s3-doorbell-architecture.md** - Full architecture
-
-## 🎉 Achievement Unlocked
-
-**Phase 1: MVP Complete** ✅
-
-All core functionality implemented:
-- ✅ Video streaming (RTSP + MJPEG)
-- ✅ Audio streaming (RTSP AAC-LC + HTTP AAC)
-- ✅ Doorbell button detection
-- ✅ FRITZ!Box phone ringing (SIP)
-- ✅ Scrypted camera integration
-- ✅ HomeKit compatibility
-- ✅ Web-based configuration
-- ✅ Professional documentation
-
-**Next:** Phase 2 - Advanced A/V sync, H.264/WebRTC, and two-way audio
-
-## 🤝 Contributing
-
-This is a personal project, but feel free to fork and adapt for your own use!
-
-## 📄 License
-
-See LICENSE file for details.
+The project has successfully migrated from Arduino to pure ESP-IDF. WiFi provisioning via captive portal is fully functional, with web-based log viewing for debugging without serial monitor.
 
 ---
 
-**Built with:** PlatformIO • ESP32-S3 • Scrypted • HomeKit
+## What's Working
+
+### WiFi Provisioning ✅
+- **Captive Portal**: Auto-popup on iOS/Android/Windows when connecting to AP
+- **DNS Server**: Redirects all queries to 192.168.4.1
+- **WiFi Scanning**: APSTA mode with cached, deduplicated results
+- **Credential Storage**: NVS persistence across reboots
+- **Auto-Restart**: Device reboots after saving credentials
+- **Styled Restart Page**: Progress bar with auto-reconnect
+
+### Web Interface ✅
+- **Embedded Assets**: 12 gzip-compressed HTML/CSS files (~35KB)
+- **REST API**: WiFi config, status, OTA, logs
+- **Log Viewer**: Filter by category, auto-refresh, download
+- **Root Redirect**: AP mode → setup, STA mode → dashboard
+
+### System Infrastructure ✅
+- **NVS Manager**: Raw C API with auto-recovery
+- **WiFi Manager**: STA/AP/APSTA modes with events
+- **DNS Server**: Captive portal support
+- **Log Buffer**: Ring buffer with ESP-IDF logging hook
+- **Web Server**: esp_http_server with wildcard routing
+
+---
+
+## Architecture
+
+### Component Structure
+```
+src_idf/
+├── main/main.c                          # Entry point (5-step boot)
+├── components/
+│   ├── nvs_manager/                     # NVS abstraction
+│   ├── wifi_manager/                    # WiFi state machine
+│   ├── web_server/                      # HTTP server + API
+│   ├── dns_server/                      # Captive portal DNS
+│   ├── log_buffer/                      # Web log viewer backend
+│   └── config_manager/                  # Settings storage
+├── generated/embedded_web_assets.*      # Gzip assets (auto-generated)
+```
+
+### Boot Sequence
+```
+[1/5] NVS Manager Init (with corruption recovery)
+[2/5] Log Buffer Init (hooks into ESP-IDF logging)
+[3/5] WiFi Manager Init (esp_netif + events)
+[4/5] WiFi Start (STA if credentials, else AP+DNS)
+[5/5] Web Server (via WiFi event callback)
+```
+
+### API Endpoints
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/` | GET | Redirect based on WiFi state |
+| `/api/wifi` | POST | Save WiFi credentials |
+| `/api/wifi` | DELETE | Clear WiFi credentials |
+| `/api/status` | GET | System status JSON |
+| `/api/ota` | POST | Firmware update |
+| `/api/logs` | GET | Get logs with filter |
+| `/api/logs` | DELETE | Clear log buffer |
+| `/saveWiFi` | POST | Legacy credential save |
+| `/scanWifi` | GET | Start WiFi scan |
+| `/wifiScanResults` | GET | Get scan results (deduplicated) |
+| `/restart` | GET | Restart with progress UI |
+| `/generate_204` | GET | Android captive portal |
+| `/hotspot-detect.html` | GET | iOS captive portal |
+
+### Web Pages
+| Page | Purpose |
+|------|---------|
+| `index.html` | Main dashboard |
+| `wifi-setup.html` | WiFi provisioning |
+| `logs.html` | Log viewer with filters |
+| `ota.html` | Firmware update |
+| `sip.html` | SIP configuration (Phase 3) |
+| `live.html` | Live A/V viewer (Phase 4) |
+
+---
+
+## Key Files
+
+### ESP-IDF Components
+| File | Purpose |
+|------|---------|
+| `src_idf/main/main.c` | Boot sequence |
+| `src_idf/components/nvs_manager/*` | NVS operations |
+| `src_idf/components/wifi_manager/*` | WiFi state machine |
+| `src_idf/components/web_server/*` | HTTP server + handlers |
+| `src_idf/components/dns_server/*` | Captive portal DNS |
+| `src_idf/components/log_buffer/*` | Log ring buffer |
+
+### Web Assets
+| File | Purpose |
+|------|---------|
+| `data/index.html` | Main dashboard |
+| `data/wifi-setup.html` | WiFi provisioning |
+| `data/logs.html` | Log viewer |
+| `data/style.css` | Unified styling |
+
+---
+
+## Migration Progress
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Phase 0 | ✅ Complete | Pre-migration hygiene |
+| Phase 1 | ✅ Complete | IDF base (boot, NVS, WiFi, web) |
+| Phase 2 | ✅ Complete | Config services, captive portal, logs |
+| Phase 3 | ⏳ Next | SIP intercom |
+| Phase 4 | ❌ Pending | Video path (RTSP/MJPEG) |
+| Phase 5 | ❌ Pending | Audio path with ADF |
+| Phase 6 | ❌ Pending | HomeKit doorbell |
+| Phase 7 | ❌ Pending | Cleanup & resilience |
+
+---
+
+## Features Detail
+
+### Captive Portal
+When device is in AP mode:
+1. DNS server starts on port 53
+2. All DNS queries return 192.168.4.1
+3. Detection URLs trigger redirect to setup page:
+   - `/generate_204` (Android)
+   - `/hotspot-detect.html` (iOS/macOS)
+   - `/connecttest.txt` (Windows)
+   - `/canonical.html` (Firefox)
+4. Mobile device shows "Sign in to network" popup
+
+### Web Log Viewer (`/logs.html`)
+- **Ring Buffer**: 100 entries captured from ESP-IDF logging
+- **Category Tabs**:
+  - All: Everything
+  - Core: main, wifi, nvs, web_server, dns, httpd
+  - Camera: camera, rtsp, mjpeg, stream
+  - Doorbell: doorbell, sip, button, tr064
+- **Controls**:
+  - Level filter: All / Error (E) / Warn (W) / Info (I) / Debug (D) / Verbose (V)
+  - Sort order: Newest First / Oldest First
+  - Font size: XS / Small / Medium / Large / XL
+  - Word wrap: Toggle for long messages
+  - Auto-refresh: Off / 2s / 5s / 10s
+- **Features**:
+  - Color-coded levels (E=red, W=yellow, I=green, D=cyan, V=gray)
+  - Full-width responsive table layout
+  - Sticky footer with action buttons
+  - Download filtered logs as text file
+  - Clear all logs
+  - Preferences saved in localStorage
+  - Direct URL linking (`/logs.html?filter=core`)
+
+### WiFi Scanning
+- Uses APSTA mode (AP + Station simultaneously)
+- Scan results cached (ESP-IDF API is destructive)
+- Deduplication: Same SSID from multiple APs merged
+- Strongest signal kept for each unique SSID
+
+### Restart Page
+- Styled HTML with progress bar
+- Status messages during reboot
+- Auto-polls `/api/status` to detect reconnect
+- Redirects to `/` when device is back online
+
+---
+
+## Useful Commands
+
+### Build and Upload
+```bash
+pio run -t upload -e esp32s3_idf
+```
+
+### Monitor Serial
+```bash
+pio device monitor -e esp32s3_idf
+```
+
+### Erase NVS
+```bash
+~/.platformio/packages/tool-esptoolpy/esptool.py \
+    --chip esp32s3 --port /dev/cu.usbmodem21201 \
+    erase_region 0x9000 0x5000
+```
+
+### View Logs via Web
+```
+http://<device-ip>/logs.html
+http://<device-ip>/logs.html?filter=core
+http://<device-ip>/logs.html?filter=camera
+http://<device-ip>/logs.html?filter=doorbell
+```
+
+---
+
+## Hardware
+
+**Platform:** Seeed XIAO ESP32-S3 Sense
+**Flash:** 8 MB
+**PSRAM:** 8 MB (OPI)
+**Camera:** OV2640
+
+**Memory Usage (ESP-IDF build):**
+- RAM: ~70KB used
+- Flash: ~1.4MB (includes ~35KB embedded web assets)
+
+---
+
+## Next Steps (Phase 3)
+
+1. Port SIP client to ESP-IDF component
+2. Implement lwIP socket-based SIP state machine
+3. Add TR-064 client for Fritz!Box integration
+4. Test SIP registration and call flow
+
+See [IDF_ADF_MIGRATION_PLAN.md](IDF_ADF_MIGRATION_PLAN.md) for full roadmap.

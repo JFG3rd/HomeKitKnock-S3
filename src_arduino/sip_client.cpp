@@ -859,7 +859,7 @@ static String buildAuthHeader(
 bool loadSipConfig(SipConfig &config) {
   Preferences prefs;
   if (!prefs.begin("sip", true)) {
-    logEvent(LOG_ERROR, "❌ Failed to open SIP preferences");
+    // Silently fail if NVS not ready - this is expected on first boot
     return false;
   }
   

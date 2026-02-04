@@ -156,12 +156,12 @@ void startAPMode(AsyncWebServer& server, DNSServer& dnsServer, Preferences& pref
     Serial.printf("    SSID: %s\n", AP_SSID);
     Serial.printf("    IP: %s\n", WiFi.softAPIP().toString().c_str());
 
-    // Root redirects to the setup page for a simple captive UX.
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->redirect("/wifiSetup");
-    });
+    // Root handler now managed by register_embedded_web_assets() which conditionally serves
+    // wifi-setup.html (when in AP mode) or index.html (when WiFi connected).
+    // Note: The root handler is already registered by initFileSystem(), so we only need
+    // to set apMode = true above to make that handler work correctly.
 
-    // WiFi setup page.
+    // WiFi setup page accessible directly at /wifiSetup (alternative to root).
     server.on("/wifiSetup", HTTP_GET, [](AsyncWebServerRequest *request) {
         String page = generateWiFiSetupPage();
         if (page.isEmpty()) {

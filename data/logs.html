@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>System Logs - ESP32 Doorbell</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        /* Font size classes */
+        .font-xs { font-size: 10px; }
+        .font-sm { font-size: 11px; }
+        .font-md { font-size: 12px; }
+        .font-lg { font-size: 14px; }
+        .font-xl { font-size: 16px; }
+    </style>
+</head>
+
+<body>
+    <div class="page-header">
+        <div class="dark-mode-toggle">
+            <label class="switch">
+                <input type="checkbox" id="darkModeToggle">
+                <span class="slider"></span>
+            </label>
+            <span>Dark Mode</span>
+        </div>
+
+        <div class="header-container">
+            <h1 class="main-title">🔔 ESP32-S3 Doorbell</h1>
+        </div>
+    </div>
+
+    <div class="logs-page">
+        <div class="logs-header">
+            <h2 style="margin: 0; font-size: 1.4em;">System Logs</h2>
+            <span class="log-stats" id="logStats">Loading...</span>
+        </div>
+
+        <div class="filter-tabs">
+            <button class="filter-tab active" data-filter="all" onclick="setFilter('all')">All</button>
+            <button class="filter-tab" data-filter="core" onclick="setFilter('core')">Core</button>
+            <button class="filter-tab" data-filter="camera" onclick="setFilter('camera')">Camera</button>
+            <button class="filter-tab" data-filter="doorbell" onclick="setFilter('doorbell')">Doorbell</button>
+        </div>
+
+        <div class="controls-row">
+            <div class="controls-left">
+                <div class="control-group">
+                    <label for="levelFilter">Level:</label>
+                    <select class="control-select" id="levelFilter" onchange="renderLogs()">
+                        <option value="all">All</option>
+                        <option value="E">Error</option>
+                        <option value="W">Warn</option>
+                        <option value="I">Info</option>
+                        <option value="D">Debug</option>
+                        <option value="V">Verbose</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="sortOrder">Sort:</label>
+                    <select class="control-select" id="sortOrder" onchange="renderLogs()">
+                        <option value="desc">Newest First</option>
+                        <option value="asc">Oldest First</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label for="fontSize">Font:</label>
+                    <select class="control-select" id="fontSize" onchange="setFontSize()">
+                        <option value="xs">XS</option>
+                        <option value="sm">Small</option>
+                        <option value="md" selected>Medium</option>
+                        <option value="lg">Large</option>
+                        <option value="xl">XL</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <input type="checkbox" class="control-checkbox" id="wordWrap" onchange="setWordWrap()">
+                    <label for="wordWrap">Word Wrap</label>
+                </div>
+            </div>
+            <div class="controls-right">
+                <div class="control-group">
+                    <label for="refreshInterval">Auto-refresh:</label>
+                    <select class="control-select" id="refreshInterval" onchange="setRefreshInterval()">
+                        <option value="0">Off</option>
+                        <option value="2000">2s</option>
+                        <option value="5000" selected>5s</option>
+                        <option value="10000">10s</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="log-container">
+            <div class="log-display font-md" id="logDisplay">
+                <div class="empty-logs">Loading logs...</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="action-buttons">
+        <a href="/" class="button btn-nav">← Home</a>
+        <button class="button btn-save" onclick="fetchLogs()">Refresh</button>
+        <button class="button btn-info" onclick="downloadLogs()">Download</button>
+        <button class="button btn-danger" onclick="clearLogs()">Clear</button>
+    </div>
+
+    <script>
+        let currentFilter = 'all';
+        let refreshTimer = null;
+        let logData = [];
+
+        // Dark mode handling
+        const darkToggle = document.getElementById("darkModeToggle");
+
+        function setDarkMode(enabled) {
+            document.body.classList.toggle("dark-mode", enabled);
+            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        }
+
+        const savedDarkMode = localStorage.getItem("darkMode");
+        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
+        darkToggle.checked = darkModeEnabled;
+        setDarkMode(darkModeEnabled);
+
+        darkToggle.addEventListener("change", () => {
+            setDarkMode(darkToggle.checked);
+        });
+
+        function formatTimestamp(ms) {
+            const secs = Math.floor(ms / 1000);
+            const mins = Math.floor(secs / 60);
+            const hours = Math.floor(mins / 60);
+            return `${hours}:${String(mins % 60).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function renderLogs() {
+            const display = document.getElementById('logDisplay');
+            const sortOrder = document.getElementById('sortOrder').value;
+            const levelFilter = document.getElementById('levelFilter').value;
+            const wordWrap = document.getElementById('wordWrap').checked;
+
+            if (!logData || logData.length === 0) {
+                display.innerHTML = '<div class="empty-logs">No logs available</div>';
+                return;
+            }
+
+            // Filter by level
+            let filteredLogs = logData;
+            if (levelFilter !== 'all') {
+                filteredLogs = logData.filter(log => log.lvl === levelFilter);
+            }
+
+            // Sort logs
+            let sortedLogs = [...filteredLogs];
+            if (sortOrder === 'desc') {
+                sortedLogs.reverse();
+            }
+
+            if (sortedLogs.length === 0) {
+                display.innerHTML = '<div class="empty-logs">No logs match the selected level</div>';
+                return;
+            }
+
+            let html = `<table class="log-table">
+                <thead>
+                    <tr>
+                        <th class="col-ts">Time</th>
+                        <th class="col-level">Level</th>
+                        <th class="col-tag">Tag</th>
+                        <th class="col-msg">Message</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+            sortedLogs.forEach(log => {
+                html += `<tr>
+                    <td class="col-ts log-ts">${formatTimestamp(log.ts)}</td>
+                    <td class="col-level log-level ${log.lvl}">${log.lvl}</td>
+                    <td class="col-tag log-tag">${escapeHtml(log.tag)}</td>
+                    <td class="col-msg log-msg">${escapeHtml(log.msg)}</td>
+                </tr>`;
+            });
+
+            html += '</tbody></table>';
+            logDisplay.innerHTML = html;
+        }
+
+        function fetchLogs() {
+            fetch(`/api/logs?filter=${currentFilter}`)
+                .then(r => r.json())
+                .then(data => {
+                    logData = data.logs || [];
+                    renderLogs();
+                    document.getElementById('logStats').textContent =
+                        `${data.count} / ${data.capacity} entries`;
+                })
+                .catch(err => {
+                    console.error('Failed to fetch logs:', err);
+                    document.getElementById('logDisplay').innerHTML =
+                        '<div class="empty-logs">Failed to load logs</div>';
+                });
+        }
+
+        function setFilter(filter) {
+            currentFilter = filter;
+            document.querySelectorAll('.filter-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.filter === filter);
+            });
+            // Update URL without reload
+            const url = new URL(window.location);
+            url.searchParams.set('filter', filter);
+            window.history.replaceState({}, '', url);
+            fetchLogs();
+        }
+
+        function setRefreshInterval() {
+            const interval = parseInt(document.getElementById('refreshInterval').value);
+            if (refreshTimer) {
+                clearInterval(refreshTimer);
+                refreshTimer = null;
+            }
+            if (interval > 0) {
+                refreshTimer = setInterval(fetchLogs, interval);
+            }
+        }
+
+        function setFontSize() {
+            const size = document.getElementById('fontSize').value;
+            const display = document.getElementById('logDisplay');
+            display.classList.remove('font-xs', 'font-sm', 'font-md', 'font-lg', 'font-xl');
+            display.classList.add('font-' + size);
+            localStorage.setItem('logFontSize', size);
+        }
+
+        function setWordWrap() {
+            const wrap = document.getElementById('wordWrap').checked;
+            const display = document.getElementById('logDisplay');
+            display.classList.toggle('word-wrap', wrap);
+            localStorage.setItem('logWordWrap', wrap ? 'true' : 'false');
+        }
+
+        function clearLogs() {
+            if (!confirm('Clear all logs?')) return;
+            fetch('/api/logs', { method: 'DELETE' })
+                .then(r => r.json())
+                .then(() => fetchLogs())
+                .catch(err => alert('Failed to clear logs: ' + err));
+        }
+
+        function downloadLogs() {
+            const sortOrder = document.getElementById('sortOrder').value;
+            const levelFilter = document.getElementById('levelFilter').value;
+
+            let text = `ESP32 Doorbell Logs - ${new Date().toISOString()}\n`;
+            text += `Category: ${currentFilter}, Level: ${levelFilter === 'all' ? 'All' : levelFilter}\n`;
+            text += '='.repeat(80) + '\n\n';
+
+            // Filter by level
+            let filteredLogs = logData;
+            if (levelFilter !== 'all') {
+                filteredLogs = logData.filter(log => log.lvl === levelFilter);
+            }
+
+            // Sort
+            let sortedLogs = [...filteredLogs];
+            if (sortOrder === 'desc') {
+                sortedLogs.reverse();
+            }
+
+            sortedLogs.forEach(log => {
+                text += `[${formatTimestamp(log.ts)}] ${log.lvl} (${log.tag}): ${log.msg}\n`;
+            });
+
+            const blob = new Blob([text], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `esp32-logs-${currentFilter}-${levelFilter}-${Date.now()}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            // Restore saved preferences
+            const savedFontSize = localStorage.getItem('logFontSize');
+            if (savedFontSize) {
+                document.getElementById('fontSize').value = savedFontSize;
+                setFontSize();
+            }
+
+            const savedWordWrap = localStorage.getItem('logWordWrap');
+            if (savedWordWrap === 'true') {
+                document.getElementById('wordWrap').checked = true;
+                setWordWrap();
+            }
+
+            // Check URL params for initial filter
+            const params = new URLSearchParams(window.location.search);
+            const filter = params.get('filter');
+            if (filter && ['all', 'core', 'camera', 'doorbell'].includes(filter)) {
+                setFilter(filter);
+            } else {
+                fetchLogs();
+            }
+
+            // Start auto-refresh
+            setRefreshInterval();
+        });
+    </script>
+</body>
+
+</html>

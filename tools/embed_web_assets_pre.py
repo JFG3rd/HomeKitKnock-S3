@@ -23,20 +23,30 @@ def embed_web_assets_callback(source, target, env):
     print("\n" + "="*60)
     print("Embedding web assets from data/ directory...")
     print("="*60)
-    
+
     if not os.path.exists(embed_script):
         print(f"Error: embed_web_assets.py not found at {embed_script}")
         env.Exit(1)
-    
+
     if not os.path.exists(data_dir):
         print(f"Warning: data/ directory not found at {data_dir}")
         print("Web assets will not be embedded")
         return
-    
+
     try:
+        # Detect if building for ESP-IDF (no Arduino framework)
+        frameworks = env.get("PIOFRAMEWORK", [])
+        is_idf_only = "espidf" in frameworks and "arduino" not in frameworks
+
+        # Build command with --idf flag if needed
+        cmd = [sys.executable, embed_script, data_dir, include_dir]
+        if is_idf_only:
+            cmd.append("--idf")
+            print("Detected ESP-IDF build - generating C-compatible headers")
+
         # Run the embedding script
         result = subprocess.run(
-            [sys.executable, embed_script, data_dir, include_dir],
+            cmd,
             capture_output=True,
             text=True,
             timeout=30
@@ -60,6 +70,13 @@ def embed_web_assets_callback(source, target, env):
         env.Exit(1)
 
 # Register the pre-build callback
-env.AddPreAction("$BUILD_DIR/src/main.cpp.o", embed_web_assets_callback)
+# Use main.c.o for ESP-IDF, main.cpp.o for Arduino
+frameworks = env.get("PIOFRAMEWORK", [])
+is_idf_only = "espidf" in frameworks and "arduino" not in frameworks
+
+if is_idf_only:
+    env.AddPreAction("$BUILD_DIR/src/main.c.o", embed_web_assets_callback)
+else:
+    env.AddPreAction("$BUILD_DIR/src/main.cpp.o", embed_web_assets_callback)
 
 print("✓ Pre-build script registered: web assets will be embedded before compilation")

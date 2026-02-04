@@ -8,7 +8,12 @@
 
 ![License](https://img.shields.io/github/license/JFG3rd/HomeKitKnock-S3)
 
-Firmware for the **ESP32-S3 Sense–based DIY video doorbell**, built with **PlatformIO (Arduino framework)**. Streams camera video to **Scrypted** and triggers **HomeKit doorbell events** via HTTP.
+Firmware for the **ESP32-S3 Sense–based DIY video doorbell**, built with **PlatformIO**. Currently migrating from Arduino to **pure ESP-IDF** for improved stability and audio support via ESP-ADF.
+
+**Current Status:** ESP-IDF Migration Phase 2 Complete ✅
+- WiFi provisioning via captive portal
+- Web-based configuration and log viewer
+- See [docs/IDF_ADF_MIGRATION_PLAN.md](docs/IDF_ADF_MIGRATION_PLAN.md) for roadmap
 
 ---
 
@@ -47,16 +52,30 @@ Audio streaming is planned for a later phase.
 
 ## 🚀 Quick Start
 
+### ESP-IDF Build (Recommended)
+```bash
+# Build and upload ESP-IDF firmware
+pio run -t upload -e seeed_xiao_esp32s3_idf
+
+# Monitor serial output
+pio device monitor -e seeed_xiao_esp32s3_idf
+```
+
+### Arduino Build (Legacy)
+```bash
+# Build and upload Arduino firmware
+pio run -t upload -e seeed_xiao_esp32s3
+
+# Upload filesystem (LittleFS)
+pio run -t uploadfs -e seeed_xiao_esp32s3
+```
+
+### VS Code
 1. Open this folder in VS Code (PlatformIO will detect the project).
-2. Build:
-   - VS Code: PlatformIO "Build" task
-   - CLI: `pio run`
-3. Upload:
-   - VS Code: PlatformIO "Upload" task
-   - CLI: `pio run -t upload`
-4. Serial monitor (adjust baud if needed):
-   - VS Code: PlatformIO "Monitor" task
-   - CLI: `pio device monitor -b 115200`
+2. Select environment: `seeed_xiao_esp32s3_idf` (ESP-IDF) or `seeed_xiao_esp32s3` (Arduino)
+3. Build: PlatformIO sidebar → Build
+4. Upload: PlatformIO sidebar → Upload
+5. Monitor: PlatformIO sidebar → Monitor
 
 ---
 
@@ -88,9 +107,18 @@ If none are found or the connection fails, it starts a configuration AP:
 - `GET /style.css` - UI styles (served from LittleFS)
 - `GET /scanWifi` - Trigger an async WiFi rescan for the setup UI
 
-### Normal Mode Endpoints
-- `GET /` - Device status page
-- `GET /forget` - Clears WiFi credentials and restarts
+### ESP-IDF API Endpoints (New)
+- `GET /` - Dashboard (STA mode) or redirect to setup (AP mode)
+- `GET /api/status` - System status JSON (IP, RSSI, uptime, heap)
+- `POST /api/wifi` - Save WiFi credentials (JSON: `{"ssid":"...","password":"..."}`)
+- `DELETE /api/wifi` - Clear WiFi credentials and restart
+- `POST /api/ota` - Firmware update (multipart/form-data)
+- `GET /api/logs?filter=all|core|camera|doorbell` - Get logs as JSON
+- `DELETE /api/logs` - Clear log buffer
+- `GET /logs.html` - Web-based log viewer with filtering
+- `GET /restart` - Styled restart page with auto-reconnect
+
+### Legacy Endpoints (Arduino Compatibility)
 - `GET /deviceStatus` - JSON status (RSSI + uptime)
 - `GET /ring` - Trigger ring (tries SIP then TR-064)
 - `GET /ring/tr064` - Trigger FRITZ!Box TR-064 ring
@@ -99,8 +127,8 @@ If none are found or the connection fails, it starts a configuration AP:
 - `GET /tr064Debug` - TR-064 debug JSON
 - `GET /sip` - SIP setup page
 - `GET /sipDebug` - SIP debug JSON
-- `GET /logs/camera` - Camera/streaming logs
-- `GET /logs/doorbell` - Doorbell/SIP/TR-064 logs
+- `GET /logs/camera` - Camera/streaming logs (legacy)
+- `GET /logs/doorbell` - Doorbell/SIP/TR-064 logs (legacy)
 
 ### TR-064 Settings
 The setup page lets you configure FRITZ!Box TR-064 credentials and the internal
@@ -160,9 +188,25 @@ If Scrypted shows an ffmpeg error about “Unable to choose an output format for
 - If TR-064 calls fail, verify TR-064 is enabled and the user has permissions, then re-save credentials in `/wifiSetup`.
 - If DECT phones do not ring, confirm the internal group number and assign a ringtone for that number on the handsets.
 
+### Web-Based Log Viewer
+The ESP-IDF build includes a full-featured log viewer at `/logs.html`:
+- **Category tabs**: All, Core, Camera, Doorbell
+- **Level filter**: Error, Warn, Info, Debug, Verbose
+- **Controls**: Sort order, font size, word wrap, auto-refresh
+- **Actions**: Download logs, clear logs, refresh
+- **Direct links**: `/logs.html?filter=core` for filtered views
+
 ### UI Assets
-The UI stylesheet is served from LittleFS. After editing `data/style.css`, run:
-`pio run -t uploadfs`
+**ESP-IDF**: Web assets are embedded (gzip-compressed) in firmware. After editing files in `data/`:
+```bash
+python3 tools/embed_web_assets.py data include --idf
+pio run -t upload -e seeed_xiao_esp32s3_idf
+```
+
+**Arduino**: UI stylesheet is served from LittleFS. After editing `data/style.css`:
+```bash
+pio run -t uploadfs -e seeed_xiao_esp32s3
+```
 
 ### OTA Update Files
 Use `tools/build_ota.py` to generate OTA `.bin` files in `dist/ota/`.
@@ -175,16 +219,24 @@ See `docs/PROJECT_BOM.md` for a comprehensive parts list with sourcing suggestio
 
 ## ⚙️ PlatformIO Configuration
 
-The environment is defined in [platformio.ini](platformio.ini) and targets:
+Two environments are available in [platformio.ini](platformio.ini):
 
-| Item | Value |
-|----|----|
-| Board | `seeed_xiao_esp32s3` |
-| Framework | Arduino |
-| PSRAM | Required |
+| Environment | Framework | Status |
+|-------------|-----------|--------|
+| `seeed_xiao_esp32s3_idf` | ESP-IDF | **Active** (recommended) |
+| `seeed_xiao_esp32s3` | Arduino | Legacy |
 
-### Key Flags for ESP32-S3 Sense
+### ESP-IDF Environment (Recommended)
+```ini
+[env:seeed_xiao_esp32s3_idf]
+platform = espressif32
+board = seeed_xiao_esp32s3
+framework = espidf
+board_build.flash_mode = qio
+board_build.psram_mode = opi
+```
 
+### Arduino Environment (Legacy)
 ```ini
 [env:seeed_xiao_esp32s3]
 platform = espressif32
@@ -192,25 +244,36 @@ board = seeed_xiao_esp32s3
 framework = arduino
 board_build.flash_mode = qio
 board_build.psram_mode = opi
-build_flags = 
+build_flags =
     -DBOARD_HAS_PSRAM
 ```
 
-- **PSRAM enabled** via `-DBOARD_HAS_PSRAM`
-- **`board_build.psram_mode = opi`** – OPI mode for ESP32-S3
-- **`board_build.flash_mode = qio`** – QIO flash mode
+- **PSRAM enabled** via OPI mode for ESP32-S3
+- **Flash**: 8 MB QIO mode
 
 ---
 
 ## 📁 Project Layout
 
-- `src/` – Firmware source ([src/main.cpp](src/main.cpp))
-- `include/` – Headers
-- `lib/` – Local libraries
-- `test/` – Tests
-- `docs/` – Documentation
+```
+├── src_idf/                    # ESP-IDF source (active)
+│   ├── main/main.c             #   Entry point (5-step boot)
+│   └── components/             #   IDF components
+│       ├── nvs_manager/        #     NVS abstraction
+│       ├── wifi_manager/       #     WiFi state machine
+│       ├── web_server/         #     HTTP server + API
+│       ├── dns_server/         #     Captive portal DNS
+│       └── log_buffer/         #     Web log viewer backend
+├── src/                        # Arduino source (legacy)
+├── data/                       # Web UI assets (HTML, CSS)
+├── include/                    # Headers + embedded assets
+├── tools/                      # Build scripts
+│   └── embed_web_assets.py     #   Gzip web assets for IDF
+├── docs/                       # Documentation
+└── platformio.ini              # Build configuration
+```
 
-See [docs/esp32-s3-doorbell-architecture.md](docs/esp32-s3-doorbell-architecture.md) for detailed architecture information.
+See [docs/IDF_ADF_MIGRATION_PLAN.md](docs/IDF_ADF_MIGRATION_PLAN.md) for migration roadmap and [docs/IMPLEMENTATION_SUMMARY.md](docs/IMPLEMENTATION_SUMMARY.md) for current status.
 
 ---
 

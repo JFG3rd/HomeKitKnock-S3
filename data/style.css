@@ -111,11 +111,17 @@
     --footer-text: #666666;
     --checkbox-accent: #5aa7ff;
     --wifi-container-bg: var(--card-bg);
-    --wifi-container-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    --network-item-bg: #f5f5f5;
-    --network-item-hover-bg: #e0e0e0;
+    --wifi-container-shadow: 0 4px 6px rgba(0, 0, 0, 0.45);
+    --network-item-bg: #444444;
+    --network-item-hover-bg: #555555;
     --network-item-selected-bg: var(--primary-color);
     --network-item-selected-text: #ffffff;
+}
+
+html {
+    height: 100%;
+    margin: 0;
+    padding: 0;
 }
 
 body {
@@ -124,11 +130,28 @@ body {
     background-color: var(--page-bg);
     color: var(--page-text);
     margin: 0;
-    padding: 20px;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 100%;
+    overflow: hidden;
 }
 
 .full-width-page {
     padding: 0;
+}
+
+/* Page Header */
+.page-header {
+    flex: 0 0 auto;
+    padding: 0 20px;
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--input-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: relative;
 }
 
 h1 {
@@ -141,13 +164,13 @@ h1 {
 /* Header container with title aligned left */
 .header-container {
     text-align: left;
-    max-width: 1400px;
-    margin: 0 auto 20px auto;
-    padding: 0 20px;
+    flex-grow: 1;
+    margin: 0;
+    padding: 0;
 }
 
 .main-title {
-    font-size: 2.5em;
+    font-size: 1.5em;
     margin: 10px 0;
 }
 
@@ -311,74 +334,179 @@ h3 {
     }
 }
 
-/* System Logs Container */
-.log-container {
-    width: 100%;
-    background: var(--log-bg);
-    padding: 10px;
-    border-radius: 5px;
-    overflow-y: auto;
-    text-align: left;
-    white-space: nowrap;
-    font-family: monospace;
-    color: var(--log-text);
-    max-height: calc(var(--log-line-height) * var(--max-log-entries));
+/* System Logs Page Layout */
+.logs-page {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 0 20px;
+    overflow: hidden;
 }
 
-.log-container.log-wrap {
-    white-space: pre-wrap;
-    word-break: break-word;
+.logs-header {
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 15px 0 10px 0;
+    flex-wrap: wrap;
+    gap: 10px;
 }
 
-.log-size-sm {
-    font-size: 12px;
-    line-height: 1.35;
+/* Tab styling */
+.filter-tabs {
+    flex: 0 0 auto;
+    display: flex;
+    border-bottom: 2px solid var(--input-border);
+    margin-bottom: 10px;
+    gap: 0;
 }
 
-.log-size-md {
+.filter-tab {
+    padding: 10px 20px;
+    border: none;
+    background: transparent;
+    color: var(--card-text);
+    cursor: pointer;
     font-size: 14px;
-    line-height: 1.45;
+    font-weight: 500;
+    transition: all 0.2s;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
 }
 
-.log-size-lg {
-    font-size: 16px;
-    line-height: 1.5;
+.filter-tab:hover {
+    background: var(--info-item-bg);
 }
 
-.log-actions {
-    width: calc(100% - 40px);
-    max-width: 100%;
-    margin: 0 auto 20px auto;
+.filter-tab.active {
+    color: var(--primary-color);
+    border-bottom-color: var(--primary-color);
+    background: var(--info-item-bg);
 }
 
-.log-toolbar {
-    width: calc(100% - 40px);
-    max-width: 100%;
-    margin: 0 auto 10px auto;
+/* Controls row */
+.controls-row {
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+    gap: 10px;
+    background: var(--card-bg);
+    padding: 10px 15px;
+    border-radius: 8px;
+    box-shadow: var(--card-shadow);
+}
+
+.controls-left,
+.controls-right {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.control-group {
     display: flex;
     align-items: center;
     gap: 8px;
-    justify-content: flex-start;
-    font-size: 0.9em;
 }
 
-/* Responsive log height */
-@media screen and (max-height: 800px) {
-    .log-container {
-        max-height: calc(50vh);
+.control-group label {
+    font-size: 13px;
+    color: var(--label-text);
+    white-space: nowrap;
+}
+
+.control-select {
+    padding: 6px 10px;
+    border: 1px solid var(--input-border);
+    border-radius: 4px;
+    background: var(--input-bg);
+    color: var(--input-text);
+    font-size: 13px;
+}
+
+.control-checkbox {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--checkbox-accent);
+}
+
+.log-stats {
+    font-size: 13px;
+    color: var(--flash-text);
+    background: var(--flash-bg);
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: 1px solid var(--flash-border);
+}
+
+/* Action buttons - sticky footer */
+.action-buttons {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 10px;
+    padding: 12px 20px;
+    background: var(--card-bg);
+    border-top: 2px solid var(--input-border);
+    justify-content: flex-start;
+    align-items: center;
+}
+
+.action-buttons .button {
+    white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+    .logs-page {
+        padding: 0 10px;
+    }
+
+    .filter-tab {
+        padding: 8px 12px;
+        font-size: 13px;
+    }
+
+    .controls-row {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 8px 10px;
+    }
+
+    .controls-left,
+    .controls-right {
+        justify-content: center;
+    }
+
+    .action-buttons {
+        padding: 10px;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: center;
     }
 }
 
+/* Responsive log height */
+/* @media screen and (max-height: 800px) {
+    .log-container {
+        max-height: calc(50vh);
+    }
+} */
+
 /* Scrollbar Styling */
-.log-container::-webkit-scrollbar {
+.log-display::-webkit-scrollbar {
     width: 10px;
 }
 
-.log-container::-webkit-scrollbar-track {
+.log-display::-webkit-scrollbar-track {
     background: var(--scrollbar-track);
 }
 
-.log-container::-webkit-scrollbar-thumb {
+.log-display::-webkit-scrollbar-thumb {
     background: var(--scrollbar-thumb);
     border-radius: 5px;
 }
@@ -876,8 +1004,8 @@ footer {
     --input-disabled-bg: #444444;
     --wifi-container-bg: #333333;
     --wifi-container-shadow: 0 4px 6px rgba(0, 0, 0, 0.45);
-    --network-item-bg: #2b2b2b;
-    --network-item-hover-bg: #3a3a3a;
+    --network-item-bg: #444444;
+    --network-item-hover-bg: #555555;
     --network-item-selected-bg: var(--primary-color);
     --network-item-selected-text: #ffffff;
 }
@@ -1097,3 +1225,88 @@ footer {
     width: auto;
     margin-left: auto;
 }
+
+/* ==========================================================================
+   Logs Page Specific Styles
+   ========================================================================== */
+
+.log-container {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: auto;
+    background: var(--log-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 6px;
+    color: var(--log-text);
+}
+
+.log-display {
+    width: 100%;
+    min-height: 100%;
+}
+
+.log-display.word-wrap .log-msg {
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.empty-logs {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 200px;
+    font-size: 1.2em;
+    color: var(--muted-text);
+}
+
+.log-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.log-table th,
+.log-table td {
+    padding: 6px 8px;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid var(--log-entry-border);
+}
+
+.log-table th {
+    background: var(--log-even-bg);
+    color: var(--log-text);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.85em;
+    letter-spacing: 0.5px;
+}
+
+/* Column Widths */
+.col-ts { width: 8%; min-width: 70px; }
+.col-level { width: 5%; min-width: 50px; text-align: center; }
+.col-tag { width: 12%; min-width: 100px; }
+.col-msg { width: 75%; }
+
+/* Alternating Row Colors */
+.log-table tbody tr:nth-child(odd) {
+    background-color: var(--log-odd-bg);
+}
+
+.log-table tbody tr:nth-child(even) {
+    background-color: var(--log-even-bg);
+}
+
+/* Log Level Colors - single letter codes from ESP-IDF */
+.log-level { text-align: center; font-weight: bold; }
+.log-level.I { color: var(--log-info); }
+.log-level.W { color: var(--log-warn); }
+.log-level.E { color: var(--log-error); }
+.log-level.D { color: var(--log-debug); }
+.log-level.V { color: #aaaaaa; }
+
+.log-ts { font-family: monospace; color: #888; }
+.log-tag { font-weight: 500; color: #9ad7ff; }
