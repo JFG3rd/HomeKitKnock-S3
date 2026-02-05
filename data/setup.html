@@ -693,10 +693,32 @@
         // Set selected timezone
         document.getElementById("timezone").value = "{{TIMEZONE}}";
 
+        function loadFeatures() {
+            fetch("/api/features")
+                .then(r => r.json())
+                .then(data => {
+                    if (data.sip_enabled !== undefined) {
+                        document.getElementById("sip_enabled").checked = data.sip_enabled;
+                    }
+                    if (data.tr064_enabled !== undefined) {
+                        document.getElementById("tr064_enabled").checked = data.tr064_enabled;
+                    }
+                    if (data.http_cam_enabled !== undefined) {
+                        document.getElementById("http_cam_enabled").checked = data.http_cam_enabled;
+                    }
+                    if (data.rtsp_enabled !== undefined) {
+                        document.getElementById("rtsp_enabled").checked = data.rtsp_enabled;
+                    }
+                    updateScryptedUi();
+                })
+                .catch(e => console.error("Failed to load features:", e));
+        }
+
         fetchCameraSetupStatus();
         updateScryptedUi();
         updateAudioUi();
         fetchOtaStatus();
+        loadFeatures();
     </script>
 </body>
 </html>

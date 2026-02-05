@@ -53,7 +53,7 @@ Goal: Retire the Arduino layer, keep ADF for audio, and deliver all current feat
 
 ## Phase 3 — SIP intercom (NEXT)
 - Port SIP state machine to an IDF component; use lwIP sockets directly.
-- remove TR-064 client (for Fritz!Box) if still needed.
+- remove TR-064 client (for Fritz!Box) as the current Fritz!boxes do not support dialing etc. anymore.
 - Success: register to Fritz!Box, place/receive call on button press.
 
 ## Phase 4 — Video path

@@ -39,22 +39,31 @@
                 <li>Use **610 to ring all DECT phones</li>
                 <li>Use **9 plus extension to ring a specific phone</li>
             </ul>
-        <p><strong>FRITZ!Box address:</strong> {{GATEWAY_IP}}</p>
+        <p><strong>FRITZ!Box address:</strong> <span id="gateway_ip">Loading...</span></p>
         </div>
 
         <h3 class="card-title">📡 SIP Credentials</h3>
         <label><strong>SIP Username:</strong></label>
-        <input type="text" id="sip_user" value="{{SIP_USER}}" placeholder="e.g., 620">
+        <input type="text" id="sip_user" placeholder="e.g., 620">
 
         <label><strong>SIP Password:</strong></label>
-        <input type="password" id="sip_password" value="{{SIP_PASS}}" placeholder="IP phone password">
+        <input type="password" id="sip_password" placeholder="IP phone password">
 
         <label><strong>Display Name:</strong></label>
-        <input type="text" id="sip_displayname" value="{{SIP_DISPLAY}}" placeholder="Doorbell">
+        <input type="text" id="sip_displayname" placeholder="Doorbell">
 
         <h3 class="card-title">📞 Ring Configuration</h3>
         <label><strong>Target Number:</strong></label>
-        <input type="text" id="sip_target" value="{{SIP_TARGET}}" placeholder="e.g., **11">
+        <input type="text" id="sip_target" placeholder="e.g., **11">
+
+        <h3 class="card-title">🐛 Debug Options</h3>
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px;">
+            <label class="switch">
+                <input type="checkbox" id="verbose_logging" onchange="toggleVerboseLogging()">
+                <span class="slider"></span>
+            </label>
+            <span><strong>Verbose Logging</strong> - Show full SIP packet content in serial logs</span>
+        </div>
 
         <div>
             <button class="button btn-save" title="Save SIP credentials and ring target." onclick="saveSip()">💾 Save</button>
@@ -104,6 +113,62 @@
                 .then(t => alert(t))
                 .catch(e => alert("SIP Ring failed: " + e));
         }
+
+        // Load current SIP config on page load
+        function loadSipConfig() {
+            fetch("/api/sip")
+                .then(r => r.json())
+                .then(data => {
+                    if (data.user) document.getElementById("sip_user").value = data.user;
+                    if (data.displayname) document.getElementById("sip_displayname").value = data.displayname;
+                    if (data.target) document.getElementById("sip_target").value = data.target;
+                    // Don't populate password for security
+                })
+                .catch(e => console.log("Could not load SIP config:", e));
+
+            // Get gateway IP from status endpoint
+            fetch("/api/status")
+                .then(r => r.json())
+                .then(data => {
+                    if (data.gateway) {
+                        document.getElementById("gateway_ip").textContent = data.gateway;
+                    } else {
+                        document.getElementById("gateway_ip").textContent = "Unknown";
+                    }
+                })
+                .catch(e => {
+                    document.getElementById("gateway_ip").textContent = "Unknown";
+                });
+
+            // Load verbose logging state
+            fetch("/api/sip/verbose")
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById("verbose_logging").checked = data.verbose === true;
+                })
+                .catch(e => console.log("Could not load verbose state:", e));
+        }
+
+        function toggleVerboseLogging() {
+            const enabled = document.getElementById("verbose_logging").checked;
+            fetch("/api/sip/verbose", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ "verbose": enabled })
+            })
+            .then(r => r.json())
+            .then(data => {
+                console.log("Verbose logging:", data.verbose ? "enabled" : "disabled");
+            })
+            .catch(e => {
+                console.error("Failed to set verbose logging:", e);
+                // Revert checkbox on error
+                document.getElementById("verbose_logging").checked = !enabled;
+            });
+        }
+
+        // Load config when page loads
+        loadSipConfig();
     </script>
 </body>
 </html>

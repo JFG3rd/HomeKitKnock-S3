@@ -5,11 +5,13 @@
 #include "web_server.h"
 #include "wifi_manager.h"
 #include "log_buffer.h"
+#include "sip_client.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_app_format.h"
 #include "esp_chip_info.h"
 #include "esp_heap_caps.h"
+#include "esp_netif.h"
 #include "embedded_web_assets.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -46,10 +48,25 @@ static const struct EmbeddedFile *find_asset(const char *uri) {
 
     ESP_LOGD(TAG, "Looking for asset: %s", filename);
 
+    // First try exact match
     for (size_t i = 0; i < embedded_files_count; i++) {
         if (strcmp(filename, embedded_files[i].filename) == 0) {
             ESP_LOGD(TAG, "Found: %s (%zu bytes)", filename, embedded_files[i].size);
             return &embedded_files[i];
+        }
+    }
+
+    // If no extension, try adding .html (e.g., "/sip" -> "sip.html")
+    size_t fname_len = strlen(filename);
+    if (!strchr(filename, '.') && fname_len < sizeof(filename_buf) - 6) {
+        strcpy(filename_buf, filename);
+        strcat(filename_buf, ".html");
+        ESP_LOGD(TAG, "Trying with .html: %s", filename_buf);
+        for (size_t i = 0; i < embedded_files_count; i++) {
+            if (strcmp(filename_buf, embedded_files[i].filename) == 0) {
+                ESP_LOGD(TAG, "Found: %s (%zu bytes)", filename_buf, embedded_files[i].size);
+                return &embedded_files[i];
+            }
         }
     }
 
@@ -363,9 +380,18 @@ static esp_err_t wifi_scan_results_handler(httpd_req_t *req) {
 static esp_err_t api_status_handler(httpd_req_t *req) {
     char response[768];
     char ip[16] = "Not connected";
+    char gateway[16] = "";
 
     if (wifi_manager_is_connected()) {
         wifi_manager_get_ip(ip, sizeof(ip));
+        // Get gateway IP
+        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (netif) {
+            esp_netif_ip_info_t ip_info;
+            if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+                snprintf(gateway, sizeof(gateway), IPSTR, IP2STR(&ip_info.gw));
+            }
+        }
     }
 
     // Get system info
@@ -394,6 +420,7 @@ static esp_err_t api_status_handler(httpd_req_t *req) {
              "{"
              "\"connected\":%s,"
              "\"ip\":\"%s\","
+             "\"gateway\":\"%s\","
              "\"has_credentials\":%s,"
              "\"uptime\":%lu,"
              "\"free_heap\":%lu,"
@@ -407,6 +434,7 @@ static esp_err_t api_status_handler(httpd_req_t *req) {
              "}",
              wifi_manager_is_connected() ? "true" : "false",
              ip,
+             gateway,
              wifi_manager_has_credentials() ? "true" : "false",
              uptime_sec,
              free_heap,
@@ -480,6 +508,247 @@ static esp_err_t api_logs_clear_handler(httpd_req_t *req) {
 }
 
 /**
+ * SIP API Handlers
+ */
+
+// GET /api/sip - Get SIP configuration (without password)
+static esp_err_t api_sip_get_handler(httpd_req_t *req) {
+    sip_config_t config;
+    sip_status_t status;
+
+    sip_config_load(&config);
+    sip_get_status(&status);
+
+    char response[512];
+    snprintf(response, sizeof(response),
+        "{\"user\":\"%s\",\"displayname\":\"%s\",\"target\":\"%s\","
+        "\"registered\":%s,\"last_status\":%d}",
+        config.sip_user,
+        config.sip_displayname,
+        config.sip_target,
+        status.registered ? "true" : "false",
+        status.last_status_code);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, response, strlen(response));
+}
+
+// Helper to extract JSON string value
+static bool extract_json_string(const char *json, const char *key, char *out, size_t out_size) {
+    char search_key[64];
+    char *start, *end;
+    size_t len;
+
+    snprintf(search_key, sizeof(search_key), "\"%s\"", key);
+    start = strstr(json, search_key);
+    if (!start) return false;
+
+    start = strchr(start, ':');
+    if (!start) return false;
+
+    start = strchr(start, '"');
+    if (!start) return false;
+
+    start++;
+    end = strchr(start, '"');
+    if (!end) return false;
+
+    len = end - start;
+    if (len >= out_size) len = out_size - 1;
+    strncpy(out, start, len);
+    out[len] = '\0';
+    return true;
+}
+
+// Helper to extract JSON boolean value
+static bool extract_json_bool(const char *json, const char *key, bool *out) {
+    char search_key[64];
+    snprintf(search_key, sizeof(search_key), "\"%s\"", key);
+    const char *start = strstr(json, search_key);
+    if (!start) return false;
+
+    start = strchr(start, ':');
+    if (!start) return false;
+
+    // Skip whitespace
+    start++;
+    while (*start == ' ' || *start == '\t') start++;
+
+    if (strncmp(start, "true", 4) == 0) {
+        *out = true;
+        return true;
+    } else if (strncmp(start, "false", 5) == 0) {
+        *out = false;
+        return true;
+    }
+    return false;
+}
+
+// GET /api/features - Get feature toggle states
+static esp_err_t api_features_get_handler(httpd_req_t *req) {
+    char response[256];
+
+    bool sip_enabled = sip_is_enabled();
+
+    snprintf(response, sizeof(response),
+             "{\"sip_enabled\":%s,\"tr064_enabled\":false,\"http_cam_enabled\":false,\"rtsp_enabled\":false}",
+             sip_enabled ? "true" : "false");
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, response, strlen(response));
+}
+
+// POST /saveFeatures - Save feature toggle states
+static esp_err_t save_features_handler(httpd_req_t *req) {
+    char content[512];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+            httpd_resp_send_408(req);
+        }
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+
+    ESP_LOGI(TAG, "Saving features");
+
+    bool sip_enabled = true;
+    if (extract_json_bool(content, "sip_enabled", &sip_enabled)) {
+        sip_set_enabled(sip_enabled);
+        ESP_LOGI(TAG, "SIP feature %s", sip_enabled ? "enabled" : "disabled");
+    }
+
+    // TODO: Handle other feature toggles when implemented
+    // extract_json_bool(content, "tr064_enabled", &tr064_enabled);
+    // extract_json_bool(content, "http_cam_enabled", &http_cam_enabled);
+    // extract_json_bool(content, "rtsp_enabled", &rtsp_enabled);
+
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_send(req, "Features saved successfully", HTTPD_RESP_USE_STRLEN);
+}
+
+// POST /api/sip - Save SIP configuration
+static esp_err_t api_sip_post_handler(httpd_req_t *req) {
+    char content[256];
+    int ret;
+    sip_config_t config;
+
+    ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+            httpd_resp_send_408(req);
+        }
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+
+    ESP_LOGI(TAG, "Received SIP config");
+
+    memset(&config, 0, sizeof(config));
+
+    extract_json_string(content, "sip_user", config.sip_user, sizeof(config.sip_user));
+    extract_json_string(content, "sip_password", config.sip_password, sizeof(config.sip_password));
+    extract_json_string(content, "sip_displayname", config.sip_displayname, sizeof(config.sip_displayname));
+    extract_json_string(content, "sip_target", config.sip_target, sizeof(config.sip_target));
+
+    // Set defaults if not provided
+    if (config.sip_displayname[0] == '\0') {
+        strcpy(config.sip_displayname, "Doorbell");
+    }
+
+    if (sip_config_save(&config) == ESP_OK) {
+        const char *resp = "{\"success\":true,\"message\":\"SIP configuration saved\"}";
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_send(req, resp, strlen(resp));
+    } else {
+        const char *resp = "{\"success\":false,\"message\":\"Failed to save SIP configuration\"}";
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        return httpd_resp_send(req, resp, strlen(resp));
+    }
+}
+
+// POST /api/sip/ring - Trigger SIP ring (deferred to main loop)
+static esp_err_t api_sip_ring_handler(httpd_req_t *req) {
+    sip_config_t config;
+    if (!sip_config_load(&config) || !sip_config_valid(&config)) {
+        const char *resp = "{\"success\":false,\"message\":\"SIP not configured\"}";
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_send(req, resp, strlen(resp));
+    }
+
+    // Use deferred ring to avoid stack overflow in HTTP handler context
+    esp_err_t err = sip_request_ring();
+    if (err == ESP_OK) {
+        const char *resp = "{\"success\":true,\"message\":\"SIP ring initiated\"}";
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_send(req, resp, strlen(resp));
+    } else {
+        const char *resp = "{\"success\":false,\"message\":\"Failed to initiate SIP ring\"}";
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        return httpd_resp_send(req, resp, strlen(resp));
+    }
+}
+
+// Legacy POST /saveSIP handler for sip.html compatibility
+static esp_err_t save_sip_handler(httpd_req_t *req) {
+    return api_sip_post_handler(req);
+}
+
+// Legacy GET /ring/sip handler (deferred to main loop)
+static esp_err_t ring_sip_handler(httpd_req_t *req) {
+    sip_config_t config;
+    if (!sip_config_load(&config) || !sip_config_valid(&config)) {
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_send(req, "SIP not configured", HTTPD_RESP_USE_STRLEN);
+    }
+
+    // Use deferred ring to avoid stack overflow in HTTP handler context
+    esp_err_t err = sip_request_ring();
+    httpd_resp_set_type(req, "text/plain");
+    if (err == ESP_OK) {
+        return httpd_resp_send(req, "SIP ring initiated", HTTPD_RESP_USE_STRLEN);
+    } else {
+        return httpd_resp_send(req, "SIP ring failed", HTTPD_RESP_USE_STRLEN);
+    }
+}
+
+// GET /api/sip/verbose - Get verbose logging state
+static esp_err_t api_sip_verbose_get_handler(httpd_req_t *req) {
+    char response[64];
+    bool verbose = sip_verbose_logging();
+    snprintf(response, sizeof(response), "{\"verbose\":%s}", verbose ? "true" : "false");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, response, strlen(response));
+}
+
+// POST /api/sip/verbose - Set verbose logging state
+static esp_err_t api_sip_verbose_post_handler(httpd_req_t *req) {
+    char content[64];
+    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
+    if (ret <= 0) {
+        if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+            httpd_resp_send_408(req);
+        }
+        return ESP_FAIL;
+    }
+    content[ret] = '\0';
+
+    bool verbose = false;
+    if (extract_json_bool(content, "verbose", &verbose)) {
+        sip_set_verbose_logging(verbose);
+        ESP_LOGI(TAG, "SIP verbose logging %s", verbose ? "enabled" : "disabled");
+    }
+
+    char response[64];
+    snprintf(response, sizeof(response), "{\"verbose\":%s}", verbose ? "true" : "false");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, response, strlen(response));
+}
+
+/**
  * Stub handlers for legacy Arduino endpoints
  * These return empty/placeholder responses to prevent 404 errors
  */
@@ -513,9 +782,29 @@ static esp_err_t stub_device_status_handler(httpd_req_t *req) {
 }
 
 static esp_err_t stub_sip_debug_handler(httpd_req_t *req) {
-    const char *resp = "{\"sip_enabled\":false,\"message\":\"SIP not implemented yet\"}";
+    char response[512];
+    sip_config_t config;
+    bool has_config = sip_config_load(&config) && sip_config_valid(&config);
+    bool enabled = sip_is_enabled();
+    bool registered = sip_is_registered();
+    sip_status_t status;
+    sip_get_status(&status);
+
+    snprintf(response, sizeof(response),
+             "{\"sip_enabled\":%s,\"configured\":%s,\"registered\":%s,"
+             "\"user\":\"%s\",\"target\":\"%s\",\"displayname\":\"%s\","
+             "\"last_status\":%d,\"ringing\":%s}",
+             enabled ? "true" : "false",
+             has_config ? "true" : "false",
+             registered ? "true" : "false",
+             has_config ? config.sip_user : "",
+             has_config ? config.sip_target : "",
+             has_config ? config.sip_displayname : "",
+             status.last_status_code,
+             sip_ring_active() ? "true" : "false");
+
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, resp, strlen(resp));
+    httpd_resp_send(req, response, strlen(response));
     return ESP_OK;
 }
 
@@ -782,7 +1071,7 @@ httpd_handle_t web_server_start(void) {
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.lru_purge_enable = true;
     config.stack_size = 8192;
-    config.max_uri_handlers = 24;  // Increased to support captive portal handlers
+    config.max_uri_handlers = 32;  // Increased for all handlers including SIP API
 
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) != ESP_OK) {
@@ -839,6 +1128,23 @@ httpd_handle_t web_server_start(void) {
     };
     httpd_register_uri_handler(server, &api_logs_clear);
 
+    // Features API endpoints
+    httpd_uri_t api_features = {
+        .uri = "/api/features",
+        .method = HTTP_GET,
+        .handler = api_features_get_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &api_features);
+
+    httpd_uri_t save_features = {
+        .uri = "/saveFeatures",
+        .method = HTTP_POST,
+        .handler = save_features_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &save_features);
+
     // Register legacy Arduino endpoints for wifi-setup.html compatibility
     httpd_uri_t save_wifi = {
         .uri = "/saveWiFi",
@@ -888,6 +1194,64 @@ httpd_handle_t web_server_start(void) {
         .user_ctx = NULL
     };
     httpd_register_uri_handler(server, &stub_sip);
+
+    // SIP API endpoints
+    httpd_uri_t api_sip_get = {
+        .uri = "/api/sip",
+        .method = HTTP_GET,
+        .handler = api_sip_get_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &api_sip_get);
+
+    httpd_uri_t api_sip_post = {
+        .uri = "/api/sip",
+        .method = HTTP_POST,
+        .handler = api_sip_post_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &api_sip_post);
+
+    httpd_uri_t api_sip_ring = {
+        .uri = "/api/sip/ring",
+        .method = HTTP_POST,
+        .handler = api_sip_ring_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &api_sip_ring);
+
+    // Legacy SIP endpoints
+    httpd_uri_t save_sip = {
+        .uri = "/saveSIP",
+        .method = HTTP_POST,
+        .handler = save_sip_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &save_sip);
+
+    httpd_uri_t ring_sip = {
+        .uri = "/ring/sip",
+        .method = HTTP_GET,
+        .handler = ring_sip_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &ring_sip);
+
+    httpd_uri_t sip_verbose_get = {
+        .uri = "/api/sip/verbose",
+        .method = HTTP_GET,
+        .handler = api_sip_verbose_get_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &sip_verbose_get);
+
+    httpd_uri_t sip_verbose_post = {
+        .uri = "/api/sip/verbose",
+        .method = HTTP_POST,
+        .handler = api_sip_verbose_post_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &sip_verbose_post);
 
     httpd_uri_t stub_status = {
         .uri = "/status",
@@ -972,6 +1336,15 @@ httpd_handle_t web_server_start(void) {
         .user_ctx = NULL
     };
     httpd_register_uri_handler(server, &root);
+
+    // Register /capture handler to silently handle camera requests when camera is disabled
+    httpd_uri_t capture = {
+        .uri = "/capture",
+        .method = HTTP_GET,
+        .handler = stub_camera_info_handler,  // Reuse stub handler - returns "not implemented"
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &capture);
 
     // Register wildcard handler for assets (must be last)
     httpd_uri_t assets = {

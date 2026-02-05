@@ -90,10 +90,10 @@
             </div>
         </div>
 
-        <!-- SIP/TR-064 Card -->
+        <!-- SIP Card -->
         <div class="container card">
-            <h3 class="card-title">☎️ SIP/TR-064</h3>
-            <p>FRITZ!Box SIP/TR-064 integration for doorbell notifications.</p>
+            <h3 class="card-title">☎️ SIP</h3>
+            <p>FRITZ!Box SIP integration for doorbell notifications.</p>
             <div class="flash-stats" id="tr064Status">
                 <strong>Status:</strong> loading...
             </div>
@@ -414,7 +414,7 @@
                     let details = text || "SIP Ring failed";
                     try {
                         const info = await fetch("/sipDebug").then(r => r.json());
-                        details += `\nSIP debug: user=${info.sip_user} target=${info.sip_target} has_sip_config=${info.has_sip_config}`;
+                        details += `\nSIP debug: enabled=${info.sip_enabled} user=${info.user} target=${info.target} configured=${info.configured} registered=${info.registered}`;
                     } catch (err) {
                         details += "\nSIP debug unavailable";
                     }
@@ -431,8 +431,17 @@
             fetch("/sipDebug")
                 .then(r => r.json())
                 .then(data => {
-                    const sipCfg = data.has_sip_config ? "✓" : "✗";
-                    trStatusEl.innerHTML = `<strong>Status:</strong> SIP ${sipCfg} | user=${data.sip_user || "-"} | target=${data.sip_target || "-"}`;
+                    let status = "";
+                    if (!data.sip_enabled) {
+                        status = "disabled";
+                    } else if (!data.configured) {
+                        status = "not configured";
+                    } else if (data.registered) {
+                        status = "registered ✓";
+                    } else {
+                        status = "not registered";
+                    }
+                    trStatusEl.innerHTML = `<strong>Status:</strong> ${status} | user=${data.user || "-"} | target=${data.target || "-"}`;
                 })
                 .catch(() => {
                     trStatusEl.innerHTML = "<strong>Status:</strong> unavailable";
