@@ -17,6 +17,9 @@
 #include "freertos/task.h"
 #include "esp_system.h"
 #include "esp_log.h"
+#include "esp_sntp.h"
+#include <time.h>
+#include <sys/time.h>
 
 // Component headers
 #include "nvs_manager.h"
@@ -25,6 +28,8 @@
 #include "dns_server.h"
 #include "log_buffer.h"
 #include "sip_client.h"
+#include "button.h"
+#include "status_led.h"
 
 static const char *TAG = "main";
 static httpd_handle_t http_server = NULL;
@@ -37,6 +42,70 @@ static volatile bool web_server_pending = false;
 static volatile bool sip_init_pending = false;
 static volatile bool dns_server_pending = false;
 static volatile bool dns_stop_pending = false;
+static volatile bool sntp_init_pending = false;
+static bool sntp_initialized = false;
+
+/**
+ * SNTP time synchronization callback
+ */
+static void time_sync_notification_cb(struct timeval *tv) {
+    time_t now = time(NULL);
+    struct tm timeinfo;
+    localtime_r(&now, &timeinfo);
+    char strftime_buf[64];
+    strftime(strftime_buf, sizeof(strftime_buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+    ESP_LOGI(TAG, "Time synchronized: %s", strftime_buf);
+}
+
+/**
+ * Initialize SNTP for time synchronization
+ */
+static void initialize_sntp(void) {
+    if (sntp_initialized) {
+        return;
+    }
+
+    ESP_LOGI(TAG, "Initializing SNTP...");
+
+    // Set timezone to Germany (CET/CEST)
+    // CET-1CEST,M3.5.0,M10.5.0/3 means: Central European Time, 1 hour ahead of UTC
+    // DST starts last Sunday of March, ends last Sunday of October
+    setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
+    tzset();
+
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_set_time_sync_notification_cb(time_sync_notification_cb);
+    esp_sntp_init();
+
+    sntp_initialized = true;
+    ESP_LOGI(TAG, "SNTP initialized, waiting for time sync...");
+}
+
+/**
+ * Button press callback - triggers doorbell ring
+ */
+static void on_button_press(void) {
+    ESP_LOGI(TAG, "Doorbell button pressed!");
+
+    // Trigger status LED ring animation
+    status_led_mark_ring();
+
+    // Request SIP ring (deferred to main loop)
+    if (sip_initialized && sip_is_enabled()) {
+        esp_err_t err = sip_request_ring();
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "SIP ring requested");
+        } else {
+            ESP_LOGW(TAG, "SIP ring request failed: %s", esp_err_to_name(err));
+        }
+    } else {
+        ESP_LOGW(TAG, "SIP not available - ring not sent");
+    }
+
+    // TODO: Add Scrypted webhook trigger here
+    // TODO: Add gong relay trigger here
+}
 
 /**
  * WiFi event callback
@@ -49,6 +118,7 @@ static void wifi_event_callback(wifi_mgr_event_t event, void *data) {
             dns_stop_pending = true;
             web_server_pending = true;
             sip_init_pending = true;
+            sntp_init_pending = true;
             break;
 
         case WIFI_MGR_EVENT_STA_DISCONNECTED:
@@ -98,6 +168,24 @@ void app_main(void) {
     err = log_buffer_init();
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Log buffer init failed (non-fatal)");
+    }
+
+    // =====================================================================
+    // Initialize Status LED (early, for visual feedback)
+    // =====================================================================
+    err = status_led_init();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Status LED init failed (non-fatal)");
+    }
+
+    // =====================================================================
+    // Initialize Doorbell Button
+    // =====================================================================
+    err = button_init();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Button init failed (non-fatal)");
+    } else {
+        button_set_callback(on_button_press);
     }
 
     // =====================================================================
@@ -163,6 +251,12 @@ void app_main(void) {
             dns_server_start();
         }
 
+        // Process deferred SNTP initialization
+        if (sntp_init_pending && !sntp_initialized) {
+            sntp_init_pending = false;
+            initialize_sntp();
+        }
+
         // Process deferred web server start
         if (web_server_pending && !http_server) {
             web_server_pending = false;
@@ -219,6 +313,24 @@ void app_main(void) {
                 sip_register_if_needed(&sip_config);
             }
         }
+
+        // Poll doorbell button (handles debouncing)
+        button_poll();
+
+        // Update status LED state based on system state
+        bool is_ap_mode = !wifi_manager_has_credentials() || !wifi_manager_is_connected();
+        bool is_connecting = wifi_manager_has_credentials() && !wifi_manager_is_connected();
+        bool sip_ok = sip_initialized && sip_is_registered();
+        bool sip_error = sip_initialized && sip_config_valid_flag && !sip_ok;
+
+        status_led_set_state(LED_STATE_AP_MODE, is_ap_mode && !is_connecting);
+        status_led_set_state(LED_STATE_WIFI_CONNECTING, is_connecting);
+        status_led_set_state(LED_STATE_SIP_OK, sip_ok);
+        status_led_set_state(LED_STATE_SIP_ERROR, sip_error);
+        // TODO: Add RTSP active state when RTSP is implemented
+
+        // Update LED pattern
+        status_led_update();
 
         // Short delay for responsiveness (50ms)
         vTaskDelay(pdMS_TO_TICKS(50));

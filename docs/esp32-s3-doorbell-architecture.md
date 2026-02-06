@@ -92,7 +92,9 @@ Used with:
 
 ⸻
 
-🧱 Phase 1 — MVP Implementation ✅ COMPLETE
+🧱 Phase 1 — MVP Implementation ✅ COMPLETE (Arduino)
+
+**Note:** This phase was completed with the Arduino framework. The project is now migrating to pure ESP-IDF for better stability and control. See ESP-IDF Migration Status below.
 
 Focus:
 	•	✅ Video stream including audio using Onboard digital microphone (XIAO ESP32-S3 Sense) to Scrypted via RTSP
@@ -124,6 +126,33 @@ Expected result:
 	•	✅ Event appears in HSV timeline (if enabled)
 
 Audio streaming is now implemented for RTSP (AAC-LC) and a companion HTTP AAC stream. Use RTSP for Scrypted/HomeKit; the HTTP stream is for local browser/tools. SIP intercom audio still uses PCMU/PCMA. Advanced A/V sync and two-way audio remain Phase 2.
+
+⸻
+
+🔧 ESP-IDF Migration Status
+
+The project is migrating from Arduino to pure ESP-IDF for better reliability and control.
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Phase 0 | ✅ Complete | Pre-migration hygiene |
+| Phase 1 | ✅ Complete | IDF base (boot, NVS, WiFi, web) |
+| Phase 2 | ✅ Complete | Captive portal, log viewer, config |
+| Phase 3 | ✅ Complete | SIP client, button, LED, SNTP |
+| Phase 4 | ⏳ Next | Video path (RTSP/MJPEG) |
+| Phase 5 | ❌ Pending | Audio path with ESP-ADF |
+| Phase 6 | ❌ Pending | HomeKit doorbell integration |
+| Phase 7 | ❌ Pending | Cleanup & resilience |
+
+**ESP-IDF Components (src_idf/components/):**
+- `nvs_manager` - NVS abstraction
+- `wifi_manager` - WiFi STA/AP/APSTA modes
+- `web_server` - HTTP server + REST API
+- `dns_server` - Captive portal DNS
+- `log_buffer` - Ring buffer with timestamps
+- `sip_client` - SIP state machine + RTP
+- `button` - Doorbell button (GPIO4)
+- `status_led` - PWM LED patterns (GPIO2)
 
 ⸻
 
@@ -178,21 +207,23 @@ Power supply:
 	•	Supercapacitor bank provides ~45 second hold-up during gong relay activation
 	•	Full schematic and BOM in `docs/POWER_SUPPLY_DESIGNS.md`
 
-Status LED behavior (priority):
-	•	Ringing: breathing (dim in/out)
-	•	AP mode: fast double blink
-	•	WiFi connecting: 2 Hz blink
-	•	SIP error: slow pulse
-	•	SIP ok: steady low glow
-	•	RTSP active: short tick every 2 seconds
+Status LED behavior (priority order, highest first):
+	•	Ringing: breathing animation (1.4s period, 6s duration) ✅ Implemented
+	•	AP mode: fast double blink (1s period) ✅ Implemented
+	•	WiFi connecting: 2 Hz blink (500ms period) ✅ Implemented
+	•	SIP error: slow pulse (2s period) ✅ Implemented
+	•	SIP ok: steady low glow (duty 24/255) ✅ Implemented
+	•	RTSP active: short tick every 2 seconds (future)
 
 LED status codes (summary):
 	•	Double‑blink = AP provisioning mode (no saved Wi‑Fi credentials or AP mode forced).
-	•	Breathing = doorbell ringing active.
+	•	Breathing = doorbell ringing active (triggered by button or web test).
 	•	Steady low glow = SIP registered and idle.
-	•	Short tick = RTSP session active (overlaid on SIP OK).
+	•	Short tick = RTSP session active (overlaid on SIP OK) — not yet implemented.
 	•	2 Hz blink = Wi‑Fi connect in progress.
 	•	Slow pulse = SIP error (registration failed or timed out).
+
+**Implementation:** `src_idf/components/status_led/` - PWM via LEDC, 8-bit resolution, 5kHz.
 
 MAX98357A pin order (left → right): LRC, BCLK, DIN, GAIN, SC, GND, Vin
 
@@ -272,7 +303,13 @@ Current audio plan:
 
 ⸻
 
-🧷 Doorbell Button Hardware Plan
+🧷 Doorbell Button ✅ Implemented
+
+**Current Implementation (ESP-IDF):**
+- GPIO4, active-low with internal pull-up
+- 50ms debounce in software (polling-based)
+- Callback triggers SIP ring + LED animation
+- Component: `src_idf/components/button/`
 
 Two supported wiring strategies:
 	1.	Parallel AC detector module
@@ -285,7 +322,7 @@ Two supported wiring strategies:
 	•	Requires mild rewiring
 
 Current focus:
-👉 Detect press at button → provide clean GPIO edge to ESP.
+👉 Button press triggers SIP ring to Fritz!Box phones.
 
 ⸻
 

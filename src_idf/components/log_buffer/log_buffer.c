@@ -14,6 +14,8 @@
 #include <string.h>
 #include <stdarg.h>
 #include <strings.h>  // for strcasecmp
+#include <time.h>
+#include <sys/time.h>
 
 // Ring buffer configuration
 #define LOG_BUFFER_SIZE 100  // Number of log entries to store
@@ -142,7 +144,15 @@ static int log_vprintf(const char *fmt, va_list args) {
         if (log_mutex && xSemaphoreTake(log_mutex, 0) == pdTRUE) {
             log_entry_t *entry = &log_entries[log_head];
 
-            entry->timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000);
+            // Use actual time if SNTP synced (year > 2020), otherwise use uptime
+            time_t now = time(NULL);
+            struct tm timeinfo;
+            localtime_r(&now, &timeinfo);
+            if (timeinfo.tm_year > 120) {  // Year > 2020 means SNTP synced
+                entry->timestamp_ms = (uint32_t)now;  // Unix timestamp in seconds
+            } else {
+                entry->timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000);  // Uptime in ms
+            }
             parse_log_line(log_format_buffer, &entry->level, entry->tag, sizeof(entry->tag),
                            entry->message, sizeof(entry->message));
 

@@ -158,6 +158,7 @@ static struct sockaddr_in last_remote_addr;
 // Static buffers to avoid stack overflow (SIP is single-threaded)
 static char sip_msg_buf[SIP_MSG_BUF_SIZE];      // Main SIP message buffer
 static char sip_msg_buf2[SIP_MSG_BUF_SIZE];     // Secondary buffer for ACK during auth
+static char sip_rx_buf[SIP_MSG_BUF_SIZE];       // Receive buffer for incoming messages
 static char sip_sdp_buf[512];                    // SDP body buffer
 static char sip_auth_buf[512];                   // Auth calculation buffer
 static char sip_local_ip[16];                    // Cached local IP string
@@ -778,10 +779,6 @@ static int build_invite(char *buf, size_t len, const sip_config_t *config,
     snprintf(sip_target_buf, sizeof(sip_target_buf), "%s@%s", config->sip_target, SIP_DOMAIN);
     snprintf(sip_request_uri, sizeof(sip_request_uri), "sip:%s", sip_target_buf);
 
-    // auth_uri is small and constant, keep on stack
-    char auth_uri[32];
-    snprintf(auth_uri, sizeof(auth_uri), "sip:%s", SIP_DOMAIN);
-
     // Use static SDP buffer
     int sdp_len = build_sdp(sip_sdp_buf, sizeof(sip_sdp_buf), sip_local_ip);
 
@@ -803,8 +800,9 @@ static int build_invite(char *buf, size_t len, const sip_config_t *config,
         config->sip_user, sip_local_ip, LOCAL_SIP_PORT);
 
     if (with_auth && last_auth_challenge.valid) {
+        // Auth URI must match Request-URI for digest authentication
         written += build_auth_header(buf + written, len - written,
-            config->sip_user, config->sip_password, "INVITE", auth_uri, &last_auth_challenge);
+            config->sip_user, config->sip_password, "INVITE", sip_request_uri, &last_auth_challenge);
     }
 
     written += snprintf(buf + written, len - written,
@@ -993,45 +991,56 @@ static bool sip_send_to(uint32_t ip, uint16_t port, const char *msg, size_t len)
     return sent == len;
 }
 
-// Log SIP message (first line only, or full content if verbose)
+// Static buffer for verbose logging (single-line format)
+static char sip_log_line_buf[2048];
+
+// Log SIP message (first line only, or full content on one line if verbose)
 static void log_sip_message(const char *prefix, const char *msg, size_t msg_len) {
-    // Always log the first line
-    const char *end = strstr(msg, "\r\n");
-    if (!end) end = msg + strlen(msg);
+    if (msg_len == 0) msg_len = strlen(msg);
 
-    size_t line_len = end - msg;
-    if (line_len > 100) line_len = 100;  // Truncate very long first lines
-
-    char line_buf[104];
-    strncpy(line_buf, msg, line_len);
-    line_buf[line_len] = '\0';
-
-    ESP_LOGI(TAG, "%s: %s", prefix, line_buf);
-
-    // If verbose logging is enabled, log the full message
+    // If verbose logging is enabled, log the full message on one line
     if (verbose_logging) {
-        ESP_LOGI(TAG, "--- %s FULL MESSAGE ---", prefix);
-        // Log in chunks to avoid buffer overflow
-        const char *ptr = msg;
-        size_t remaining = msg_len > 0 ? msg_len : strlen(msg);
-        while (remaining > 0) {
-            size_t chunk = remaining > 200 ? 200 : remaining;
-            // Find a good break point (newline)
-            if (chunk < remaining) {
-                const char *nl = (const char *)memchr(ptr, '\n', chunk);
-                if (nl) chunk = nl - ptr + 1;
+        // Copy message and replace \r\n with | for single-line display
+        size_t out_idx = 0;
+        size_t max_len = sizeof(sip_log_line_buf) - 4;  // Leave room for "..."
+
+        for (size_t i = 0; i < msg_len && out_idx < max_len; i++) {
+            if (msg[i] == '\r') {
+                // Skip \r
+                continue;
+            } else if (msg[i] == '\n') {
+                // Replace \n with " | "
+                if (out_idx + 3 < max_len) {
+                    sip_log_line_buf[out_idx++] = ' ';
+                    sip_log_line_buf[out_idx++] = '|';
+                    sip_log_line_buf[out_idx++] = ' ';
+                }
+            } else {
+                sip_log_line_buf[out_idx++] = msg[i];
             }
-            char chunk_buf[204];
-            strncpy(chunk_buf, ptr, chunk);
-            chunk_buf[chunk] = '\0';
-            // Remove trailing \r\n for cleaner output
-            char *cr = strchr(chunk_buf, '\r');
-            if (cr && cr[1] == '\n' && cr[2] == '\0') *cr = '\0';
-            ESP_LOGI(TAG, "%s", chunk_buf);
-            ptr += chunk;
-            remaining -= chunk;
         }
-        ESP_LOGI(TAG, "--- END %s ---", prefix);
+
+        // Add truncation marker if needed
+        if (out_idx >= max_len) {
+            sip_log_line_buf[out_idx++] = '.';
+            sip_log_line_buf[out_idx++] = '.';
+            sip_log_line_buf[out_idx++] = '.';
+        }
+        sip_log_line_buf[out_idx] = '\0';
+
+        ESP_LOGI(TAG, "%s: %s", prefix, sip_log_line_buf);
+    } else {
+        // Just log the first line
+        const char *end = strstr(msg, "\r\n");
+        if (!end) end = msg + msg_len;
+
+        size_t line_len = end - msg;
+        if (line_len > 127) line_len = 127;
+
+        strncpy(sip_log_line_buf, msg, line_len);
+        sip_log_line_buf[line_len] = '\0';
+
+        ESP_LOGI(TAG, "%s: %s", prefix, sip_log_line_buf);
     }
 }
 
@@ -1459,12 +1468,16 @@ void sip_check_pending_ring(const sip_config_t *config) {
     if (!ring_requested) return;
     ring_requested = false;
 
-    if (!config || !sip_config_valid(config)) {
+    // Always reload config from NVS to get latest saved values
+    // (the passed config may be stale from boot time)
+    sip_config_t fresh_config;
+    if (!sip_config_load(&fresh_config) || !sip_config_valid(&fresh_config)) {
         ESP_LOGW(TAG, "Cannot ring: invalid config");
         return;
     }
 
-    esp_err_t err = sip_ring(config);
+    ESP_LOGI(TAG, "Ring target from config: %s", fresh_config.sip_target);
+    esp_err_t err = sip_ring(&fresh_config);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Deferred ring failed: %s", esp_err_to_name(err));
     }
@@ -1567,38 +1580,38 @@ void sip_ring_process(void) {
 void sip_handle_incoming(void) {
     if (!is_sip_network_ready()) return;
 
-    char buf[SIP_MSG_BUF_SIZE];
+    // Use static buffer to avoid stack overflow (sip_rx_buf defined at file scope)
     socklen_t addr_len = sizeof(last_remote_addr);
 
     // Use MSG_DONTWAIT for non-blocking receive (socket is blocking by default)
-    ssize_t len = recvfrom(sip_socket, buf, sizeof(buf) - 1, MSG_DONTWAIT,
+    ssize_t len = recvfrom(sip_socket, sip_rx_buf, SIP_MSG_BUF_SIZE - 1, MSG_DONTWAIT,
                            (struct sockaddr *)&last_remote_addr, &addr_len);
     if (len <= 0) return;
 
-    buf[len] = '\0';
+    sip_rx_buf[len] = '\0';
 
     // Log received message
     char ip_str[16];
     ip_to_str(last_remote_addr.sin_addr.s_addr, ip_str, sizeof(ip_str));
     ESP_LOGI(TAG, "<<< SIP RX from %s:%d (%d bytes)",
              ip_str, ntohs(last_remote_addr.sin_port), (int)len);
-    log_sip_message("RX", buf, len);
+    log_sip_message("RX", sip_rx_buf, len);
 
     // Check if it's a response or request
-    if (strncmp(buf, "SIP/2.0", 7) != 0) {
+    if (strncmp(sip_rx_buf, "SIP/2.0", 7) != 0) {
         // It's a request
-        char *space = strchr(buf, ' ');
+        char *space = strchr(sip_rx_buf, ' ');
         if (!space) return;
 
         char method[16];
-        size_t method_len = space - buf;
+        size_t method_len = space - sip_rx_buf;
         if (method_len >= sizeof(method)) method_len = sizeof(method) - 1;
-        strncpy(method, buf, method_len);
+        strncpy(method, sip_rx_buf, method_len);
         method[method_len] = '\0';
 
         if (strcasecmp(method, "OPTIONS") == 0) {
             // Use static buffer to avoid stack overflow
-            int resp_len = build_ok_response(sip_msg_buf, sizeof(sip_msg_buf), buf);
+            int resp_len = build_ok_response(sip_msg_buf, sizeof(sip_msg_buf), sip_rx_buf);
             if (resp_len > 0) {
                 ESP_LOGD(TAG, "Responding to OPTIONS");
                 sip_send_response(sip_msg_buf, resp_len);
@@ -1608,7 +1621,7 @@ void sip_handle_incoming(void) {
 
         if (strcasecmp(method, "BYE") == 0 || strcasecmp(method, "CANCEL") == 0) {
             // Use static buffer to avoid stack overflow
-            int resp_len = build_ok_response(sip_msg_buf, sizeof(sip_msg_buf), buf);
+            int resp_len = build_ok_response(sip_msg_buf, sizeof(sip_msg_buf), sip_rx_buf);
             if (resp_len > 0) {
                 sip_send_response(sip_msg_buf, resp_len);
             }
@@ -1632,34 +1645,34 @@ void sip_handle_incoming(void) {
     if (!pending_invite.active) return;
 
     char resp_call_id[64];
-    if (!extract_header(buf, "Call-ID", resp_call_id, sizeof(resp_call_id))) return;
+    if (!extract_header(sip_rx_buf, "Call-ID", resp_call_id, sizeof(resp_call_id))) return;
     if (strcasecmp(resp_call_id, pending_invite.call_id) != 0) return;
 
     uint32_t resp_cseq;
     char resp_method[16];
-    if (!parse_cseq(buf, &resp_cseq, resp_method, sizeof(resp_method))) return;
+    if (!parse_cseq(sip_rx_buf, &resp_cseq, resp_method, sizeof(resp_method))) return;
     if (strcasecmp(resp_method, "INVITE") != 0) return;
 
-    int status = get_status_code(buf);
+    int status = get_status_code(sip_rx_buf);
     bool is_current = (resp_cseq == pending_invite.cseq);
 
     // Extract To tag and Contact for later use
     char to_tag[32];
-    if (extract_to_tag(buf, to_tag, sizeof(to_tag))) {
+    if (extract_to_tag(sip_rx_buf, to_tag, sizeof(to_tag))) {
         if (to_tag[0] && is_current) {
             strncpy(pending_invite.to_tag, to_tag, sizeof(pending_invite.to_tag) - 1);
         }
     }
 
     char contact_uri[256];
-    if (extract_contact_uri(buf, contact_uri, sizeof(contact_uri))) {
+    if (extract_contact_uri(sip_rx_buf, contact_uri, sizeof(contact_uri))) {
         if (contact_uri[0] && is_current) {
             strncpy(pending_invite.remote_target, contact_uri, sizeof(pending_invite.remote_target) - 1);
         }
     }
 
     // Parse SDP if present
-    const char *sdp = extract_sdp_body(buf);
+    const char *sdp = extract_sdp_body(sip_rx_buf);
     if (sdp && is_current) {
         parse_sdp_media(sdp, last_remote_addr.sin_addr.s_addr, &pending_invite.media);
         pending_invite.media_ready = (pending_invite.media.remote_port > 0);
@@ -1669,7 +1682,7 @@ void sip_handle_incoming(void) {
         // Need to send ACK for non-2xx responses
         // Use static buffers to avoid stack overflow
         char branch[64];
-        extract_via_branch(buf, branch, sizeof(branch));
+        extract_via_branch(sip_rx_buf, branch, sizeof(branch));
 
         int ack_len = build_ack(sip_msg_buf2, sizeof(sip_msg_buf2), &pending_invite.config,
                                 pending_invite.from_tag, to_tag, pending_invite.call_id,
@@ -1681,7 +1694,7 @@ void sip_handle_incoming(void) {
         if (!is_current || pending_invite.auth_sent) return;
 
         ESP_LOGI(TAG, "INVITE needs authentication");
-        parse_auth_challenge(buf, &last_auth_challenge);
+        parse_auth_challenge(sip_rx_buf, &last_auth_challenge);
 
         if (last_auth_challenge.valid) {
             pending_invite.cseq++;
@@ -1725,7 +1738,7 @@ void sip_handle_incoming(void) {
     if (status >= 300) {
         // Final error response - need to ACK (use static buffer)
         char branch[64];
-        extract_via_branch(buf, branch, sizeof(branch));
+        extract_via_branch(sip_rx_buf, branch, sizeof(branch));
 
         int ack_len = build_ack(sip_msg_buf, sizeof(sip_msg_buf), &pending_invite.config,
                                 pending_invite.from_tag, to_tag, pending_invite.call_id,

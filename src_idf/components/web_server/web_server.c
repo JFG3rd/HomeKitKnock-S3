@@ -1071,7 +1071,7 @@ httpd_handle_t web_server_start(void) {
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.lru_purge_enable = true;
     config.stack_size = 8192;
-    config.max_uri_handlers = 32;  // Increased for all handlers including SIP API
+    config.max_uri_handlers = 40;  // Increased for all handlers including SIP API and verbose logging
 
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) != ESP_OK) {

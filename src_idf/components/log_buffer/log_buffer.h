@@ -18,7 +18,7 @@ extern "C" {
 
 // Log entry structure
 typedef struct {
-    uint32_t timestamp_ms;      // Milliseconds since boot
+    uint32_t timestamp_ms;      // Unix timestamp (seconds) if SNTP synced, else uptime (ms)
     esp_log_level_t level;      // Log level (E/W/I/D/V)
     char tag[24];               // Component tag
     char message[200];          // Log message (truncated if needed)
