@@ -134,8 +134,9 @@ body {
     display: flex;
     flex-direction: column;
     height: 100%;
-    min-height: 100%;
-    overflow: hidden;
+    min-height: 100vh;
+    overflow-x: hidden;
+    overflow-y: auto;
 }
 
 .full-width-page {
@@ -163,8 +164,8 @@ h1 {
 
 /* Header container with title aligned left */
 .header-container {
+    flex: 0 0 auto;
     text-align: left;
-    flex-grow: 1;
     margin: 0;
     padding: 0;
 }
@@ -200,13 +201,12 @@ h3 {
 /* Container Styles */
 .container {
     max-width: 420px;
-    margin: auto;
+    margin: 0 auto;
     padding: 20px;
     background: var(--card-bg);
     color: var(--card-text);
     border-radius: 10px;
     box-shadow: var(--card-shadow);
-    min-height: 500px;
     display: flex;
     flex-direction: column;
 }
@@ -225,10 +225,12 @@ h3 {
 
 /* Three-column dashboard layout */
 .dashboard {
+    flex: 1 1 auto;
     display: flex;
     gap: 20px;
-    align-items: stretch;
+    align-items: flex-start;
     justify-content: center;
+    flex-direction: row;
     flex-wrap: wrap;
     max-width: 1400px;
     margin: 0 auto;
@@ -236,14 +238,12 @@ h3 {
 }
 
 .card {
-    flex: 1 1 300px;
+    flex: 1;
     min-width: 300px;
     max-width: 420px;
-    min-height: 550px;
 }
 
 .setup-card {
-    height: 620px;
     overflow-y: auto;
 }
 
@@ -1155,29 +1155,28 @@ footer {
 }
 
 @media screen and (max-width: 900px) {
-    .container {
-        min-height: auto;
-    }
-
-    .card {
-        min-height: auto;
-        height: auto;
-    }
-
     .setup-card {
-        height: auto;
         overflow-y: visible;
     }
 }
 
 @media screen and (min-width: 1001px) {
+    body {
+        overflow: hidden;
+    }
+
     .dashboard {
         flex-wrap: nowrap;
+        align-items: stretch;
     }
 
     .card {
         flex: 1 1 0;
         max-width: none;
+    }
+
+    .setup-card {
+        overflow-y: auto;
     }
 }
 

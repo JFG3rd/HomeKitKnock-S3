@@ -11,10 +11,10 @@
 
 static const char *TAG = "status_led";
 
-// LEDC configuration
-#define LEDC_TIMER          LEDC_TIMER_0
+// LEDC configuration (use timer 1 / channel 1 to avoid conflict with camera XCLK on ch 0)
+#define LEDC_TIMER          LEDC_TIMER_1
 #define LEDC_MODE           LEDC_LOW_SPEED_MODE
-#define LEDC_CHANNEL        LEDC_CHANNEL_0
+#define LEDC_CHANNEL        LEDC_CHANNEL_1
 #define LEDC_FREQ_HZ        5000
 #define LEDC_RESOLUTION     LEDC_TIMER_8_BIT
 #define LEDC_MAX_DUTY       ((1 << 8) - 1)

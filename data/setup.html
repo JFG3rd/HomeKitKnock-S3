@@ -560,6 +560,24 @@
                         document.getElementById("contrast").value = data.contrast;
                         updateRangeDisplay(document.getElementById("contrast"), contrastValueEl);
                     }
+                    if (data.mic_enabled !== undefined) {
+                        document.getElementById("mic_enabled").checked = data.mic_enabled;
+                    }
+                    if (data.mic_muted !== undefined) {
+                        document.getElementById("mic_muted").checked = data.mic_muted;
+                    }
+                    if (data.mic_sensitivity !== undefined) {
+                        document.getElementById("mic_sensitivity").value = data.mic_sensitivity;
+                        updateRangeDisplay(document.getElementById("mic_sensitivity"), micSensitivityValueEl);
+                    }
+                    if (data.aac_sample_rate !== undefined) {
+                        document.getElementById("aac_sample_rate").value = data.aac_sample_rate;
+                    }
+                    if (data.aac_bitrate !== undefined) {
+                        document.getElementById("aac_bitrate").value = data.aac_bitrate;
+                        applyAacBitrateBounds();
+                    }
+                    updateAudioUi();
                 })
                 .catch(() => {
                     cameraSetupStatusEl.innerHTML = "<strong>Camera:</strong> unavailable";
@@ -571,13 +589,23 @@
             const q = document.getElementById("quality").value;
             const b = document.getElementById("brightness").value;
             const c = document.getElementById("contrast").value;
+            const micEn = document.getElementById("mic_enabled").checked ? 1 : 0;
+            const micMute = document.getElementById("mic_muted").checked ? 1 : 0;
+            const micSens = document.getElementById("mic_sensitivity").value;
+            const aacRate = document.getElementById("aac_sample_rate").value;
+            const aacBitr = document.getElementById("aac_bitrate").value;
             Promise.all([
                 fetch(`/control?var=framesize&val=${fs}`),
                 fetch(`/control?var=quality&val=${q}`),
                 fetch(`/control?var=brightness&val=${b}`),
-                fetch(`/control?var=contrast&val=${c}`)
+                fetch(`/control?var=contrast&val=${c}`),
+                fetch(`/control?var=mic_enabled&val=${micEn}`),
+                fetch(`/control?var=mic_muted&val=${micMute}`),
+                fetch(`/control?var=mic_sensitivity&val=${micSens}`),
+                fetch(`/control?var=aac_sample_rate&val=${aacRate}`),
+                fetch(`/control?var=aac_bitrate&val=${aacBitr}`)
             ]).then(() => {
-                alert(`Applied camera settings: framesize=${fs}, quality=${q}, brightness=${b}, contrast=${c}`);
+                alert("Camera settings applied and saved.");
                 fetchCameraSetupStatus();
             }).catch(() => alert("Failed to apply camera settings"));
         }

@@ -13,6 +13,9 @@ set(IDF_COMPONENT_MANAGER 0 CACHE BOOL "Disable ESP-IDF component manager" FORCE
 # Phase 1 components (nvs_manager, wifi_manager, web_server)
 list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_SOURCE_DIR}/src_idf/components")
 
+# esp32-camera library (from PlatformIO lib_deps)
+list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_SOURCE_DIR}/.pio/libdeps/seeed_xiao_esp32s3_idf/esp32-camera")
+
 # ESP-ADF components (commented out for Phase 1, will add back in Phase 5)
 # Append minimal ADF components without overriding PlatformIO's EXTRA_COMPONENT_DIRS
 # (which includes src/ and Arduino framework).

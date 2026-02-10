@@ -6,6 +6,8 @@
 #include "wifi_manager.h"
 #include "log_buffer.h"
 #include "sip_client.h"
+#include "camera.h"
+#include "mjpeg_server.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_app_format.h"
@@ -589,10 +591,12 @@ static esp_err_t api_features_get_handler(httpd_req_t *req) {
     char response[256];
 
     bool sip_enabled = sip_is_enabled();
+    bool http_cam_enabled = camera_is_enabled();
 
     snprintf(response, sizeof(response),
-             "{\"sip_enabled\":%s,\"tr064_enabled\":false,\"http_cam_enabled\":false,\"rtsp_enabled\":false}",
-             sip_enabled ? "true" : "false");
+             "{\"sip_enabled\":%s,\"tr064_enabled\":false,\"http_cam_enabled\":%s,\"rtsp_enabled\":false}",
+             sip_enabled ? "true" : "false",
+             http_cam_enabled ? "true" : "false");
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, response, strlen(response));
@@ -618,9 +622,14 @@ static esp_err_t save_features_handler(httpd_req_t *req) {
         ESP_LOGI(TAG, "SIP feature %s", sip_enabled ? "enabled" : "disabled");
     }
 
+    bool http_cam_enabled = false;
+    if (extract_json_bool(content, "http_cam_enabled", &http_cam_enabled)) {
+        camera_set_enabled(http_cam_enabled);
+        ESP_LOGI(TAG, "HTTP camera feature %s", http_cam_enabled ? "enabled" : "disabled");
+    }
+
     // TODO: Handle other feature toggles when implemented
     // extract_json_bool(content, "tr064_enabled", &tr064_enabled);
-    // extract_json_bool(content, "http_cam_enabled", &http_cam_enabled);
     // extract_json_bool(content, "rtsp_enabled", &rtsp_enabled);
 
     httpd_resp_set_type(req, "text/plain");
@@ -752,11 +761,85 @@ static esp_err_t api_sip_verbose_post_handler(httpd_req_t *req) {
  * Stub handlers for legacy Arduino endpoints
  * These return empty/placeholder responses to prevent 404 errors
  */
-static esp_err_t stub_camera_info_handler(httpd_req_t *req) {
-    const char *resp = "{\"streaming\":false,\"message\":\"Camera not implemented yet\"}";
+/**
+ * Handler for single JPEG snapshot
+ * GET /capture
+ */
+static esp_err_t capture_handler(httpd_req_t *req) {
+    if (!camera_is_ready()) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Camera not ready");
+        return ESP_OK;
+    }
+
+    camera_fb_t *fb = camera_capture();
+    if (!fb) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Capture failed");
+        return ESP_OK;
+    }
+
+    httpd_resp_set_type(req, "image/jpeg");
+    httpd_resp_set_hdr(req, "Content-Disposition", "inline; filename=capture.jpg");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    esp_err_t err = httpd_resp_send(req, (const char *)fb->buf, fb->len);
+    camera_return_fb(fb);
+
+    return err;
+}
+
+/**
+ * Handler for camera stream info
+ * GET /cameraStreamInfo
+ */
+static esp_err_t camera_stream_info_handler(httpd_req_t *req) {
+    char response[256];
+    bool cam_ready = camera_is_ready();
+    bool streaming = mjpeg_server_is_running();
+    uint8_t clients = mjpeg_server_client_count();
+
+    snprintf(response, sizeof(response),
+             "{\"camera_ready\":%s,\"streaming\":%s,\"stream_port\":81,\"clients\":%d}",
+             cam_ready ? "true" : "false",
+             streaming ? "true" : "false",
+             clients);
+
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, resp, strlen(resp));
-    return ESP_OK;
+    return httpd_resp_send(req, response, strlen(response));
+}
+
+/**
+ * Handler for camera control
+ * GET /control?var=framesize&val=8
+ * Applies setting to sensor and persists to NVS
+ */
+static esp_err_t camera_control_handler(httpd_req_t *req) {
+    char query[64] = {0};
+    char var[16] = {0};
+    char val_str[8] = {0};
+
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query");
+        return ESP_OK;
+    }
+
+    if (httpd_query_key_value(query, "var", var, sizeof(var)) != ESP_OK ||
+        httpd_query_key_value(query, "val", val_str, sizeof(val_str)) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing var or val");
+        return ESP_OK;
+    }
+
+    int val = atoi(val_str);
+    esp_err_t err = camera_set_control(var, val);
+
+    if (err == ESP_OK) {
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_send(req, "OK", 2);
+    } else if (err == ESP_ERR_INVALID_STATE) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Camera not ready");
+        return ESP_OK;
+    } else {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid setting");
+        return ESP_OK;
+    }
 }
 
 static esp_err_t stub_device_status_handler(httpd_req_t *req) {
@@ -808,12 +891,38 @@ static esp_err_t stub_sip_debug_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-static esp_err_t stub_status_handler(httpd_req_t *req) {
-    // Redirect to /api/status
-    httpd_resp_set_status(req, "307 Temporary Redirect");
-    httpd_resp_set_hdr(req, "Location", "/api/status");
-    httpd_resp_send(req, NULL, 0);
-    return ESP_OK;
+/**
+ * Handler for /status - returns system + camera info
+ * The setup.html fetchCameraSetupStatus() calls this
+ */
+static esp_err_t combined_status_handler(httpd_req_t *req) {
+    char response[768];
+    char ip[16] = "Not connected";
+    if (wifi_manager_is_connected()) {
+        wifi_manager_get_ip(ip, sizeof(ip));
+    }
+
+    uint32_t free_heap = esp_get_free_heap_size();
+    uint32_t uptime_sec = esp_log_timestamp() / 1000;
+
+    // Get camera + mic/audio status fields
+    char cam_json[384] = {0};
+    camera_get_status_json(cam_json, sizeof(cam_json));
+
+    // Merge system + camera fields
+    // cam_json starts with '{' and ends with '}', strip those for merging
+    char *cam_inner = cam_json + 1;  // skip '{'
+    size_t cam_len = strlen(cam_json);
+    if (cam_len > 1) cam_json[cam_len - 1] = '\0';  // remove '}'
+
+    snprintf(response, sizeof(response),
+             "{\"wifi_connected\":%s,\"ip\":\"%s\",\"uptime\":%lu,\"free_heap\":%lu,%s}",
+             wifi_manager_is_connected() ? "true" : "false",
+             ip, uptime_sec, free_heap,
+             cam_inner);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, response, strlen(response));
 }
 
 /**
@@ -1170,14 +1279,14 @@ httpd_handle_t web_server_start(void) {
     };
     httpd_register_uri_handler(server, &wifi_scan_results);
 
-    // Register stub endpoints for legacy Arduino compatibility
-    httpd_uri_t stub_camera = {
+    // Camera stream info endpoint
+    httpd_uri_t camera_info = {
         .uri = "/cameraStreamInfo",
         .method = HTTP_GET,
-        .handler = stub_camera_info_handler,
+        .handler = camera_stream_info_handler,
         .user_ctx = NULL
     };
-    httpd_register_uri_handler(server, &stub_camera);
+    httpd_register_uri_handler(server, &camera_info);
 
     httpd_uri_t stub_device = {
         .uri = "/deviceStatus",
@@ -1253,13 +1362,22 @@ httpd_handle_t web_server_start(void) {
     };
     httpd_register_uri_handler(server, &sip_verbose_post);
 
-    httpd_uri_t stub_status = {
+    httpd_uri_t status = {
         .uri = "/status",
         .method = HTTP_GET,
-        .handler = stub_status_handler,
+        .handler = combined_status_handler,
         .user_ctx = NULL
     };
-    httpd_register_uri_handler(server, &stub_status);
+    httpd_register_uri_handler(server, &status);
+
+    // Camera control endpoint (GET /control?var=framesize&val=8)
+    httpd_uri_t control = {
+        .uri = "/control",
+        .method = HTTP_GET,
+        .handler = camera_control_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &control);
 
     httpd_uri_t restart = {
         .uri = "/restart",
@@ -1337,11 +1455,11 @@ httpd_handle_t web_server_start(void) {
     };
     httpd_register_uri_handler(server, &root);
 
-    // Register /capture handler to silently handle camera requests when camera is disabled
+    // JPEG snapshot endpoint
     httpd_uri_t capture = {
         .uri = "/capture",
         .method = HTTP_GET,
-        .handler = stub_camera_info_handler,  // Reuse stub handler - returns "not implemented"
+        .handler = capture_handler,
         .user_ctx = NULL
     };
     httpd_register_uri_handler(server, &capture);
@@ -1364,7 +1482,8 @@ httpd_handle_t web_server_start(void) {
              config.server_port, embedded_files_count);
     ESP_LOGI(TAG, "API endpoints: /api/wifi, /api/status, /api/ota");
     ESP_LOGI(TAG, "WiFi endpoints: /saveWiFi, /scanWifi, /wifiScanResults");
-    ESP_LOGI(TAG, "Stub endpoints: /cameraStreamInfo, /deviceStatus, /sipDebug, /status");
+    ESP_LOGI(TAG, "Camera endpoints: /capture, /cameraStreamInfo, /control, /status");
+    ESP_LOGI(TAG, "Other endpoints: /deviceStatus, /sipDebug, /status");
     return server;
 }
 

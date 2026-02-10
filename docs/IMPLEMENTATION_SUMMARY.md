@@ -2,18 +2,29 @@
  Project: HomeKitKnock-S3
  File: docs/IMPLEMENTATION_SUMMARY.md
  Author: Jesse Greene
- Last Updated: February 6, 2026
+ Last Updated: February 10, 2026
  -->
 
 # ESP32-S3 Doorbell - Implementation Summary
 
-## Project Status: ESP-IDF Migration Phase 3 Complete ✅
+## Project Status: ESP-IDF Migration Phase 4 In Progress 🔧
 
-The project has successfully completed Phase 3: SIP client integration. The doorbell can now ring Fritz!Box DECT phones via SIP, with physical button input and visual status LED feedback.
+Phases 0-3 complete. Phase 4 (Video Path) is substantially done: camera streaming, JPEG snapshots, camera config with NVS persistence all working. RTSP server is the remaining Phase 4 task.
 
 ---
 
 ## What's Working
+
+### Camera & MJPEG Streaming ✅ (Phase 4)
+- **OV2640 Camera**: VGA JPEG, 2 frame buffers in PSRAM (8MB OPI)
+- **MJPEG HTTP Stream**: Port 81, raw lwIP sockets, max 2 concurrent clients, TCP_NODELAY
+- **JPEG Snapshot**: `/capture` endpoint returns single frame
+- **Camera Config**: Framesize, quality, brightness, contrast — runtime apply + NVS persistence
+- **Mic/Audio Config**: mic_enabled, mic_muted, sensitivity, AAC sample rate, bitrate — NVS persistence (hardware Phase 5)
+- **Feature Toggle**: HTTP camera enable/disable via setup page, gated camera initialization
+- **Combined Status**: `/status` endpoint returns system + camera + audio fields
+- **Setup Page**: Camera Config card with sliders, Apply button, settings load on page open
+- **Deferred Init**: Camera initializes after WiFi connects (if feature enabled)
 
 ### SIP Intercom ✅ (Phase 3)
 - **SIP Registration**: Automatic registration with Fritz!Box
@@ -76,7 +87,9 @@ src_idf/
 │   ├── config_manager/                  # Settings storage
 │   ├── sip_client/                      # SIP state machine + RTP
 │   ├── button/                          # Doorbell button handler
-│   └── status_led/                      # PWM LED patterns
+│   ├── status_led/                      # PWM LED patterns
+│   ├── camera/                          # OV2640 driver + NVS config (Phase 4)
+│   └── mjpeg_server/                    # MJPEG HTTP stream port 81 (Phase 4)
 ├── generated/embedded_web_assets.*      # Gzip assets (auto-generated)
 ```
 
@@ -89,6 +102,7 @@ src_idf/
 [3/5] WiFi Manager Init (esp_netif + events)
 [4/5] WiFi Start (STA if credentials, else AP+DNS)
 [5/5] Web Server + SIP Client (via WiFi event callback)
+[6/6] Camera Init + MJPEG Server Start (deferred, after WiFi GOT_IP, if enabled)
 ```
 
 ### Main Loop
@@ -96,6 +110,8 @@ src_idf/
 - Status LED updates (pattern based on system state)
 - SIP processing (registration, call handling)
 - SNTP initialization (when WiFi connected)
+- Deferred camera init (when WiFi connected + camera enabled)
+- MJPEG client count tracking for LED state
 
 ### API Endpoints
 | Endpoint | Method | Purpose |
@@ -103,19 +119,27 @@ src_idf/
 | `/` | GET | Redirect based on WiFi state |
 | `/api/wifi` | POST | Save WiFi credentials |
 | `/api/wifi` | DELETE | Clear WiFi credentials |
-| `/api/status` | GET | System status JSON |
+| `/api/status` | GET | System status JSON (detailed) |
 | `/api/ota` | POST | Firmware update |
 | `/api/logs` | GET | Get logs with filter |
 | `/api/logs` | DELETE | Clear log buffer |
+| `/api/features` | GET | Feature toggle states |
 | `/api/sip` | GET | Get SIP config (without password) |
 | `/api/sip` | POST | Save SIP config |
 | `/api/sip/ring` | POST | Trigger SIP ring |
 | `/api/sip/verbose` | GET/POST | Verbose logging toggle |
+| `/capture` | GET | JPEG snapshot (Phase 4) |
+| `/cameraStreamInfo` | GET | Camera/streaming status (Phase 4) |
+| `/control` | GET | Camera/mic settings `?var=X&val=Y` (Phase 4) |
+| `/status` | GET | Combined system + camera + audio JSON (Phase 4) |
+| `/saveFeatures` | POST | Save feature toggles |
 | `/ring/sip` | GET | Legacy SIP ring trigger |
 | `/saveWiFi` | POST | Legacy credential save |
 | `/saveSIP` | POST | Legacy SIP config save |
 | `/scanWifi` | GET | Start WiFi scan |
 | `/wifiScanResults` | GET | Get scan results (deduplicated) |
+| `/deviceStatus` | GET | Basic device status |
+| `/sipDebug` | GET | SIP debug info |
 | `/restart` | GET | Restart with progress UI |
 
 ### Web Pages
@@ -125,6 +149,7 @@ src_idf/
 | `wifi-setup.html` | WiFi provisioning |
 | `logs.html` | Log viewer with filters |
 | `ota.html` | Firmware update |
+| `setup.html` | Device setup — camera config, feature toggles, Scrypted |
 | `sip.html` | SIP configuration |
 | `live.html` | Live A/V viewer (Phase 4) |
 
@@ -139,8 +164,11 @@ src_idf/
 | GPIO1 | Door Opener Relay | Active-high (future) |
 | GPIO3 | Gong Relay | Active-high (future) |
 | GPIO5/6 | I2C | Reserved for sensors |
-| GPIO7/8/9 | I2S DAC | MAX98357A audio output (future) |
-| GPIO41/42 | PDM Mic | Onboard microphone (future) |
+| GPIO7/8/9 | I2S0 DAC | MAX98357A speaker output (Phase 5) |
+| GPIO41/42 | PDM Mic | Onboard microphone (Phase 5) |
+| GPIO43 (D6) | I2S1 SCK | INMP441 external mic BCLK (Phase 5) |
+| GPIO44 (D7) | I2S1 WS | INMP441 external mic LRCLK (Phase 5) |
+| GPIO12 (D11) | I2S1 SD | INMP441 external mic data, back expansion (Phase 5) |
 
 ---
 
@@ -158,6 +186,8 @@ src_idf/
 | `src_idf/components/sip_client/*` | SIP client + RTP |
 | `src_idf/components/button/*` | Doorbell button handler |
 | `src_idf/components/status_led/*` | PWM LED patterns |
+| `src_idf/components/camera/*` | OV2640 driver + NVS config (Phase 4) |
+| `src_idf/components/mjpeg_server/*` | MJPEG HTTP streaming (Phase 4) |
 
 ### Web Assets
 | File | Purpose |
@@ -178,10 +208,11 @@ src_idf/
 | Phase 1 | ✅ Complete | IDF base (boot, NVS, WiFi, web) |
 | Phase 2 | ✅ Complete | Config services, captive portal, logs |
 | Phase 3 | ✅ Complete | SIP intercom, button, LED, SNTP |
-| Phase 4 | ⏳ Next | Video path (RTSP/MJPEG) |
-| Phase 5 | ❌ Pending | Audio path with ADF |
+| Phase 4 | 🔧 In Progress | Video path — camera/MJPEG done, RTSP pending |
+| Phase 5 | ❌ Pending | Audio path with ADF (onboard PDM + external INMP441) |
 | Phase 6 | ❌ Pending | HomeKit doorbell |
-| Phase 7 | ❌ Pending | Cleanup & resilience |
+| Phase 7 | ❌ Pending | OTA update system (credentials, time-limited window) |
+| Phase 8 | ❌ Pending | Cleanup & resilience |
 
 ---
 
@@ -250,17 +281,29 @@ http://<device-ip>/logs.html?filter=doorbell
 **PSRAM:** 8 MB (OPI)
 **Camera:** OV2640
 
-**Memory Usage (ESP-IDF build):**
-- RAM: ~72KB used (22%)
-- Flash: ~950KB (24%)
+**Memory Usage (ESP-IDF build, Phase 4):**
+- RAM: 80,728 bytes used (24.6%)
+- Flash: 1,043,865 bytes (26.5%)
 
 ---
 
-## Next Steps (Phase 4)
+## Next Steps
 
-1. Add esp32-camera component
-2. Implement MJPEG HTTP streaming
-3. Add RTSP server for Scrypted integration
-4. Test video stability with watchdog handling
+### Phase 4 Remaining: RTSP Server
+1. Implement RTSP MJPEG server on port 8554 (using ESP-ADF `esp_media_protocols`)
+2. Wire `rtsp_enabled` feature toggle with NVS persistence
+3. Connect RTSP client count to `LED_STATE_RTSP_ACTIVE`
+4. Test with Scrypted RTSP source + VLC
+
+### Phase 5: Audio Path with ADF
+5. Wire I2S mic pipeline into ADF AAC-LC encoder (onboard PDM or external INMP441)
+6. Mic source selection in setup page (NVS `mic_source` key)
+7. Software speaker volume control via ADF pipeline (NVS `aud_volume` key)
+8. RTP/RTSP audio payloads synced with video
+
+### Phase 7: OTA Update System
+8. Credential management (username + SHA-256 hash in NVS)
+9. Time-limited upload window with Basic auth
+10. Replace bare-bones `/api/ota` with full `/ota/*` endpoints
 
 See [IDF_ADF_MIGRATION_PLAN.md](IDF_ADF_MIGRATION_PLAN.md) for full roadmap.

@@ -1,6 +1,6 @@
 /**
  * ESP32-S3 Doorbell - Pure ESP-IDF Implementation
- * Phase 3: SIP Client Integration
+ * Phase 4: Video Path (Camera + MJPEG Streaming)
  *
  * Boot Sequence (CRITICAL ORDER):
  * 1. NVS initialization (MUST be first!)
@@ -8,6 +8,7 @@
  * 3. Network startup (STA or AP mode)
  * 4. Web server startup (deferred to main loop)
  * 5. SIP client startup (deferred to main loop)
+ * 6. Camera + MJPEG server startup (deferred to main loop)
  *
  * NOTE: Heavy initialization is deferred to main loop to avoid
  * stack overflow in the system event task (limited stack size).
@@ -30,6 +31,8 @@
 #include "sip_client.h"
 #include "button.h"
 #include "status_led.h"
+#include "camera.h"
+#include "mjpeg_server.h"
 
 static const char *TAG = "main";
 static httpd_handle_t http_server = NULL;
@@ -40,10 +43,12 @@ static sip_config_t sip_config;
 // Deferred initialization flags (to avoid stack overflow in event callback)
 static volatile bool web_server_pending = false;
 static volatile bool sip_init_pending = false;
+static volatile bool camera_init_pending = false;
 static volatile bool dns_server_pending = false;
 static volatile bool dns_stop_pending = false;
 static volatile bool sntp_init_pending = false;
 static bool sntp_initialized = false;
+static bool camera_initialized = false;
 
 /**
  * SNTP time synchronization callback
@@ -118,6 +123,7 @@ static void wifi_event_callback(wifi_mgr_event_t event, void *data) {
             dns_stop_pending = true;
             web_server_pending = true;
             sip_init_pending = true;
+            camera_init_pending = true;
             sntp_init_pending = true;
             break;
 
@@ -147,7 +153,7 @@ static void wifi_event_callback(wifi_mgr_event_t event, void *data) {
 void app_main(void) {
     ESP_LOGI(TAG, "====================================");
     ESP_LOGI(TAG, "ESP32-S3 Doorbell - ESP-IDF v2.0");
-    ESP_LOGI(TAG, "Phase 3: SIP Client Integration");
+    ESP_LOGI(TAG, "Phase 4: Camera + MJPEG Streaming");
     ESP_LOGI(TAG, "Build: %s %s", __DATE__, __TIME__);
     ESP_LOGI(TAG, "====================================");
 
@@ -293,6 +299,29 @@ void app_main(void) {
             }
         }
 
+        // Process deferred camera + MJPEG server initialization (only if feature enabled)
+        if (camera_init_pending && !camera_initialized) {
+            camera_init_pending = false;
+            if (!camera_is_enabled()) {
+                ESP_LOGI(TAG, "HTTP camera streaming disabled - skipping camera init");
+            } else {
+                ESP_LOGI(TAG, "Initializing camera...");
+                esp_err_t cam_err = camera_init();
+                if (cam_err == ESP_OK) {
+                    camera_initialized = true;
+                    ESP_LOGI(TAG, "Camera initialized, starting MJPEG server...");
+                    cam_err = mjpeg_server_start();
+                    if (cam_err == ESP_OK) {
+                        ESP_LOGI(TAG, "MJPEG server started on port 81");
+                    } else {
+                        ESP_LOGW(TAG, "MJPEG server start failed: %s", esp_err_to_name(cam_err));
+                    }
+                } else {
+                    ESP_LOGW(TAG, "Camera init failed: %s (streaming disabled)", esp_err_to_name(cam_err));
+                }
+            }
+        }
+
         // SIP processing (runs frequently for active calls, only if SIP enabled)
         if (sip_initialized && sip_is_enabled() && wifi_manager_is_connected()) {
             // Note: sip_handle_incoming uses MSG_DONTWAIT which should be safe
@@ -327,7 +356,7 @@ void app_main(void) {
         status_led_set_state(LED_STATE_WIFI_CONNECTING, is_connecting);
         status_led_set_state(LED_STATE_SIP_OK, sip_ok);
         status_led_set_state(LED_STATE_SIP_ERROR, sip_error);
-        // TODO: Add RTSP active state when RTSP is implemented
+        status_led_set_state(LED_STATE_RTSP_ACTIVE, mjpeg_server_client_count() > 0);
 
         // Update LED pattern
         status_led_update();

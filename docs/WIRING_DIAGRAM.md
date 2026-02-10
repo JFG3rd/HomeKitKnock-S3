@@ -25,6 +25,9 @@ GPIO8                ->   MAX98357A LRC/WS
 GPIO9                ->   MAX98357A DIN
 GPIO41               ->   PDM mic DATA (onboard)
 GPIO42               ->   PDM mic CLK (onboard)
+GPIO43               ->   INMP441 SCK/BCLK (external I2S mic)
+GPIO44               ->   INMP441 WS/LRCLK (external I2S mic)
+GPIO12               ->   INMP441 SD/DOUT (external I2S mic, back expansion)
 
 MAX98357A I2S DAC
 ----------------
@@ -49,6 +52,15 @@ VCC -> 3V3 (or 5V if your module accepts 3.3V on IN)
 GND -> GND
 IN  -> GPIO3
 COM/NO -> 8VAC gong circuit (use the gong transformer voltage)
+
+INMP441 I2S Microphone (external, offboard)
+----------------------------------------------
+VDD   -> 3V3
+GND   -> GND
+SCK   -> GPIO43 (D6 / TX)
+WS    -> GPIO44 (D7 / RX)
+SD    -> GPIO12 (D11, back expansion connector)
+L/R   -> GND (mono left channel)
 
 Speaker wiring
 --------------
@@ -95,15 +107,25 @@ Supercap notes:
   - **Vin:** 3V3
   - **GND:** GND
   - **SC/SD:** 3V3 (always on)
-  - **GAIN:** leave floating or strap per MAX98357A datasheet
+  - **GAIN:** leave floating (9 dB fixed gain; volume controlled in software via ESP-ADF pipeline)
 - **Speaker:** Connect to MAX98357A L+ and L-.
 - **I2C header (optional):** GPIO5 (SDA), GPIO6 (SCL) with 4.7k pullups to 3V3 when used.
+- **INMP441 I2S Microphone (external):**
+  - **SCK/BCLK:** GPIO43 (D6)
+  - **WS/LRCLK:** GPIO44 (D7)
+  - **SD/DOUT:** GPIO12 (D11, back expansion)
+  - **L/R:** GND (mono left)
+  - **VDD:** 3V3
+  - **GND:** GND
 - **Onboard PDM mic:** GPIO42 (CLK), GPIO41 (DATA) - already on the XIAO Sense.
+- **Mic source selection:** Configured in setup page (onboard PDM or external I2S INMP441). Stored in NVS.
 - **Onboard camera:** Uses dedicated camera pins (see `include/camera_pins.h`).
 
 ## Notes
 
 - GPIO7/8/9 are the default SPI pins; avoid SPI when the DAC is wired.
+- ESP32-S3 has two I2S peripherals: I2S0 for MAX98357A (speaker output), I2S1 for INMP441 (mic input).
+- All ESP32-S3 I2S pins are fully routable via GPIO matrix — no fixed pin assignments.
 - Use a relay module or transistor + flyback diode; do not drive a raw relay coil directly.
 - The 8VAC gong relay is electrically isolated from the ESP32; only the relay contacts touch the AC circuit.
 - Speaker outputs are bridged; never connect either speaker terminal to GND.
@@ -111,7 +133,9 @@ Supercap notes:
 
 ## Free Header GPIOs
 
-- **GPIO43 (D6 / UART TX)** and **GPIO44 (D7 / UART RX)** if you are not using the serial header.
+- **GPIO13 (D12, back expansion)** — only remaining free GPIO on headers.
+- GPIO43 and GPIO44 are now assigned to the INMP441 external mic.
+- GPIO12 is used for INMP441 data line via back expansion.
 
 ## Power Supply Details
 
