@@ -124,7 +124,8 @@ Supercap notes:
 ## Notes
 
 - GPIO7/8/9 are the default SPI pins; avoid SPI when the DAC is wired.
-- ESP32-S3 has two I2S peripherals: I2S0 for MAX98357A (speaker output), I2S1 for INMP441 (mic input).
+- Current firmware uses I2S1 for both MAX98357A (speaker output) and INMP441 (mic input), so they are mutually exclusive.
+- Onboard PDM mic uses I2S0 and does not conflict with MAX98357A speaker playback.
 - All ESP32-S3 I2S pins are fully routable via GPIO matrix — no fixed pin assignments.
 - Use a relay module or transistor + flyback diode; do not drive a raw relay coil directly.
 - The 8VAC gong relay is electrically isolated from the ESP32; only the relay contacts touch the AC circuit.

@@ -1,6 +1,6 @@
 /**
  * ESP32-S3 Doorbell - Pure ESP-IDF Implementation
- * Phase 4: Video Path (Camera + MJPEG Streaming)
+ * Phase 5: Complete Audio Path
  *
  * Boot Sequence (CRITICAL ORDER):
  * 1. NVS initialization (MUST be first!)
@@ -21,6 +21,7 @@
 #include "esp_sntp.h"
 #include <time.h>
 #include <sys/time.h>
+#include "nvs.h"
 
 // Component headers
 #include "nvs_manager.h"
@@ -33,6 +34,10 @@
 #include "status_led.h"
 #include "camera.h"
 #include "mjpeg_server.h"
+#include "rtsp_server.h"
+#include "audio_capture.h"
+#include "audio_output.h"
+#include "aac_encoder_pipe.h"
 
 static const char *TAG = "main";
 static httpd_handle_t http_server = NULL;
@@ -49,6 +54,32 @@ static volatile bool dns_stop_pending = false;
 static volatile bool sntp_init_pending = false;
 static bool sntp_initialized = false;
 static bool camera_initialized = false;
+
+#define NVS_SYSTEM_NAMESPACE "system"
+#define NVS_KEY_TIMEZONE     "timezone"
+#define DEFAULT_TIMEZONE     "CET-1CEST,M3.5.0,M10.5.0/3"
+#define MAX_TIMEZONE_LEN     64
+
+static void load_timezone(char *out, size_t out_size) {
+    if (!out || out_size == 0) {
+        return;
+    }
+
+    strncpy(out, DEFAULT_TIMEZONE, out_size - 1);
+    out[out_size - 1] = '\0';
+
+    nvs_handle_t handle;
+    if (nvs_manager_open(NVS_SYSTEM_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
+        return;
+    }
+
+    size_t len = out_size;
+    if (nvs_get_str(handle, NVS_KEY_TIMEZONE, out, &len) != ESP_OK || out[0] == '\0') {
+        strncpy(out, DEFAULT_TIMEZONE, out_size - 1);
+        out[out_size - 1] = '\0';
+    }
+    nvs_close(handle);
+}
 
 /**
  * SNTP time synchronization callback
@@ -72,11 +103,11 @@ static void initialize_sntp(void) {
 
     ESP_LOGI(TAG, "Initializing SNTP...");
 
-    // Set timezone to Germany (CET/CEST)
-    // CET-1CEST,M3.5.0,M10.5.0/3 means: Central European Time, 1 hour ahead of UTC
-    // DST starts last Sunday of March, ends last Sunday of October
-    setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
+    char timezone[MAX_TIMEZONE_LEN];
+    load_timezone(timezone, sizeof(timezone));
+    setenv("TZ", timezone, 1);
     tzset();
+    ESP_LOGI(TAG, "Timezone set to: %s", timezone);
 
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, "pool.ntp.org");
@@ -96,6 +127,9 @@ static void on_button_press(void) {
     // Trigger status LED ring animation
     status_led_mark_ring();
 
+    // Play gong sound on speaker (async, fire-and-forget)
+    audio_output_play_gong();
+
     // Request SIP ring (deferred to main loop)
     if (sip_initialized && sip_is_enabled()) {
         esp_err_t err = sip_request_ring();
@@ -109,7 +143,6 @@ static void on_button_press(void) {
     }
 
     // TODO: Add Scrypted webhook trigger here
-    // TODO: Add gong relay trigger here
 }
 
 /**
@@ -153,7 +186,7 @@ static void wifi_event_callback(wifi_mgr_event_t event, void *data) {
 void app_main(void) {
     ESP_LOGI(TAG, "====================================");
     ESP_LOGI(TAG, "ESP32-S3 Doorbell - ESP-IDF v2.0");
-    ESP_LOGI(TAG, "Phase 4: Camera + MJPEG Streaming");
+    ESP_LOGI(TAG, "Phase 5: Complete Audio Path");
     ESP_LOGI(TAG, "Build: %s %s", __DATE__, __TIME__);
     ESP_LOGI(TAG, "====================================");
 
@@ -316,6 +349,54 @@ void app_main(void) {
                     } else {
                         ESP_LOGW(TAG, "MJPEG server start failed: %s", esp_err_to_name(cam_err));
                     }
+                    // Start RTSP server if enabled
+                    if (camera_is_rtsp_enabled()) {
+                        cam_err = rtsp_server_start();
+                        if (cam_err == ESP_OK) {
+                            ESP_LOGI(TAG, "RTSP server started on port 8554");
+                        } else {
+                            ESP_LOGW(TAG, "RTSP server start failed: %s", esp_err_to_name(cam_err));
+                        }
+                    } else {
+                        ESP_LOGI(TAG, "RTSP streaming disabled - skipping RTSP server");
+                    }
+
+                    // Initialize audio capture (mic) if enabled
+                    if (audio_capture_is_enabled()) {
+                        esp_err_t audio_err = audio_capture_init();
+                        if (audio_err == ESP_OK) {
+                            audio_err = audio_capture_start();
+                            if (audio_err == ESP_OK) {
+                                ESP_LOGI(TAG, "Audio capture started (source=%s)",
+                                         audio_capture_get_source() == MIC_SOURCE_PDM ? "PDM" : "INMP441");
+                                // Start AAC encoder pipeline for RTSP audio
+                                audio_err = aac_encoder_pipe_init();
+                                if (audio_err == ESP_OK) {
+                                    ESP_LOGI(TAG, "AAC encoder pipeline initialized");
+                                } else {
+                                    ESP_LOGW(TAG, "AAC encoder init failed: %s", esp_err_to_name(audio_err));
+                                }
+                            } else {
+                                ESP_LOGW(TAG, "Audio capture start failed: %s", esp_err_to_name(audio_err));
+                            }
+                        } else {
+                            ESP_LOGW(TAG, "Audio capture init failed: %s", esp_err_to_name(audio_err));
+                        }
+                    } else {
+                        ESP_LOGI(TAG, "Mic disabled - skipping audio capture");
+                    }
+
+                    // Initialize audio output (speaker) if available
+                    if (audio_output_is_available()) {
+                        esp_err_t spk_err = audio_output_init();
+                        if (spk_err == ESP_OK) {
+                            ESP_LOGI(TAG, "Audio output (speaker) initialized");
+                        } else if (spk_err == ESP_ERR_NOT_SUPPORTED) {
+                            ESP_LOGI(TAG, "Speaker unavailable (INMP441 mode)");
+                        } else {
+                            ESP_LOGW(TAG, "Audio output init failed: %s", esp_err_to_name(spk_err));
+                        }
+                    }
                 } else {
                     ESP_LOGW(TAG, "Camera init failed: %s (streaming disabled)", esp_err_to_name(cam_err));
                 }
@@ -356,7 +437,8 @@ void app_main(void) {
         status_led_set_state(LED_STATE_WIFI_CONNECTING, is_connecting);
         status_led_set_state(LED_STATE_SIP_OK, sip_ok);
         status_led_set_state(LED_STATE_SIP_ERROR, sip_error);
-        status_led_set_state(LED_STATE_RTSP_ACTIVE, mjpeg_server_client_count() > 0);
+        status_led_set_state(LED_STATE_RTSP_ACTIVE,
+            mjpeg_server_client_count() > 0 || rtsp_server_active_session_count() > 0);
 
         // Update LED pattern
         status_led_update();

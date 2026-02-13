@@ -8,6 +8,7 @@
 #include "sip_client.h"
 #include "camera.h"
 #include "mjpeg_server.h"
+#include "audio_output.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_app_format.h"
@@ -17,13 +18,70 @@
 #include "embedded_web_assets.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "nvs_manager.h"
+#include "nvs.h"
 #include <string.h>
+#include <stdlib.h>
+#include <time.h>
 
 #ifndef MIN
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #endif
 
 static const char *TAG = "web_server";
+
+#define NVS_SYSTEM_NAMESPACE "system"
+#define NVS_KEY_TIMEZONE     "timezone"
+#define DEFAULT_TIMEZONE     "CET-1CEST,M3.5.0,M10.5.0/3"
+#define MAX_TIMEZONE_LEN     64
+
+static void load_timezone(char *out, size_t out_size) {
+    if (!out || out_size == 0) {
+        return;
+    }
+
+    strncpy(out, DEFAULT_TIMEZONE, out_size - 1);
+    out[out_size - 1] = '\0';
+
+    nvs_handle_t handle;
+    if (nvs_manager_open(NVS_SYSTEM_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
+        return;
+    }
+
+    size_t len = out_size;
+    if (nvs_get_str(handle, NVS_KEY_TIMEZONE, out, &len) != ESP_OK || out[0] == '\0') {
+        strncpy(out, DEFAULT_TIMEZONE, out_size - 1);
+        out[out_size - 1] = '\0';
+    }
+
+    nvs_close(handle);
+}
+
+static esp_err_t save_timezone(const char *tz) {
+    if (!tz || tz[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_manager_open(NVS_SYSTEM_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = nvs_set_str(handle, NVS_KEY_TIMEZONE, tz);
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+
+    if (err == ESP_OK) {
+        setenv("TZ", tz, 1);
+        tzset();
+        ESP_LOGI(TAG, "Timezone updated to: %s", tz);
+    }
+
+    return err;
+}
 
 /**
  * Find embedded asset by URI
@@ -455,6 +513,85 @@ static esp_err_t api_status_handler(httpd_req_t *req) {
 }
 
 /**
+ * Handler for time API
+ * GET /api/time
+ */
+static esp_err_t api_time_handler(httpd_req_t *req) {
+    char response[512];
+    char timezone[MAX_TIMEZONE_LEN];
+    char local_time[64] = {0};
+    char utc_time[64] = {0};
+
+    load_timezone(timezone, sizeof(timezone));
+
+    time_t now = time(NULL);
+    struct tm local_tm;
+    struct tm utc_tm;
+    localtime_r(&now, &local_tm);
+    gmtime_r(&now, &utc_tm);
+
+    strftime(local_time, sizeof(local_time), "%Y-%m-%d %H:%M:%S", &local_tm);
+    strftime(utc_time, sizeof(utc_time), "%Y-%m-%d %H:%M:%S", &utc_tm);
+
+    bool synced = (local_tm.tm_year + 1900) >= 2024;
+
+    snprintf(response, sizeof(response),
+             "{"
+             "\"timezone\":\"%s\","
+             "\"epoch\":%lld,"
+             "\"local_time\":\"%s\","
+             "\"utc_time\":\"%s\","
+             "\"time_synced\":%s"
+             "}",
+             timezone,
+             (long long)now,
+             local_time,
+             utc_time,
+             synced ? "true" : "false");
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, response, strlen(response));
+}
+
+/**
+ * Handler to trigger speaker gong playback
+ * POST /api/audio/gong
+ * GET /api/audio/gong (for quick browser/manual testing)
+ */
+static esp_err_t api_audio_gong_handler(httpd_req_t *req) {
+    if (!camera_is_audio_out_enabled()) {
+        const char *resp = "{\"success\":false,\"message\":\"Audio output (gong) is disabled in Core Features\"}";
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_send(req, resp, strlen(resp));
+    }
+
+    if (!audio_output_is_available()) {
+        const char *resp = "{\"success\":false,\"message\":\"Speaker unavailable with current mic source\"}";
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "409 Conflict");
+        return httpd_resp_send(req, resp, strlen(resp));
+    }
+
+    esp_err_t err = audio_output_init();
+    if (err != ESP_OK) {
+        char resp[128];
+        snprintf(resp, sizeof(resp),
+                 "{\"success\":false,\"message\":\"Speaker init failed: %s\"}",
+                 esp_err_to_name(err));
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        return httpd_resp_send(req, resp, strlen(resp));
+    }
+
+    audio_output_play_gong();
+
+    const char *resp = "{\"success\":true,\"message\":\"Gong playback triggered\"}";
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, resp, strlen(resp));
+}
+
+/**
  * Handler for logs API
  * GET /api/logs?filter=all|core|camera|doorbell
  * Returns JSON array of log entries
@@ -586,51 +723,135 @@ static bool extract_json_bool(const char *json, const char *key, bool *out) {
     return false;
 }
 
+// Helper to extract JSON integer value
+static bool extract_json_int(const char *json, const char *key, int *out) {
+    char search_key[64];
+    snprintf(search_key, sizeof(search_key), "\"%s\"", key);
+    const char *start = strstr(json, search_key);
+    if (!start) return false;
+
+    start = strchr(start, ':');
+    if (!start) return false;
+
+    start++;
+    while (*start == ' ' || *start == '\t') start++;
+
+    char *endp;
+    long val = strtol(start, &endp, 10);
+    if (endp == start) return false;
+    *out = (int)val;
+    return true;
+}
+
 // GET /api/features - Get feature toggle states
 static esp_err_t api_features_get_handler(httpd_req_t *req) {
-    char response[256];
+    char response[640];
+    char timezone[MAX_TIMEZONE_LEN];
 
     bool sip_enabled = sip_is_enabled();
     bool http_cam_enabled = camera_is_enabled();
+    bool rtsp_enabled = camera_is_rtsp_enabled();
+    bool audio_out_enabled = camera_is_audio_out_enabled();
+    bool audio_out_muted = camera_is_audio_out_muted();
+    load_timezone(timezone, sizeof(timezone));
 
     snprintf(response, sizeof(response),
-             "{\"sip_enabled\":%s,\"tr064_enabled\":false,\"http_cam_enabled\":%s,\"rtsp_enabled\":false}",
+             "{\"timezone\":\"%s\",\"sip_enabled\":%s,\"tr064_enabled\":false,"
+             "\"http_cam_enabled\":%s,\"rtsp_enabled\":%s,"
+             "\"audio_out_enabled\":%s,\"audio_out_muted\":%s}",
+             timezone,
              sip_enabled ? "true" : "false",
-             http_cam_enabled ? "true" : "false");
+             http_cam_enabled ? "true" : "false",
+             rtsp_enabled ? "true" : "false",
+             audio_out_enabled ? "true" : "false",
+             audio_out_muted ? "true" : "false");
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, response, strlen(response));
 }
 
-// POST /saveFeatures - Save feature toggle states
+// POST /saveFeatures - Save ALL feature and camera/audio settings
 static esp_err_t save_features_handler(httpd_req_t *req) {
-    char content[512];
-    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
-    if (ret <= 0) {
-        if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
-            httpd_resp_send_408(req);
+    char content[1024];
+    int total = 0;
+    int remaining = req->content_len < (sizeof(content) - 1) ? req->content_len : (sizeof(content) - 1);
+    while (remaining > 0) {
+        int ret = httpd_req_recv(req, content + total, remaining);
+        if (ret <= 0) {
+            if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+                httpd_resp_send_408(req);
+            }
+            return ESP_FAIL;
         }
-        return ESP_FAIL;
+        total += ret;
+        remaining -= ret;
     }
-    content[ret] = '\0';
+    content[total] = '\0';
 
-    ESP_LOGI(TAG, "Saving features");
+    ESP_LOGI(TAG, "Saving features (%d bytes)", total);
 
-    bool sip_enabled = true;
-    if (extract_json_bool(content, "sip_enabled", &sip_enabled)) {
-        sip_set_enabled(sip_enabled);
-        ESP_LOGI(TAG, "SIP feature %s", sip_enabled ? "enabled" : "disabled");
-    }
-
-    bool http_cam_enabled = false;
-    if (extract_json_bool(content, "http_cam_enabled", &http_cam_enabled)) {
-        camera_set_enabled(http_cam_enabled);
-        ESP_LOGI(TAG, "HTTP camera feature %s", http_cam_enabled ? "enabled" : "disabled");
+    char timezone[MAX_TIMEZONE_LEN];
+    if (extract_json_string(content, "timezone", timezone, sizeof(timezone))) {
+        if (save_timezone(timezone) != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to save timezone: %s", timezone);
+        }
     }
 
-    // TODO: Handle other feature toggles when implemented
-    // extract_json_bool(content, "tr064_enabled", &tr064_enabled);
-    // extract_json_bool(content, "rtsp_enabled", &rtsp_enabled);
+    // --- Feature toggles ---
+    bool bval;
+    if (extract_json_bool(content, "sip_enabled", &bval)) {
+        sip_set_enabled(bval);
+    }
+    if (extract_json_bool(content, "http_cam_enabled", &bval)) {
+        camera_set_enabled(bval);
+    }
+    if (extract_json_bool(content, "rtsp_enabled", &bval)) {
+        camera_set_rtsp_enabled(bval);
+    }
+    if (extract_json_bool(content, "audio_out_enabled", &bval)) {
+        camera_set_audio_out_enabled(bval);
+    }
+    if (extract_json_bool(content, "audio_out_muted", &bval)) {
+        camera_set_audio_out_muted(bval);
+    }
+
+    // --- Camera sensor settings (via camera_set_control, persists to NVS + applies live) ---
+    int ival;
+    if (extract_json_int(content, "framesize", &ival)) {
+        camera_set_control("framesize", ival);
+    }
+    if (extract_json_int(content, "quality", &ival)) {
+        camera_set_control("quality", ival);
+    }
+    if (extract_json_int(content, "brightness", &ival)) {
+        camera_set_control("brightness", ival);
+    }
+    if (extract_json_int(content, "contrast", &ival)) {
+        camera_set_control("contrast", ival);
+    }
+
+    // --- Mic/audio settings (via camera_set_control, persists to NVS + applies live) ---
+    if (extract_json_bool(content, "mic_enabled", &bval)) {
+        camera_set_control("mic_enabled", bval ? 1 : 0);
+    }
+    if (extract_json_bool(content, "mic_muted", &bval)) {
+        camera_set_control("mic_muted", bval ? 1 : 0);
+    }
+    if (extract_json_int(content, "mic_sensitivity", &ival)) {
+        camera_set_control("mic_sensitivity", ival);
+    }
+    if (extract_json_int(content, "mic_source", &ival)) {
+        camera_set_control("mic_source", ival);
+    }
+    if (extract_json_int(content, "aac_sample_rate", &ival)) {
+        camera_set_control("aac_sample_rate", ival);
+    }
+    if (extract_json_int(content, "aac_bitrate", &ival)) {
+        camera_set_control("aac_bitrate", ival);
+    }
+    if (extract_json_int(content, "audio_out_volume", &ival)) {
+        camera_set_control("aud_volume", ival);
+    }
 
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_send(req, "Features saved successfully", HTTPD_RESP_USE_STRLEN);
@@ -1212,6 +1433,30 @@ httpd_handle_t web_server_start(void) {
         .user_ctx = NULL
     };
     httpd_register_uri_handler(server, &api_status);
+
+    httpd_uri_t api_time = {
+        .uri = "/api/time",
+        .method = HTTP_GET,
+        .handler = api_time_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &api_time);
+
+    httpd_uri_t api_audio_gong_post = {
+        .uri = "/api/audio/gong",
+        .method = HTTP_POST,
+        .handler = api_audio_gong_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &api_audio_gong_post);
+
+    httpd_uri_t api_audio_gong_get = {
+        .uri = "/api/audio/gong",
+        .method = HTTP_GET,
+        .handler = api_audio_gong_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &api_audio_gong_get);
 
     httpd_uri_t api_ota = {
         .uri = "/api/ota",

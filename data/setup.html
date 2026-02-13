@@ -113,20 +113,6 @@
                 <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
                     Local gong playback via MAX98357A I2S DAC.
                 </div>
-                <div class="info-item">
-                    <span><strong>🔇 Audio Out Mute</strong></span>
-                    <label class="switch">
-                        <input type="checkbox" id="audio_out_muted" {{AUDIO_OUT_MUTED_CHECKED}}>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="info-item">
-                    <span><strong>🔊 Audio Out Volume</strong></span>
-                    <div class="range-wrap">
-                        <input type="range" id="audio_out_volume" class="range-input" min="0" max="100" value="{{AUDIO_OUT_VOLUME}}" data-unit="%">
-                        <span class="range-value" id="audioOutVolumeValue">{{AUDIO_OUT_VOLUME}}</span>
-                    </div>
-                </div>
             </div>
         </div>
 
@@ -161,6 +147,27 @@
                 <input type="range" id="contrast" class="range-input" min="-2" max="2" step="1" value="0">
                 <span class="range-value" id="contrastValue">0</span>
             </div>
+        </div>
+
+        <div class="container card setup-card">
+            <h3 class="card-title">🔊 Audio and 🎤 Mic config</h3>
+
+            <div class="info-grid">
+                <div class="info-item">
+                    <span><strong>🔇 Audio Out Mute</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="audio_out_muted" {{AUDIO_OUT_MUTED_CHECKED}}>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="info-item">
+                    <span><strong>🔊 Audio Out Volume</strong></span>
+                    <div class="range-wrap">
+                        <input type="range" id="audio_out_volume" class="range-input" min="0" max="100" value="{{AUDIO_OUT_VOLUME}}" data-unit="%">
+                        <span class="range-value" id="audioOutVolumeValue">{{AUDIO_OUT_VOLUME}}</span>
+                    </div>
+                </div>
+            </div>
 
             <label class="card-group-title" style="margin-top: 12px;"><strong>Audio (Mic)</strong></label>
             <div class="info-grid">
@@ -178,6 +185,14 @@
                         <span class="slider"></span>
                     </label>
                 </div>
+            </div>
+            <label><strong>Mic Source</strong></label>
+            <select id="mic_source">
+                <option value="0">Onboard PDM (default)</option>
+                <option value="1">External INMP441 (IP44 enclosure)</option>
+            </select>
+            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                INMP441 mode disables the speaker (shared I2S bus). Requires reboot to take effect.
             </div>
             <label><strong>Mic Sensitivity</strong></label>
             <div class="range-wrap">
@@ -198,9 +213,8 @@
             <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
                 16 kHz supports 24–48 kbps, 8 kHz supports 16–32 kbps. Preview mic capture at http://ESP32-IP/audio.wav.
             </div>
-
-            <div style="margin-top: 12px;">
-                <button class="button btn-save" title="Apply frame size, JPEG quality, brightness, and contrast." onclick="applyCameraSettings()">Apply Camera Settings</button>
+            <div class="button-row button-grid" style="margin-top: 8px;">
+                <button class="button btn-test" title="Play the local gong through MAX98357A speaker output." onclick="testLocalGong()">🔔 Test Gong</button>
             </div>
         </div>
 
@@ -302,8 +316,10 @@
     <div class="button-row button-grid log-actions" style="margin-top: 20px;">
         <button class="button btn-save" title="Save feature toggles and restart." onclick="saveFeatures()">💾 Save Features</button>
         <button class="button danger-btn" title="Reboot the ESP32 device." onclick="location.href='/restart';">🔄 Restart</button>
-        <a class="button btn-info" href="/logs/camera" target="_blank" title="Open filtered camera/streaming logs.">📹 Camera Logs</a>
-        <a class="button btn-info" href="/logs/doorbell" target="_blank" title="Open filtered doorbell/SIP/TR-064 logs.">☎️ Doorbell Logs</a>
+        <a class="button btn-info" href="/logs.html?filter=core" target="_blank" title="Open filtered core logs.">🔧 Core Logs</a>
+        <a class="button btn-info" href="/logs.html?filter=camera" target="_blank" title="Open filtered camera/streaming logs.">📹 Camera Logs</a>
+
+        <a class="button btn-info" href="/logs.html?filter=doorbell" target="_blank" title="Open filtered doorbell/SIP/TR-064 logs.">☎️ Doorbell Logs</a>
         <a class="button btn-nav" href="/" title="Return to the main dashboard.">Back</a>
     </div>
 
@@ -334,9 +350,14 @@
                 scrypted_low_latency: document.getElementById("scrypted_low_latency").checked,
                 scrypted_low_buffer: document.getElementById("scrypted_low_buffer").checked,
                 scrypted_rtsp_udp: document.getElementById("scrypted_rtsp_udp").checked,
+                framesize: parseInt(document.getElementById("framesize").value, 10),
+                quality: parseInt(document.getElementById("quality").value, 10),
+                brightness: parseInt(document.getElementById("brightness").value, 10),
+                contrast: parseInt(document.getElementById("contrast").value, 10),
                 mic_enabled: document.getElementById("mic_enabled").checked,
                 mic_muted: document.getElementById("mic_muted").checked,
                 mic_sensitivity: parseInt(document.getElementById("mic_sensitivity").value || "70", 10),
+                mic_source: parseInt(document.getElementById("mic_source").value || "0", 10),
                 aac_sample_rate: parseInt(document.getElementById("aac_sample_rate").value || "16", 10),
                 aac_bitrate: parseInt(document.getElementById("aac_bitrate").value || "32", 10),
                 audio_out_enabled: document.getElementById("audio_out_enabled").checked,
@@ -366,6 +387,26 @@
                 .then(r => r.text())
                 .then(t => alert(t))
                 .catch(e => alert("HomeKit test failed: " + e));
+        }
+
+        function testLocalGong() {
+            fetch("/api/audio/gong", { method: "POST" })
+                .then(async (r) => {
+                    const text = await r.text();
+                    if (!r.ok) {
+                        throw new Error(text || `HTTP ${r.status}`);
+                    }
+                    return text;
+                })
+                .then(t => {
+                    try {
+                        const j = JSON.parse(t);
+                        alert(j.message || "Gong triggered");
+                    } catch {
+                        alert(t || "Gong triggered");
+                    }
+                })
+                .catch(e => alert("Local gong test failed: " + e.message));
         }
 
         const cameraSetupStatusEl = document.getElementById("cameraSetupStatus");
@@ -573,41 +614,27 @@
                     if (data.aac_sample_rate !== undefined) {
                         document.getElementById("aac_sample_rate").value = data.aac_sample_rate;
                     }
+                    if (data.mic_source !== undefined) {
+                        document.getElementById("mic_source").value = data.mic_source;
+                    }
+                    if (data.aud_volume !== undefined) {
+                        document.getElementById("audio_out_volume").value = data.aud_volume;
+                        updateRangeDisplay(document.getElementById("audio_out_volume"), audioOutVolumeValueEl);
+                    }
                     if (data.aac_bitrate !== undefined) {
                         document.getElementById("aac_bitrate").value = data.aac_bitrate;
                         applyAacBitrateBounds();
+                    }
+                    if (data.speaker_available === false) {
+                        document.getElementById("audio_out_enabled").disabled = true;
+                        document.getElementById("audio_out_volume").disabled = true;
+                        document.getElementById("audio_out_muted").disabled = true;
                     }
                     updateAudioUi();
                 })
                 .catch(() => {
                     cameraSetupStatusEl.innerHTML = "<strong>Camera:</strong> unavailable";
                 });
-        }
-
-        function applyCameraSettings() {
-            const fs = document.getElementById("framesize").value;
-            const q = document.getElementById("quality").value;
-            const b = document.getElementById("brightness").value;
-            const c = document.getElementById("contrast").value;
-            const micEn = document.getElementById("mic_enabled").checked ? 1 : 0;
-            const micMute = document.getElementById("mic_muted").checked ? 1 : 0;
-            const micSens = document.getElementById("mic_sensitivity").value;
-            const aacRate = document.getElementById("aac_sample_rate").value;
-            const aacBitr = document.getElementById("aac_bitrate").value;
-            Promise.all([
-                fetch(`/control?var=framesize&val=${fs}`),
-                fetch(`/control?var=quality&val=${q}`),
-                fetch(`/control?var=brightness&val=${b}`),
-                fetch(`/control?var=contrast&val=${c}`),
-                fetch(`/control?var=mic_enabled&val=${micEn}`),
-                fetch(`/control?var=mic_muted&val=${micMute}`),
-                fetch(`/control?var=mic_sensitivity&val=${micSens}`),
-                fetch(`/control?var=aac_sample_rate&val=${aacRate}`),
-                fetch(`/control?var=aac_bitrate&val=${aacBitr}`)
-            ]).then(() => {
-                alert("Camera settings applied and saved.");
-                fetchCameraSetupStatus();
-            }).catch(() => alert("Failed to apply camera settings"));
         }
 
         bindRange("quality", "qualityValue");
@@ -718,13 +745,19 @@
         document.getElementById("http_cam_enabled").addEventListener("change", updateScryptedUi);
         document.getElementById("mic_enabled").addEventListener("change", updateAudioUi);
         document.getElementById("audio_out_enabled").addEventListener("change", updateAudioUi);
-        // Set selected timezone
-        document.getElementById("timezone").value = "{{TIMEZONE}}";
+        // Set selected timezone (legacy template fallback)
+        const timezoneFallback = "{{TIMEZONE}}";
+        if (timezoneFallback && !timezoneFallback.includes("{{")) {
+            document.getElementById("timezone").value = timezoneFallback;
+        }
 
         function loadFeatures() {
             fetch("/api/features")
                 .then(r => r.json())
                 .then(data => {
+                    if (data.timezone !== undefined) {
+                        document.getElementById("timezone").value = data.timezone;
+                    }
                     if (data.sip_enabled !== undefined) {
                         document.getElementById("sip_enabled").checked = data.sip_enabled;
                     }
@@ -737,7 +770,14 @@
                     if (data.rtsp_enabled !== undefined) {
                         document.getElementById("rtsp_enabled").checked = data.rtsp_enabled;
                     }
+                    if (data.audio_out_enabled !== undefined) {
+                        document.getElementById("audio_out_enabled").checked = data.audio_out_enabled;
+                    }
+                    if (data.audio_out_muted !== undefined) {
+                        document.getElementById("audio_out_muted").checked = data.audio_out_muted;
+                    }
                     updateScryptedUi();
+                    updateAudioUi();
                 })
                 .catch(e => console.error("Failed to load features:", e));
         }
