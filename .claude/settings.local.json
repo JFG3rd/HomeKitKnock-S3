@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(env)",
+      "Read(//Users/jessegreene/.espressif/**)",
+      "Bash(curl:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nPhase 3: Complete SIP client ESP-IDF port with verbose logging\n\nSIP Client Features:\n- Full SIP REGISTER/INVITE/CANCEL/BYE implementation\n- Digest authentication with Fritz!Box\n- NVS persistence for credentials and settings\n- Deferred ring execution \\(avoids stack overflow in HTTP handlers\\)\n- Auto-registration on boot with 60s refresh interval\n- Verbose logging toggle for debugging SIP packet content\n\nWeb Interface:\n- SIP feature toggle in Core Features \\(persists to NVS\\)\n- Verbose logging toggle on /sip page\n- /sipDebug endpoint with registration status\n- /api/sip/verbose GET/POST endpoints\n- Silent /capture handler \\(prevents 404 spam\\)\n\nAPI Endpoints:\n- GET/POST /api/features - feature toggle states\n- GET/POST /api/sip - SIP configuration\n- POST /api/sip/ring - trigger ring \\(deferred\\)\n- GET/POST /api/sip/verbose - verbose logging control\n- GET /sipDebug - SIP debug status JSON\n\nArchitecture:\n- Moved sip_client to src_idf/components/sip_client/\n- Static buffers to minimize stack usage\n- Uses gateway IP for SIP proxy \\(avoids DNS stack usage\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(pio device monitor:*)",
+      "Bash(timeout 20 cat:*)",
+      "Read(//Users/jessegreene/esp/**)",
+      "Bash(~/.platformio/penv/bin/pio run:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nPhase 3 Complete: SIP client, button, LED, SNTP, verbose logging\n\nSIP Client Improvements:\n- Fix stale config bug: reload from NVS on each ring request\n- Add single-line verbose logging \\(replaces multi-line format\\)\n- Verbose mode shows full SIP packets with | separators\n\nPhysical I/O:\n- Add button component \\(GPIO4, active-low, 50ms debounce\\)\n- Add status_led component \\(GPIO2, PWM patterns\\)\n- LED patterns: ringing, AP mode, WiFi connecting, SIP error/ok\n\nTime & Logging:\n- Add SNTP time sync \\(German CET/CEST timezone\\)\n- Log buffer uses real timestamps when SNTP synced\n- Web log viewer displays date/time or uptime appropriately\n\nDocumentation:\n- Update IMPLEMENTATION_SUMMARY.md for Phase 3\n- Update IDF_ADF_MIGRATION_PLAN.md with completion status\n- Update esp32-s3-doorbell-architecture.md with ESP-IDF status\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(xtensa-esp-elf-nm:*)",
+      "Bash(xxd:*)",
+      "Bash(pkill:*)",
+      "Bash(kill:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+Compiler supported targets: xtensa-esp32s3-elf
+
+CMake Deprecation Warning at /Users/jessegreene/esp-idf/components/mbedtls/mbedtls/CMakeLists.txt:21 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+CMake Error at /Users/jessegreene/esp-idf/tools/cmake/component.cmake:313 (message):
+  Include directory
+  '/Users/jessegreene/Documents/PlatformIO/Projects/esp32-s3-doorbell/src_idf/include'
+  is not a directory.
+Call Stack (most recent call first):
+  /Users/jessegreene/esp-idf/tools/cmake/component.cmake:482 (__component_add_include_dirs)
+  components/web_server/CMakeLists.txt:1 (idf_component_register)
+
+

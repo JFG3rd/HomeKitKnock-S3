@@ -1,0 +1,22 @@
+Compiling .pio/build/seeed_xiao_esp32s3_idf/mbedtls/mbedtls/library/error.c.o
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C
+cc1: warning: command-line option '-fno-rtti' is valid for C++/D/ObjC++ but not for C

@@ -1,0 +1,13 @@
+# Target labels
+ bootloader
+# Source files and their labels
+/Users/jessegreene/Documents/PlatformIO/Projects/esp32-s3-doorbell/src_idf/build/CMakeFiles/bootloader
+/Users/jessegreene/Documents/PlatformIO/Projects/esp32-s3-doorbell/src_idf/build/CMakeFiles/bootloader.rule
+/Users/jessegreene/Documents/PlatformIO/Projects/esp32-s3-doorbell/src_idf/build/CMakeFiles/bootloader-complete.rule
+/Users/jessegreene/Documents/PlatformIO/Projects/esp32-s3-doorbell/src_idf/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
+/Users/jessegreene/Documents/PlatformIO/Projects/esp32-s3-doorbell/src_idf/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
+/Users/jessegreene/Documents/PlatformIO/Projects/esp32-s3-doorbell/src_idf/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
+/Users/jessegreene/Documents/PlatformIO/Projects/esp32-s3-doorbell/src_idf/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
+/Users/jessegreene/Documents/PlatformIO/Projects/esp32-s3-doorbell/src_idf/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
+/Users/jessegreene/Documents/PlatformIO/Projects/esp32-s3-doorbell/src_idf/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
+/Users/jessegreene/Documents/PlatformIO/Projects/esp32-s3-doorbell/src_idf/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule
