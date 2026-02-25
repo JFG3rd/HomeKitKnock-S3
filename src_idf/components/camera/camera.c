@@ -9,6 +9,8 @@
 #include "nvs_manager.h"
 #include "esp_log.h"
 #include "camera_pins.h"
+#include "audio_capture.h"
+#include "audio_output.h"
 
 static const char *TAG = "camera";
 static bool camera_ready = false;
@@ -27,6 +29,12 @@ static bool camera_ready = false;
 #define NVS_KEY_MIC_SENS     "mic_sens"
 #define NVS_KEY_AAC_RATE     "aac_rate"
 #define NVS_KEY_AAC_BITRATE  "aac_bitr"
+#define NVS_KEY_RTSP_ENABLED "rtsp_en"
+#define NVS_KEY_MIC_SOURCE   "mic_source"
+#define NVS_KEY_AUD_VOLUME   "aud_volume"
+#define NVS_KEY_AUD_OUT_EN   "aud_out_en"
+#define NVS_KEY_AUD_OUT_MUTE "aud_out_mt"
+#define NVS_KEY_HW_DIAG      "hw_diag"
 
 esp_err_t camera_init(void) {
     if (camera_ready) {
@@ -160,11 +168,105 @@ esp_err_t camera_set_enabled(bool enabled) {
     return err;
 }
 
+bool camera_is_rtsp_enabled(void) {
+    nvs_handle_t handle;
+    if (nvs_manager_open(NVS_CAMERA_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
+        return false;
+    }
+
+    uint8_t enabled = 0;
+    nvs_get_u8(handle, NVS_KEY_RTSP_ENABLED, &enabled);
+    nvs_close(handle);
+
+    return enabled != 0;
+}
+
+esp_err_t camera_set_rtsp_enabled(bool enabled) {
+    nvs_handle_t handle;
+    esp_err_t err = nvs_manager_open(NVS_CAMERA_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+
+    err = nvs_set_u8(handle, NVS_KEY_RTSP_ENABLED, enabled ? 1 : 0);
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+
+    ESP_LOGI(TAG, "RTSP camera streaming %s", enabled ? "enabled" : "disabled");
+    return err;
+}
+
+bool camera_is_audio_out_enabled(void) {
+    nvs_handle_t handle;
+    if (nvs_manager_open(NVS_CAMERA_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
+        return true;  // Default to enabled if NVS unavailable
+    }
+    uint8_t enabled = 1;  // Default: audio out enabled (gong is a core feature)
+    nvs_get_u8(handle, NVS_KEY_AUD_OUT_EN, &enabled);
+    nvs_close(handle);
+    return enabled != 0;
+}
+
+esp_err_t camera_set_audio_out_enabled(bool enabled) {
+    nvs_handle_t handle;
+    esp_err_t err = nvs_manager_open(NVS_CAMERA_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(handle, NVS_KEY_AUD_OUT_EN, enabled ? 1 : 0);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    ESP_LOGI(TAG, "Audio output %s", enabled ? "enabled" : "disabled");
+    return err;
+}
+
+bool camera_is_audio_out_muted(void) {
+    nvs_handle_t handle;
+    if (nvs_manager_open(NVS_CAMERA_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
+        return false;
+    }
+    uint8_t muted = 0;
+    nvs_get_u8(handle, NVS_KEY_AUD_OUT_MUTE, &muted);
+    nvs_close(handle);
+    return muted != 0;
+}
+
+esp_err_t camera_set_audio_out_muted(bool muted) {
+    nvs_handle_t handle;
+    esp_err_t err = nvs_manager_open(NVS_CAMERA_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(handle, NVS_KEY_AUD_OUT_MUTE, muted ? 1 : 0);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+bool camera_is_hardware_diag_enabled(void) {
+    nvs_handle_t handle;
+    if (nvs_manager_open(NVS_CAMERA_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
+        return false;
+    }
+    uint8_t enabled = 0;
+    nvs_get_u8(handle, NVS_KEY_HW_DIAG, &enabled);
+    nvs_close(handle);
+    return enabled != 0;
+}
+
+esp_err_t camera_set_hardware_diag_enabled(bool enabled) {
+    nvs_handle_t handle;
+    esp_err_t err = nvs_manager_open(NVS_CAMERA_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(handle, NVS_KEY_HW_DIAG, enabled ? 1 : 0);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    audio_output_set_hardware_diagnostic_mode(enabled);
+    ESP_LOGI(TAG, "Hardware diagnostic mode %s", enabled ? "enabled" : "disabled");
+    return err;
+}
+
 esp_err_t camera_set_control(const char *var, int val) {
     const char *nvs_key = NULL;
     bool is_signed = false;
 
-    // --- Mic/audio settings (NVS-only, no hardware yet) ---
+    // --- Mic/audio settings ---
     if (strcmp(var, "mic_enabled") == 0) {
         nvs_key = NVS_KEY_MIC_ENABLED;
     } else if (strcmp(var, "mic_muted") == 0) {
@@ -172,6 +274,21 @@ esp_err_t camera_set_control(const char *var, int val) {
     } else if (strcmp(var, "mic_sensitivity") == 0) {
         if (val >= 0 && val <= 100) {
             nvs_key = NVS_KEY_MIC_SENS;
+            audio_capture_set_sensitivity((uint8_t)val);
+        }
+    } else if (strcmp(var, "mic_source") == 0) {
+        if (val == 0 || val == 1) {
+            nvs_key = NVS_KEY_MIC_SOURCE;
+        }
+    } else if (strcmp(var, "aud_volume") == 0) {
+        if (val >= 0 && val <= 100) {
+            nvs_key = NVS_KEY_AUD_VOLUME;
+            audio_output_set_volume((uint8_t)val);
+        }
+    } else if (strcmp(var, "hardware_diag_mode") == 0) {
+        if (val == 0 || val == 1) {
+            nvs_key = NVS_KEY_HW_DIAG;
+            audio_output_set_hardware_diagnostic_mode(val == 1);
         }
     } else if (strcmp(var, "aac_sample_rate") == 0) {
         if (val == 8 || val == 16) {
@@ -195,24 +312,42 @@ esp_err_t camera_set_control(const char *var, int val) {
 
         if (strcmp(var, "framesize") == 0) {
             if (val >= 0 && val <= 13) {
-                res = s->set_framesize(s, (framesize_t)val);
-                nvs_key = NVS_KEY_FRAMESIZE;
+                // Skip redundant framesize change (PLL reconfigure can crash)
+                if ((int)s->status.framesize == val) {
+                    nvs_key = NVS_KEY_FRAMESIZE;
+                    res = 0;
+                } else if (s->set_framesize) {
+                    res = s->set_framesize(s, (framesize_t)val);
+                    nvs_key = NVS_KEY_FRAMESIZE;
+                } else {
+                    ESP_LOGE(TAG, "set_framesize function pointer is NULL");
+                    return ESP_ERR_NOT_SUPPORTED;
+                }
             }
         } else if (strcmp(var, "quality") == 0) {
             if (val >= 4 && val <= 63) {
-                res = s->set_quality(s, val);
+                if (s->set_quality) {
+                    res = s->set_quality(s, val);
+                } else {
+                    ESP_LOGE(TAG, "set_quality function pointer is NULL");
+                    return ESP_ERR_NOT_SUPPORTED;
+                }
                 nvs_key = NVS_KEY_QUALITY;
             }
         } else if (strcmp(var, "brightness") == 0) {
             if (val >= -2 && val <= 2) {
-                s->set_brightness(s, val);
+                if (s->set_brightness) {
+                    s->set_brightness(s, val);
+                }
                 nvs_key = NVS_KEY_BRIGHTNESS;
                 is_signed = true;
                 res = 0;
             }
         } else if (strcmp(var, "contrast") == 0) {
             if (val >= -2 && val <= 2) {
-                s->set_contrast(s, val);
+                if (s->set_contrast) {
+                    s->set_contrast(s, val);
+                }
                 nvs_key = NVS_KEY_CONTRAST;
                 is_signed = true;
                 res = 0;
@@ -251,24 +386,36 @@ esp_err_t camera_set_control(const char *var, int val) {
 
 void camera_get_status_json(char *buf, size_t buf_size) {
     // Load mic/audio settings from NVS (always available, even without camera)
-    uint8_t mic_en = 0, mic_mute = 0, mic_sens = 70, aac_rate = 16, aac_bitr = 32;
+    uint8_t mic_en = 0, mic_mute = 0, mic_sens = 70, mic_src = 0;
+    uint8_t aud_vol = 70, aac_rate = 16, aac_bitr = 32, hw_diag = 0;
     nvs_handle_t nvs;
     if (nvs_manager_open(NVS_CAMERA_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK) {
         nvs_get_u8(nvs, NVS_KEY_MIC_ENABLED, &mic_en);
         nvs_get_u8(nvs, NVS_KEY_MIC_MUTED, &mic_mute);
         nvs_get_u8(nvs, NVS_KEY_MIC_SENS, &mic_sens);
+        nvs_get_u8(nvs, NVS_KEY_MIC_SOURCE, &mic_src);
+        nvs_get_u8(nvs, NVS_KEY_AUD_VOLUME, &aud_vol);
         nvs_get_u8(nvs, NVS_KEY_AAC_RATE, &aac_rate);
         nvs_get_u8(nvs, NVS_KEY_AAC_BITRATE, &aac_bitr);
+        nvs_get_u8(nvs, NVS_KEY_HW_DIAG, &hw_diag);
         nvs_close(nvs);
     }
+
+    bool spk_available = audio_output_is_available();
 
     if (!camera_ready) {
         snprintf(buf, buf_size,
                  "{\"camera_ready\":false,"
                  "\"mic_enabled\":%s,\"mic_muted\":%s,"
-                 "\"mic_sensitivity\":%d,\"aac_sample_rate\":%d,\"aac_bitrate\":%d}",
+                 "\"mic_sensitivity\":%d,\"mic_source\":%d,"
+                 "\"aud_volume\":%d,\"speaker_available\":%s,"
+                 "\"aac_sample_rate\":%d,\"aac_bitrate\":%d,"
+                 "\"hardware_diag_mode\":%s}",
                  mic_en ? "true" : "false", mic_mute ? "true" : "false",
-                 mic_sens, aac_rate, aac_bitr);
+                 mic_sens, mic_src,
+                 aud_vol, spk_available ? "true" : "false",
+                 aac_rate, aac_bitr,
+                 hw_diag ? "true" : "false");
         return;
     }
 
@@ -283,12 +430,18 @@ void camera_get_status_json(char *buf, size_t buf_size) {
              "\"framesize\":%d,\"quality\":%d,"
              "\"brightness\":%d,\"contrast\":%d,"
              "\"mic_enabled\":%s,\"mic_muted\":%s,"
-             "\"mic_sensitivity\":%d,\"aac_sample_rate\":%d,\"aac_bitrate\":%d}",
+             "\"mic_sensitivity\":%d,\"mic_source\":%d,"
+             "\"aud_volume\":%d,\"speaker_available\":%s,"
+             "\"aac_sample_rate\":%d,\"aac_bitrate\":%d,"
+             "\"hardware_diag_mode\":%s}",
              s->id.PID,
              s->status.framesize,
              s->status.quality,
              s->status.brightness,
              s->status.contrast,
              mic_en ? "true" : "false", mic_mute ? "true" : "false",
-             mic_sens, aac_rate, aac_bitr);
+             mic_sens, mic_src,
+             aud_vol, spk_available ? "true" : "false",
+             aac_rate, aac_bitr,
+             hw_diag ? "true" : "false");
 }

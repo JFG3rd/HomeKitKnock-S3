@@ -9,6 +9,8 @@
 #include "camera.h"
 #include "mjpeg_server.h"
 #include "audio_output.h"
+#include "audio_capture.h"
+#include "config.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_app_format.h"
@@ -23,6 +25,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
+#include <math.h>
 
 #ifndef MIN
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -184,7 +187,13 @@ static esp_err_t asset_handler(httpd_req_t *req) {
     // Set content type and encoding
     httpd_resp_set_type(req, file->mime_type);
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=31536000");
+    if (strcmp(file->mime_type, "text/html") == 0) {
+        httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+        httpd_resp_set_hdr(req, "Pragma", "no-cache");
+        httpd_resp_set_hdr(req, "Expires", "0");
+    } else {
+        httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=31536000");
+    }
 
     // Send the file
     esp_err_t err = httpd_resp_send(req, (const char *)file->data, file->size);
@@ -567,7 +576,7 @@ static esp_err_t api_audio_gong_handler(httpd_req_t *req) {
     }
 
     if (!audio_output_is_available()) {
-        const char *resp = "{\"success\":false,\"message\":\"Speaker unavailable with current mic source\"}";
+        const char *resp = "{\"success\":false,\"message\":\"Speaker output is currently unavailable\"}";
         httpd_resp_set_type(req, "application/json");
         httpd_resp_set_status(req, "409 Conflict");
         return httpd_resp_send(req, resp, strlen(resp));
@@ -584,11 +593,78 @@ static esp_err_t api_audio_gong_handler(httpd_req_t *req) {
         return httpd_resp_send(req, resp, strlen(resp));
     }
 
+    // Always play the PCM gong (same as physical button) regardless of HW diag mode.
+    // The test tone is redundant — if the PCM gong plays, the speaker works.
     audio_output_play_gong();
 
-    const char *resp = "{\"success\":true,\"message\":\"Gong playback triggered\"}";
+    const char *resp = "{\"success\":true,\"message\":\"Gong triggered\"}";
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, resp, strlen(resp));
+}
+
+/**
+ * Mic test handler: record 2s, compute stats, play back through speaker.
+ * POST /api/mic/test
+ * Returns JSON: {peak_pct, rms, zero_pct, source, sensitivity, played_back}
+ */
+static esp_err_t api_mic_test_handler(httpd_req_t *req) {
+    httpd_resp_set_type(req, "application/json");
+
+    if (!audio_capture_is_running()) {
+        return httpd_resp_send(req, "{\"error\":\"Mic not running\"}", HTTPD_RESP_USE_STRLEN);
+    }
+
+    const int SAMPLE_COUNT = AUDIO_SAMPLE_RATE * 2;  // 2s at 16 kHz = 32000 samples
+    int16_t *buf = heap_caps_malloc(SAMPLE_COUNT * sizeof(int16_t), MALLOC_CAP_DEFAULT);
+    if (!buf) {
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        return httpd_resp_send(req, "{\"error\":\"Out of memory\"}", HTTPD_RESP_USE_STRLEN);
+    }
+
+    const char *src_str = audio_capture_get_source() == MIC_SOURCE_PDM ? "PDM" : "INMP441";
+    ESP_LOGI(TAG, "Mic test start: source=%s sensitivity=%d%% samples=%d",
+             src_str, (int)audio_capture_get_sensitivity(), SAMPLE_COUNT);
+
+    audio_capture_read(buf, SAMPLE_COUNT, 2500);
+
+    int32_t peak = 0;
+    int64_t sum_sq = 0;
+    uint32_t zero_count = 0;
+    for (int i = 0; i < SAMPLE_COUNT; i++) {
+        int32_t s = buf[i];
+        int32_t a = s < 0 ? -s : s;
+        if (a > peak) peak = a;
+        sum_sq += (int64_t)s * s;
+        if (s == 0) zero_count++;
+    }
+    int rms = (int)sqrtf((float)sum_sq / SAMPLE_COUNT);
+    int peak_pct  = (int)(peak * 100 / 32767);
+    int zero_pct  = (int)(zero_count * 100 / SAMPLE_COUNT);
+
+    // Play at 100% volume so the diagnostic recording is always audible,
+    // regardless of the user's configured volume setting.
+    uint8_t orig_vol = audio_output_get_volume();
+    audio_output_set_volume(100);
+    bool played = audio_output_write(buf, SAMPLE_COUNT, 3000);
+    audio_output_flush_and_stop();  // Flush DMA + disable TX to prevent circular-buffer replay
+    audio_output_set_volume(orig_vol);
+    free(buf);
+
+    if (zero_pct >= 99) {
+        ESP_LOGW(TAG, "Mic test: %s reads all zeros — mic not connected or wrong slot", src_str);
+    } else {
+        ESP_LOGI(TAG, "Mic test result: peak=%d%% rms=%d zeros=%d%% played=%s",
+                 peak_pct, rms, zero_pct, played ? "yes" : "no");
+    }
+
+    char resp[256];
+    snprintf(resp, sizeof(resp),
+             "{\"peak_pct\":%d,\"rms\":%d,\"zero_pct\":%d,"
+             "\"source\":\"%s\",\"sensitivity\":%d,\"played_back\":%s}",
+             peak_pct, rms, zero_pct, src_str,
+             (int)audio_capture_get_sensitivity(),
+             played ? "true" : "false");
+    return httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
 }
 
 /**
@@ -753,18 +829,21 @@ static esp_err_t api_features_get_handler(httpd_req_t *req) {
     bool rtsp_enabled = camera_is_rtsp_enabled();
     bool audio_out_enabled = camera_is_audio_out_enabled();
     bool audio_out_muted = camera_is_audio_out_muted();
+    bool hardware_diag_mode = camera_is_hardware_diag_enabled();
     load_timezone(timezone, sizeof(timezone));
 
     snprintf(response, sizeof(response),
              "{\"timezone\":\"%s\",\"sip_enabled\":%s,\"tr064_enabled\":false,"
              "\"http_cam_enabled\":%s,\"rtsp_enabled\":%s,"
-             "\"audio_out_enabled\":%s,\"audio_out_muted\":%s}",
+             "\"audio_out_enabled\":%s,\"audio_out_muted\":%s,"
+             "\"hardware_diag_mode\":%s}",
              timezone,
              sip_enabled ? "true" : "false",
              http_cam_enabled ? "true" : "false",
              rtsp_enabled ? "true" : "false",
              audio_out_enabled ? "true" : "false",
-             audio_out_muted ? "true" : "false");
+             audio_out_muted ? "true" : "false",
+             hardware_diag_mode ? "true" : "false");
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, response, strlen(response));
@@ -813,6 +892,9 @@ static esp_err_t save_features_handler(httpd_req_t *req) {
     }
     if (extract_json_bool(content, "audio_out_muted", &bval)) {
         camera_set_audio_out_muted(bval);
+    }
+    if (extract_json_bool(content, "hardware_diag_mode", &bval)) {
+        camera_set_hardware_diag_enabled(bval);
     }
 
     // --- Camera sensor settings (via camera_set_control, persists to NVS + applies live) ---
@@ -988,8 +1070,11 @@ static esp_err_t api_sip_verbose_post_handler(httpd_req_t *req) {
  */
 static esp_err_t capture_handler(httpd_req_t *req) {
     if (!camera_is_ready()) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Camera not ready");
-        return ESP_OK;
+        // Return 503 via httpd_resp_send (not httpd_resp_send_err) to avoid
+        // the httpd_txrx WARN log that fires on every FRITZ!Box live-view poll.
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_send(req, "Camera not available", HTTPD_RESP_USE_STRLEN);
     }
 
     camera_fb_t *fb = camera_capture();
@@ -1055,8 +1140,9 @@ static esp_err_t camera_control_handler(httpd_req_t *req) {
         httpd_resp_set_type(req, "text/plain");
         return httpd_resp_send(req, "OK", 2);
     } else if (err == ESP_ERR_INVALID_STATE) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Camera not ready");
-        return ESP_OK;
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_send(req, "Camera not available", HTTPD_RESP_USE_STRLEN);
     } else {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid setting");
         return ESP_OK;
@@ -1457,6 +1543,14 @@ httpd_handle_t web_server_start(void) {
         .user_ctx = NULL
     };
     httpd_register_uri_handler(server, &api_audio_gong_get);
+
+    httpd_uri_t api_mic_test = {
+        .uri = "/api/mic/test",
+        .method = HTTP_POST,
+        .handler = api_mic_test_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &api_mic_test);
 
     httpd_uri_t api_ota = {
         .uri = "/api/ota",

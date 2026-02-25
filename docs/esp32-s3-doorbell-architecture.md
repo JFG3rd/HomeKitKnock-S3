@@ -46,10 +46,12 @@ HomeKit Doorbell                Exposed via Scrypted HomeKit plugin
 Doorbell event flow:
 	1.	Physical button press
 	2.	ESP32 detects GPIO edge
-	3.	ESP32 performs HTTP GET to Scrypted doorbell endpoint
-	4.	ESP32 triggers FRITZ!Box SIP internal ring (DECT group)
-	5.	Scrypted fires HomeKit doorbell event
-	6.	Apple devices display doorbell notification + live video
+	3.  ESP32 Triggers **GPIO3** -> Original gong relay IN (.8s high then 2s low then .8 seconds high)
+	3.  ESP32 plays gong.pcm over MAX98357A DAC/Amp to speaker
+	4.	ESP32 performs HTTP GET to Scrypted doorbell endpoint
+	5.	ESP32 triggers FRITZ!Box SIP internal ring (DECT group)
+	6.	Scrypted fires HomeKit doorbell event
+	7.	Apple devices display doorbell notification + live video
 
 ⸻
 
@@ -75,7 +77,7 @@ is handled by the Home hub (Apple TV / HomePod), not by ESP32 or Scrypted.
 Preferred workflow:
 	•	VS Code
 	•	PlatformIO
-	•	Framework: Arduino / ESP-ADF (inside PlatformIO)
+	•	Framework: ESP-ADF (inside PlatformIO)
 
 Board:
 
@@ -98,7 +100,7 @@ Used with:
 
 Focus:
 	•	✅ Video stream including audio using Onboard digital microphone (XIAO ESP32-S3 Sense) to Scrypted via RTSP
-	•	✅ Doorbell button → HomeKit ring
+	•	✅ Doorbell button → HAP HomeKit ring
 	•	✅ FRITZ!Box internal phone ring via SIP
 
 Components:
@@ -139,10 +141,11 @@ The project is migrating from Arduino to pure ESP-IDF for better reliability and
 | Phase 1 | ✅ Complete | IDF base (boot, NVS, WiFi, web) |
 | Phase 2 | ✅ Complete | Captive portal, log viewer, config |
 | Phase 3 | ✅ Complete | SIP client, button, LED, SNTP |
-| Phase 4 | ⏳ Next | Video path (RTSP/MJPEG) |
-| Phase 5 | ❌ Pending | Audio path with ESP-ADF |
+| Phase 4 | ✅ Complete | Video path — camera, MJPEG, RTSP |
+| Phase 5 | 🔧 In Progress | Audio path — speaker working; INMP441 mic shared bus integration in progress |
 | Phase 6 | ❌ Pending | HomeKit doorbell integration |
-| Phase 7 | ❌ Pending | Cleanup & resilience |
+| Phase 7 | ❌ Pending | OTA update system (credentials, time-limited window) |
+| Phase 8 | ❌ Pending | Cleanup & resilience |
 
 **ESP-IDF Components (src_idf/components/):**
 - `nvs_manager` - NVS abstraction
@@ -153,6 +156,13 @@ The project is migrating from Arduino to pure ESP-IDF for better reliability and
 - `sip_client` - SIP state machine + RTP
 - `button` - Doorbell button (GPIO4)
 - `status_led` - PWM LED patterns (GPIO2)
+- `camera` - OV2640 driver + NVS config (Phase 4)
+- `mjpeg_server` - MJPEG HTTP streaming port 81 (Phase 4)
+- `rtsp_server` - RTSP server port 8554 (Phase 4)
+- `audio_output` - MAX98357A speaker, gong, volume (Phase 5)
+- `audio_capture` - INMP441 mic capture via shared I2S bus (Phase 5)
+- `i2s_shared_bus` - Full-duplex I2S_NUM_1 shared channel manager (Phase 5)
+- `aac_encoder_pipe` - AAC-LC encoder for RTSP audio (Phase 5)
 
 ⸻
 
@@ -171,22 +181,22 @@ Approach:
 🔉 Audio Hardware (Current)
 
 Active hardware:
-	•	Onboard digital microphone (XIAO ESP32-S3 Sense)
+	•	INMP441 external I2S microphone (required wiring — see WIRING_DIAGRAM.md)
 	•	MAX98357A I2S DAC amp
 	•	Small speaker (doorbell chime + local monitoring)
 
 Notes:
-	•	Audio path will be I2S in/out (mic in, DAC out)
-	•	Onboard PDM mic: GPIO42 = CLK, GPIO41 = DATA (I2S0 RX)
-	•	MAX98357A I2S DAC: GPIO7 = BCLK, GPIO8 = LRCLK/WS, GPIO9 = DIN (I2S1 TX)
+	•	Audio uses native ESP-IDF I2S drivers (no ESP-ADF)
+	•	**Required mic**: INMP441 external I2S mic (GPIO7=SCK, GPIO8=WS, GPIO12=SD, GND=L/R)
+	•	**Onboard PDM mic** (GPIO41=DATA, GPIO42=CLK): onboard hardware but NOT wired in required config
+	•	**INMP441 must NOT be on GPIO43/44** — those pins are free for UART use
+	•	MAX98357A I2S DAC: GPIO7 = BCLK, GPIO8 = LRCLK/WS, GPIO9 = DIN (I2S_NUM_1 TX)
+	•	GPIO7/8 BCLK/WS are physically shared between MAX98357A and INMP441 (`i2s_shared_bus` component)
 	•	MAX98357A SC/SD: tie to 3V3 (always on)
-	•	GPIO7/8/9 are default SPI pins; avoid SPI on those pins or remap if needed
 	•	Feature setup exposes mic enable/mute + sensitivity, AAC sample-rate/bitrate, and audio out enable/mute + volume
-	•	HTTP audio preview (WAV): http://ESP32-IP/audio.wav
-	•	Continuous HTTP audio (AAC): http://ESP32-IP:81/audio.aac
 	•	Browser A/V page: http://ESP32-IP/live
 	•	SIP intercom audio: RTP on UDP port 40000 (PCMU/PCMA + DTMF)
-	•	Local gong playback uses `/gong.pcm` from LittleFS when present
+	•	Local gong playback: embedded PCM data in flash (gong_data.c, generated from data/gong.pcm)
 
 ⸻
 
@@ -199,9 +209,9 @@ Pin assignments (current):
 	•	Original 8VAC gong relay: GPIO3 (active-high, relay module rated for AC)
 	•	I2C (reserved for sensors): GPIO5 = SDA, GPIO6 = SCL
 	•	MAX98357A I2S: GPIO7 = BCLK, GPIO8 = LRC/WS, GPIO9 = DIN
-	•	PDM mic: GPIO42 = CLK, GPIO41 = DATA
+	•	PDM mic: GPIO42 = CLK, GPIO41 = DATA (onboard hardware — NOT connected; INMP441 is the active mic)
 	•	Camera pins: see `include/camera_pins.h` (XIAO ESP32-S3 Sense map)
-
+	•	INMP441 I2S Microphone (external, offboard): GPIO7 = SCK, GPIO8 = WS, GPIO12 = SD, GND = L/R
 Power supply:
 	•	8VAC transformer (existing doorbell transformer or similar) → bridge rectifier → supercapacitor ride-through → 3.3V buck
 	•	Supercapacitor bank provides ~45 second hold-up during gong relay activation
@@ -256,8 +266,6 @@ Header mapping (from `pins_arduino.h` in the PlatformIO variant):
 	•	D3/A3 = GPIO4
 	•	D4/A4 = GPIO5
 	•	D5/A5 = GPIO6
-	•	D6 = GPIO43 (UART TX)
-	•	D7 = GPIO44 (UART RX)
 	•	D8/A8 = GPIO7
 	•	D9/A9 = GPIO8
 	•	D10/A10 = GPIO9
@@ -266,20 +274,22 @@ Reserved/used by this project:
 	•	GPIO2: status LED
 	•	GPIO4: doorbell button
 	•	GPIO5/GPIO6: I2C (reserved)
-	•	GPIO7/8/9: I2S DAC (audio out)
+	•	GPIO7/8: shared I2S clocks (MAX98357A + INMP441)
+	•	GPIO9: I2S DOUT to MAX98357A DIN
+	•	GPIO12: I2S DIN from INMP441 SD
 	•	GPIO41/42: PDM mic (onboard)
 	•	Camera pins: GPIO10/11/12/13/14/15/16/17/18/38/39/40/47/48 (see `include/camera_pins.h`)
 
 Free header GPIOs with current wiring:
 	•	GPIO1 (D0/A0) - safe for digital/analog input or WS2812 data
 	•	GPIO3 (D2/A2) - safe for digital/analog input or simple PWM output
-	•	GPIO43/GPIO44 (D6/D7) - available if you are not using UART TX/RX
+	•	GPIO43/GPIO44 (D6/D7) - free (not used for INMP441 in required wiring)
 
 Suggested usage:
 	•	WS2812B or status LED data line: GPIO1 or GPIO3
 	•	PIR/door contact sensor input: GPIO1 or GPIO3
 	•	I2C sensors: GPIO5/6 when you decide to populate the I2C header
-	•	External UART device (RS485/GPS): GPIO43/44 if you do not need UART for debugging
+	•	External UART device (RS485/GPS): GPIO43/44
 
 Note: The onboard LED is GPIO21 (not on the header). Use it only if you want a dedicated internal status LED.
 
@@ -308,7 +318,8 @@ Current audio plan:
 **Current Implementation (ESP-IDF):**
 - GPIO4, active-low with internal pull-up
 - 50ms debounce in software (polling-based)
-- Callback triggers SIP ring + LED animation
+- Callback triggers SIP ring + LED animation + plays gong sound or two tone sound over MAX98357A DAC/Amp and connected speaker.
+
 - Component: `src_idf/components/button/`
 
 Two supported wiring strategies:
@@ -321,10 +332,7 @@ Two supported wiring strategies:
 	•	Allows smart gong behaviour
 	•	Requires mild rewiring
 
-Current focus:
-👉 Button press triggers SIP ring to Fritz!Box phones.
 
-⸻
 
 🖥 UI Diagnostics
 
@@ -351,17 +359,21 @@ Frigate / Hailo is not part of this project phase.
 
 ⸻
 
-🧭 Next Implementation Steps
-	1.	Create PlatformIO project for XIAO ESP32-S3 Sense
-	2.	Add CameraWebServer-style HTTP stream
-	3.	Add GPIO button ISR + debounce
-	4.	Call Scrypted doorbell endpoint on press
-	5.	Add device to Scrypted
-	6.	Create Doorbell Group
-	7.	Export to HomeKit & test UX
+🧭 Next Implementation Steps (Phase 5 — Audio)
 
-After MVP works:
-	8.	Begin RTSP + audio pipeline exploration
+Current focus: wire INMP441 mic into the system via shared I2S bus.
+
+	1.	Fix `i2s_shared_bus.c` bugs (RX DOUT GPIO conflict, TX slot mode)
+	2.	Wire `audio_output.c` to use shared bus TX channel
+	3.	Wire `audio_capture.c` to use shared bus RX channel for INMP441
+	4.	Move `audio_capture_init()` out of camera-gated block in `main.c`
+	5.	Add `POST /api/mic/test` endpoint (record 2s → play back → JSON stats)
+	6.	Add "🎤 Record & Play" button on setup page for mic verification
+	7.	SIP bidirectional audio (G.711 RTP TX/RX) once mic capture is working
+	8.	RTSP audio (AAC-LC via `aac_encoder_pipe`) once capture is working
+
+Phase 6 (HomeKit):
+	9.	Integrate Espressif HAP SDK or Scrypted bridge for HomeKit doorbell event
 
 ⸻
 

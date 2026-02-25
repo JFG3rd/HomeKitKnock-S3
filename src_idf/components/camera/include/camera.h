@@ -65,6 +65,21 @@ bool camera_is_enabled(void);
 esp_err_t camera_set_enabled(bool enabled);
 
 /**
+ * Check if RTSP camera streaming feature is enabled in settings
+ *
+ * @return true if enabled (default: false)
+ */
+bool camera_is_rtsp_enabled(void);
+
+/**
+ * Set RTSP camera streaming feature enabled state (persisted to NVS)
+ *
+ * @param enabled true to enable, false to disable
+ * @return ESP_OK on success
+ */
+esp_err_t camera_set_rtsp_enabled(bool enabled);
+
+/**
  * Set a camera control variable at runtime (also persists to NVS)
  *
  * Supported vars: "framesize", "quality", "brightness", "contrast"
@@ -74,6 +89,18 @@ esp_err_t camera_set_enabled(bool enabled);
  * @return ESP_OK on success
  */
 esp_err_t camera_set_control(const char *var, int val);
+
+/**
+ * Audio output (gong/speaker) enable state (persisted to NVS)
+ */
+bool camera_is_audio_out_enabled(void);
+esp_err_t camera_set_audio_out_enabled(bool enabled);
+
+bool camera_is_audio_out_muted(void);
+esp_err_t camera_set_audio_out_muted(bool muted);
+
+bool camera_is_hardware_diag_enabled(void);
+esp_err_t camera_set_hardware_diag_enabled(bool enabled);
 
 /**
  * Get current camera settings as JSON

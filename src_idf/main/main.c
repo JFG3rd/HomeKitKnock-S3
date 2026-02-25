@@ -49,11 +49,13 @@ static sip_config_t sip_config;
 static volatile bool web_server_pending = false;
 static volatile bool sip_init_pending = false;
 static volatile bool camera_init_pending = false;
+static volatile bool audio_capture_pending = false;
 static volatile bool dns_server_pending = false;
 static volatile bool dns_stop_pending = false;
 static volatile bool sntp_init_pending = false;
 static bool sntp_initialized = false;
 static bool camera_initialized = false;
+static bool audio_capture_initialized = false;
 
 #define NVS_SYSTEM_NAMESPACE "system"
 #define NVS_KEY_TIMEZONE     "timezone"
@@ -157,6 +159,7 @@ static void wifi_event_callback(wifi_mgr_event_t event, void *data) {
             web_server_pending = true;
             sip_init_pending = true;
             camera_init_pending = true;
+            audio_capture_pending = true;
             sntp_init_pending = true;
             break;
 
@@ -225,6 +228,17 @@ void app_main(void) {
         ESP_LOGW(TAG, "Button init failed (non-fatal)");
     } else {
         button_set_callback(on_button_press);
+    }
+
+    // Initialize audio output unconditionally — speaker (gong) is a core
+    // doorbell feature and must not depend on camera being enabled.
+    if (audio_output_is_available()) {
+        err = audio_output_init();
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "Audio output (speaker) initialized");
+        } else {
+            ESP_LOGW(TAG, "Audio output init failed: %s (non-fatal)", esp_err_to_name(err));
+        }
     }
 
     // =====================================================================
@@ -332,6 +346,29 @@ void app_main(void) {
             }
         }
 
+        // Process deferred audio capture initialization (independent of camera feature flag).
+        // INMP441 mic is needed for SIP intercom and RTSP audio regardless of camera state.
+        if (audio_capture_pending && !audio_capture_initialized) {
+            audio_capture_pending = false;
+            if (!audio_capture_is_enabled()) {
+                ESP_LOGI(TAG, "Mic disabled - skipping audio capture init");
+            } else {
+                esp_err_t ac_err = audio_capture_init();
+                if (ac_err == ESP_OK) {
+                    ac_err = audio_capture_start();
+                    if (ac_err == ESP_OK) {
+                        audio_capture_initialized = true;
+                        ESP_LOGI(TAG, "Audio capture started (source=%s)",
+                                 audio_capture_get_source() == MIC_SOURCE_PDM ? "PDM" : "INMP441");
+                    } else {
+                        ESP_LOGW(TAG, "Audio capture start failed: %s", esp_err_to_name(ac_err));
+                    }
+                } else {
+                    ESP_LOGW(TAG, "Audio capture init failed: %s", esp_err_to_name(ac_err));
+                }
+            }
+        }
+
         // Process deferred camera + MJPEG server initialization (only if feature enabled)
         if (camera_init_pending && !camera_initialized) {
             camera_init_pending = false;
@@ -361,42 +398,18 @@ void app_main(void) {
                         ESP_LOGI(TAG, "RTSP streaming disabled - skipping RTSP server");
                     }
 
-                    // Initialize audio capture (mic) if enabled
-                    if (audio_capture_is_enabled()) {
-                        esp_err_t audio_err = audio_capture_init();
-                        if (audio_err == ESP_OK) {
-                            audio_err = audio_capture_start();
-                            if (audio_err == ESP_OK) {
-                                ESP_LOGI(TAG, "Audio capture started (source=%s)",
-                                         audio_capture_get_source() == MIC_SOURCE_PDM ? "PDM" : "INMP441");
-                                // Start AAC encoder pipeline for RTSP audio
-                                audio_err = aac_encoder_pipe_init();
-                                if (audio_err == ESP_OK) {
-                                    ESP_LOGI(TAG, "AAC encoder pipeline initialized");
-                                } else {
-                                    ESP_LOGW(TAG, "AAC encoder init failed: %s", esp_err_to_name(audio_err));
-                                }
-                            } else {
-                                ESP_LOGW(TAG, "Audio capture start failed: %s", esp_err_to_name(audio_err));
-                            }
-                        } else {
-                            ESP_LOGW(TAG, "Audio capture init failed: %s", esp_err_to_name(audio_err));
-                        }
+                    // Start AAC encoder pipeline for RTSP audio.
+                    // Note: audio_capture_init() is called independently of camera
+                    // (see audio_capture_pending block above). The AAC pipeline is
+                    // started here because it only makes sense alongside an RTSP server.
+                    esp_err_t audio_err = aac_encoder_pipe_init();
+                    if (audio_err == ESP_OK) {
+                        ESP_LOGI(TAG, "AAC encoder pipeline initialized");
                     } else {
-                        ESP_LOGI(TAG, "Mic disabled - skipping audio capture");
+                        ESP_LOGW(TAG, "AAC encoder init failed: %s", esp_err_to_name(audio_err));
                     }
 
-                    // Initialize audio output (speaker) if available
-                    if (audio_output_is_available()) {
-                        esp_err_t spk_err = audio_output_init();
-                        if (spk_err == ESP_OK) {
-                            ESP_LOGI(TAG, "Audio output (speaker) initialized");
-                        } else if (spk_err == ESP_ERR_NOT_SUPPORTED) {
-                            ESP_LOGI(TAG, "Speaker unavailable (INMP441 mode)");
-                        } else {
-                            ESP_LOGW(TAG, "Audio output init failed: %s", esp_err_to_name(spk_err));
-                        }
-                    }
+                    // Note: audio_output_init() was already called unconditionally at boot.
                 } else {
                     ESP_LOGW(TAG, "Camera init failed: %s (streaming disabled)", esp_err_to_name(cam_err));
                 }

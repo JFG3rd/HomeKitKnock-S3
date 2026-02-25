@@ -40,13 +40,28 @@
 #define DEFAULT_MIC_SENSITIVITY 70
 #define DEFAULT_AUDIO_OUT_VOLUME 70
 
+// Shared external I2S clock domain for full-duplex INMP441 + MAX98357A.
+#define I2S_SHARED_BCLK 7
+#define I2S_SHARED_WS 8
+
 // XIAO ESP32-S3 Sense onboard PDM mic (I2S0 RX).
 #define I2S_PDM_MIC_CLK 42
 #define I2S_PDM_MIC_DATA 41
 
-// MAX98357A I2S DAC (I2S1 TX).
-#define I2S_DAC_BCLK 7
-#define I2S_DAC_LRCLK 8
+// External INMP441 I2S mic (I2S1 RX) — optional, for IP44 enclosure.
+// NOTE: GPIO12 MUST NOT be used here. On the Seeed XIAO ESP32-S3 Sense,
+// GPIO12 = OV2640 camera Y7 (D7 data output). The camera chip drives GPIO12
+// regardless of camera software state, causing all-zeros on the I2S DIN line.
+// GPIO5 (D4 header pin) is free: not camera-connected, not occupied by
+// any other doorbell function (I2C is optional/unused).
+#define I2S_INMP441_SCK  I2S_SHARED_BCLK
+#define I2S_INMP441_WS   I2S_SHARED_WS
+#define I2S_INMP441_SD   5
+
+// MAX98357A I2S DAC (I2S1 TX) on the same BCLK/WS as INMP441.
+// Data lines remain separate: INMP441 -> DIN, ESP32 DOUT -> MAX98357A DIN.
+#define I2S_DAC_BCLK I2S_SHARED_BCLK
+#define I2S_DAC_LRCLK I2S_SHARED_WS
 #define I2S_DAC_DOUT 9
 
 #endif // CONFIG_H

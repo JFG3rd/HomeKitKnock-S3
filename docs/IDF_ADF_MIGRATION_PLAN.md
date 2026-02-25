@@ -1,15 +1,16 @@
 <!--
  Project: HomeKitKnock-S3
  File: docs/IDF_ADF_MIGRATION_PLAN.md
- Purpose: Phased plan to migrate from Arduino-as-component to pure ESP-IDF + ESP-ADF
+ Purpose: Phased plan to migrate from Arduino-as-component to pure ESP-IDF
  Author: Codex (with user direction)
- Last Updated: February 10, 2026
+ Last Updated: February 22, 2026
 -->
 
 # Migration Plan: Pure ESP-IDF + ESP-ADF
 
-Goal: Retire the Arduino layer, keep ADF for audio, and deliver all current features
+Goal: Retire the Arduino layer and deliver all current features using pure ESP-IDF
 (SIP intercom, RTSP/HTTP streaming, embedded web UI, OTA, HomeKit doorbell).
+Note: ESP-ADF is NOT used — audio is implemented with native ESP-IDF I2S drivers.
 
 ---
 
@@ -67,7 +68,7 @@ Goal: Retire the Arduino layer, keep ADF for audio, and deliver all current feat
 
 ---
 
-## Phase 4 — Video path 🔧 IN PROGRESS
+## Phase 4 — Video path ✅ COMPLETE
 
 ### Implemented Features ✅
 - ✅ esp32-camera component (`src_idf/components/camera/`) with OV2640, VGA JPEG, 2 PSRAM buffers
@@ -82,11 +83,9 @@ Goal: Retire the Arduino layer, keep ADF for audio, and deliver all current feat
 - ✅ PSRAM 8MB OPI enabled in `sdkconfig.seeed_xiao_esp32s3_idf`
 - ✅ lwIP sockets increased to 16 (was 10)
 - ✅ Setup page Camera Config card fully functional (apply + persist all settings)
-
-### Remaining TODO
-- ❌ RTSP MJPEG server on port 8554 (using ESP-ADF `esp_media_protocols` library)
-- ❌ `rtsp_enabled` feature toggle with NVS persistence
-- ❌ RTSP client count → `LED_STATE_RTSP_ACTIVE` integration
+- ✅ RTSP MJPEG server on port 8554 (`src_idf/components/rtsp_server/`)
+- ✅ `rtsp_enabled` feature toggle with NVS persistence
+- ✅ RTSP client count → `LED_STATE_RTSP_ACTIVE` integration
 
 ### Success Criteria
 | Criterion | Status | Notes |
@@ -95,19 +94,47 @@ Goal: Retire the Arduino layer, keep ADF for audio, and deliver all current feat
 | MJPEG HTTP stream (port 81) | ✅ | Stable, tested with browser |
 | JPEG snapshot (/capture) | ✅ | 640x480, ~35KB |
 | Camera settings persist | ✅ | NVS save/restore across reboots |
-| RTSP stream (port 8554) | ❌ | Pending |
-| Stable stream to Scrypted | ⏳ | HTTP works, RTSP pending |
+| RTSP stream (port 8554) | ✅ | MJPEG-over-RTP implemented |
+| Stable stream to Scrypted | ✅ | Both HTTP MJPEG and RTSP working |
 
-## Phase 5 — Audio path with ADF
-- Wire I2S mic pipeline into ADF AAC-LC encoder → RTP/RTSP payloads.
-- Support two mic sources: onboard PDM (GPIO41/42) and external INMP441 I2S (GPIO43/44/12).
-- Mic source selectable in setup page, stored in NVS (`mic_source` key in `camera` namespace).
-- I2S0 for MAX98357A speaker output (GPIO7/8/9), I2S1 for INMP441 mic input (GPIO43/44/12).
-- Software volume control via ESP-ADF audio pipeline (not hardware GAIN pin).
-  - MAX98357A GAIN pin: leave floating (9 dB fixed) — it's a hardware strap, not runtime-adjustable.
-  - Volume slider on setup page, 0–100%, applied digitally before I2S output.
-  - NVS key: `aud_volume` in `camera` namespace, default 80.
-- Success: mono 16 kHz AAC stream in sync with video (acceptable A/V skew).
+## Phase 5 — Audio path (pure ESP-IDF, no ADF) 🔧 IN PROGRESS
+
+**Architecture decision**: Audio is implemented with native ESP-IDF I2S drivers, not ESP-ADF.
+Only INMP441 (external I2S mic) is used — PDM mic (GPIO41/42) is onboard hardware but NOT wired.
+
+### Shared I2S Bus
+GPIO7 (BCLK) and GPIO8 (WS) are physically shared between MAX98357A speaker and INMP441 mic.
+The `i2s_shared_bus` component (`src_idf/components/i2s_shared_bus/`) creates a full-duplex
+I2S_NUM_1 channel pair — TX (GPIO9 → MAX98357A DIN) and RX (GPIO12 ← INMP441 SD) — simultaneously.
+Both `audio_output` and `audio_capture` call `i2s_shared_bus_init()` (idempotent) and get their
+channel handles from the shared bus. No stop-capture-before-play required.
+
+### Implemented ✅
+- ✅ `audio_output` component: MAX98357A speaker, I2S_NUM_1 via shared bus, gong PCM from flash,
+  synthesized 880/660 Hz fallback, volume 0–100%, deferred TX channel, NVS persistence
+- ✅ `audio_output_init()` runs unconditionally at boot (not gated by camera enable flag)
+- ✅ `audio_out_enabled` NVS default = 1 (gong is a core feature)
+- ✅ Volume slider always interactive (not disabled by audio_out_enabled checkbox)
+- ✅ `aac_encoder_pipe` component: AAC-LC encoder for RTSP audio
+
+### In Progress 🔧
+- 🔧 Wire `audio_output.c` to use shared bus TX channel (replace standalone `i2s_new_channel()`)
+- 🔧 Wire `audio_capture.c` to use shared bus RX channel for INMP441 (replace standalone channel)
+- 🔧 Move `audio_capture_init()` out of camera-gated block in `main.c`
+- 🔧 Propagate `hardware_diag_mode` from NVS write in `camera.c` to in-memory flag in `audio_output.c`
+- 🔧 `POST /api/mic/test`: record 2s → compute stats → play back → return JSON
+- 🔧 "🎤 Record & Play" button on setup page Audio/Mic card
+
+### Success Criteria
+| Criterion | Status | Notes |
+|-----------|--------|-------|
+| Speaker gong on button press | ✅ | MAX98357A via I2S_NUM_1 |
+| Volume control 0–100% | ✅ | NVS persistence |
+| Shared bus full-duplex | 🔧 | Shared bus component exists, wiring in progress |
+| INMP441 capture independent of camera | 🔧 | Camera-gate bug fix in progress |
+| SIP bidirectional audio | 🔧 | Blocked on mic capture working |
+| RTSP audio (AAC) | 🔧 | aac_encoder_pipe ready, blocked on capture |
+| Mic test (Record & Play) | 🔧 | UI + endpoint in progress |
 
 ## Phase 6 — HomeKit doorbell
 - Integrate Espressif HAP SDK (IDF) or external bridge; expose doorbell + camera.
@@ -129,13 +156,13 @@ Goal: Retire the Arduino layer, keep ADF for audio, and deliver all current feat
 
 ---
 
-## Current Architecture (Phase 4 In Progress)
+## Current Architecture (Phase 5 In Progress)
 
 ### Component Structure
 ```
 src_idf/
 ├── main/
-│   └── main.c                    # Boot sequence, main loop, button/LED/camera integration
+│   └── main.c                    # Boot sequence, main loop, button/LED/camera/audio integration
 └── components/
     ├── nvs_manager/              # Raw NVS C API wrapper
     ├── wifi_manager/             # WiFi STA/AP/APSTA modes
@@ -147,7 +174,12 @@ src_idf/
     ├── button/                   # Doorbell button (GPIO4)
     ├── status_led/               # PWM LED patterns (GPIO2)
     ├── camera/                   # OV2640 driver + NVS config (Phase 4)
-    └── mjpeg_server/             # MJPEG HTTP streaming port 81 (Phase 4)
+    ├── mjpeg_server/             # MJPEG HTTP streaming port 81 (Phase 4)
+    ├── rtsp_server/              # RTSP server port 8554 (Phase 4)
+    ├── audio_output/             # MAX98357A speaker, gong playback, volume (Phase 5)
+    ├── audio_capture/            # INMP441 mic capture via shared I2S bus (Phase 5)
+    ├── i2s_shared_bus/           # Full-duplex I2S_NUM_1 shared channel manager (Phase 5)
+    └── aac_encoder_pipe/         # AAC-LC encoder pipeline for RTSP audio (Phase 5)
 ```
 
 ### Boot Sequence
@@ -156,30 +188,34 @@ src_idf/
 2. Log Buffer Init (hooks into ESP-IDF logging)
    Status LED Init (PWM visual feedback)
    Button Init (GPIO4, debounce callback)
+   Audio Output Init (unconditional — speaker is core feature, TX channel deferred)
 3. WiFi Manager Init (esp_netif + event loop)
 4. WiFi Start (STA if credentials, else AP+DNS)
 5. Web Server + SIP Client (via WiFi event callback)
    SNTP Init (when connected to WiFi)
-6. Camera Init + MJPEG Server Start (deferred, after WiFi GOT_IP, if enabled)
+6. Audio Capture Init (deferred to WiFi got-IP, if mic enabled — independent of camera)
+7. Camera Init + MJPEG/RTSP Server Start (deferred, after WiFi GOT_IP, if enabled)
 ```
 
 ### Main Loop Processing
-- Button polling (debounced edge detection)
+- Button polling (debounced edge detection, triggers SIP ring + gong)
 - Status LED pattern updates
-- SIP message handling
+- SIP message handling + RTP media processing
 - Deferred ring requests
 - SIP registration refresh
+- Deferred audio capture init (when WiFi connected + mic enabled)
 - Deferred camera init (when WiFi connected + camera enabled)
-- MJPEG client count → LED state tracking
+- MJPEG/RTSP client count → LED state tracking
 
 ### NVS Namespaces
 | Namespace | Keys | Purpose |
 |-----------|------|---------|
 | `wifi` | `ssid`, `password` | WiFi credentials |
-| `config` | `sip_*`, `cam_*`, `aud_*`, `sys_*` | Application settings |
 | `sip` | `user`, `password`, `displayname`, `target`, `enabled`, `verbose` | SIP configuration |
-| `camera` | `http_cam_en`, `framesize`, `quality`, `brightness`, `contrast` | Camera feature toggle + sensor config |
-| `camera` | `mic_en`, `mic_mute`, `mic_sens`, `aac_rate`, `aac_bitr`, `mic_source` | Mic/audio config (NVS-only, Phase 5 hardware) |
+| `camera` | `http_cam_en`, `rtsp_en`, `framesize`, `quality`, `brightness`, `contrast` | Camera feature toggle + sensor config |
+| `camera` | `mic_en`, `mic_mute`, `mic_sens`, `aac_rate`, `aac_bitr`, `mic_source` | Mic/audio capture config |
+| `camera` | `aud_out_en`, `aud_volume`, `hw_diag` | Speaker output + diagnostic mode |
+| `system` | `timezone` | Timezone string (POSIX TZ format) |
 | `ota` | `username`, `pass_hash` | OTA credentials (Phase 7) |
 
 ### GPIO Assignments
@@ -187,11 +223,13 @@ src_idf/
 |------|----------|---------------|
 | GPIO4 | Doorbell Button | Active-low, internal pull-up, 50ms debounce |
 | GPIO2 | Status LED | PWM (LEDC), 8-bit, 5kHz |
-| GPIO1 | Door Opener Relay | Active-high (Phase 4+) |
-| GPIO3 | Gong Relay | Active-high (Phase 4+) |
-| GPIO7/8/9 | I2S0 DAC | MAX98357A speaker output (Phase 5) |
-| GPIO41/42 | PDM Mic | Onboard mic (Phase 5) |
-| GPIO43/44/12 | I2S1 Mic | INMP441 external mic — SCK/WS/SD (Phase 5) |
+| GPIO1 | Door Opener Relay | Active-high (future) |
+| GPIO3 | Gong Relay | Active-high (future) |
+| GPIO7 | Shared I2S BCLK | MAX98357A BCLK + INMP441 SCK (shared via i2s_shared_bus) |
+| GPIO8 | Shared I2S WS | MAX98357A LRC + INMP441 WS (shared via i2s_shared_bus) |
+| GPIO9 | I2S_NUM_1 TX data | MAX98357A DIN (speaker data out) |
+| GPIO12 | I2S_NUM_1 RX data | INMP441 SD/DOUT (mic data in) |
+| GPIO41/42 | PDM Mic (onboard) | Onboard hardware — NOT connected in required wiring |
 
 ### API Endpoints
 | Endpoint | Method | Purpose |
@@ -208,6 +246,8 @@ src_idf/
 | `/api/sip` | POST | Save SIP config |
 | `/api/sip/ring` | POST | Trigger SIP ring |
 | `/api/sip/verbose` | GET/POST | Toggle verbose logging |
+| `/api/audio/gong` | POST | Play test gong on speaker |
+| `/api/mic/test` | POST | Record 2s + play back (mic diagnostics) |
 | `/capture` | GET | JPEG snapshot (Phase 4) |
 | `/cameraStreamInfo` | GET | Camera/streaming status (Phase 4) |
 | `/control` | GET | Camera/mic settings `?var=X&val=Y` (Phase 4) |
@@ -326,3 +366,31 @@ pio run -t erase -e seeed_xiao_esp32s3_idf
 - Implement RTSP MJPEG server on port 8554 using ESP-ADF `esp_media_protocols` library
 - Wire `rtsp_enabled` feature toggle
 - Test with Scrypted RTSP source
+
+---
+
+## Session Summary (February 22, 2026)
+
+### Phase 4 Completion + Phase 5 Audio Output Fixes
+
+1. **RTSP Server**: Implemented (`src_idf/components/rtsp_server/`), Phase 4 complete
+2. **Audio Output Camera-Gate Bug**: `audio_output_init()` was inside the camera-enabled block — speaker never initialized if HTTP streaming was disabled. Moved to unconditional boot init (after button callback registration).
+3. **NVS Default Bug**: `audio_out_enabled` key defaulted to 0 when absent — speaker was disabled by default. Changed to default 1 (gong is a core doorbell feature).
+4. **Volume Slider Coupled to Checkbox**: `updateAudioUi()` disabled the volume slider when `audio_out_enabled` was unchecked. Removed this coupling — volume slider is always interactive.
+5. **Deferred TX Channel**: `audio_output_init()` no longer creates the I2S TX channel at boot. TX is created at first `prepare_exclusive_playback()` call to avoid GPIO conflicts with INMP441 on the same I2S_NUM_1 port.
+6. **Slider Auto-Save**: Added `change` event fallback alongside `input` event for reliable auto-save when slider is released.
+
+### Architecture Decision: No ADF
+Confirmed that audio uses native ESP-IDF I2S drivers only, not ESP-ADF:
+- `audio_output`: standalone `driver/i2s_std.h` with `i2s_shared_bus` (Phase 5)
+- `audio_capture`: `driver/i2s_std.h` + `driver/i2s_pdm.h` (PDM onboard — not connected; INMP441 via shared bus)
+- `aac_encoder_pipe`: custom pipeline using `esp_audio_codec` for AAC-LC
+
+### Wiring Clarification
+Per `docs/WIRING_DIAGRAM.md`: GPIO7/8 are PHYSICALLY shared between MAX98357A and INMP441. GPIO43/44 (PDM pins) are explicitly NOT connected. Therefore INMP441 is the sole mic source and `i2s_shared_bus` is mandatory for full-duplex.
+
+### Next Session: Shared Bus Integration
+- Fix two bugs in `i2s_shared_bus.c` (RX `.dout` conflict, TX slot mode)
+- Wire `audio_output.c` and `audio_capture.c` to use shared bus
+- Move `audio_capture_init()` out of camera-gated block
+- Add `POST /api/mic/test` + "🎤 Record & Play" button

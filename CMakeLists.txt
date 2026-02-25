@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.16.0)
 
-# Skip compiler ABI detection to avoid macOS cross-compilation issues
+# Skip Xtensa cross-compiler ABI detection (avoids host/target mismatch)
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_C_COMPILER_WORKS 1)
 set(CMAKE_CXX_COMPILER_WORKS 1)
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
-# Disable component manager so ESP-IDF 4.4 doesn't try to resolve esp-adf component.yml deps.
+# Disable component manager to prevent esp-adf component.yml deps from auto-resolving.
 set(ENV{IDF_COMPONENT_MANAGER} 0)
 set(IDF_COMPONENT_MANAGER 0 CACHE BOOL "Disable ESP-IDF component manager" FORCE)
 
@@ -16,14 +16,10 @@ list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_SOURCE_DIR}/src_idf/components")
 # esp32-camera library (from PlatformIO lib_deps)
 list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_SOURCE_DIR}/.pio/libdeps/seeed_xiao_esp32s3_idf/esp32-camera")
 
-# ESP-ADF components (commented out for Phase 1, will add back in Phase 5)
-# Append minimal ADF components without overriding PlatformIO's EXTRA_COMPONENT_DIRS
-# (which includes src/ and Arduino framework).
-#list(APPEND EXTRA_COMPONENT_DIRS
-#    "${CMAKE_SOURCE_DIR}/components/esp-adf/components/audio_pipeline"
-#    "${CMAKE_SOURCE_DIR}/components/esp-adf/components/audio_sal"
-#    "${CMAKE_SOURCE_DIR}/components/esp-adf/components/esp-adf-libs"
-#    "${CMAKE_SOURCE_DIR}/components/adf_raw_stream"
-#)
+# ESP-ADF: only audio_sal imported directly (uses old register_component(), backward-compatible).
+# audio_pipeline and esp_codec are wrapped in our own thin components under src_idf/components/.
+list(APPEND EXTRA_COMPONENT_DIRS
+    "${CMAKE_SOURCE_DIR}/components_phase5/esp-adf/components/audio_sal"
+)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(esp32-s3-doorbell)

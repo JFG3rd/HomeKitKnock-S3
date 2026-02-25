@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Embed web assets (HTML, CSS) from data/ directory into C++ header files.
-Converts files to PROGMEM byte arrays for serving from embedded firmware.
+Embed web assets (HTML, CSS) from data/ directory into C header files.
+Converts files to byte arrays for serving from embedded firmware.
 
 Usage:
     python3 embed_web_assets.py <data_dir> <output_dir>
@@ -25,13 +25,10 @@ def to_hex_string(data, bytes_per_line=16):
         lines.append(f"    {hex_bytes}")
     return ',\n'.join(lines)
 
-def generate_header(filename, compressed_data, original_size, use_progmem=True):
-    """Generate header content for embedded file (C or C++ compatible)."""
+def generate_header(filename, compressed_data, original_size):
+    """Generate C header content for embedded file."""
     var_name = Path(filename).stem.replace('-', '_').replace('.', '_')
     size = len(compressed_data)
-
-    # Use PROGMEM for Arduino, omit for pure C/IDF
-    progmem = "PROGMEM " if use_progmem else ""
 
     header = f"""// Auto-generated embedded web asset: {filename}
 // Original size: {original_size} bytes, Compressed: {size} bytes
@@ -42,13 +39,13 @@ def generate_header(filename, compressed_data, original_size, use_progmem=True):
 #include <stddef.h>
 
 // Embedded {filename} (gzip compressed)
-const uint8_t {progmem}{var_name}_data[] = {{
+const uint8_t {var_name}_data[] = {{
 {to_hex_string(compressed_data)}
 }};
 
 const size_t {var_name}_size = {size};
 const size_t {var_name}_original_size = {original_size};
-const char {progmem}{var_name}_mime[] = "{get_mime_type(filename)}";
+const char {var_name}_mime[] = "{get_mime_type(filename)}";
 """
     return header
 
@@ -67,71 +64,71 @@ def get_mime_type(filename):
     }
     return mime_types.get(ext, 'application/octet-stream')
 
-def embed_web_assets(data_dir, output_dir, use_progmem=True):
+def embed_web_assets(data_dir, output_dir):
     """Convert web assets in data_dir to embedded headers in output_dir."""
     data_path = Path(data_dir)
     output_path = Path(output_dir)
-    
+
     if not data_path.exists():
         print(f"Error: Data directory not found: {data_dir}")
         return False
-    
+
     output_path.mkdir(parents=True, exist_ok=True)
-    
+
     # Files to embed
     embed_files = ['index.html', 'style.css', 'setup.html', 'wifi-setup.html',
                    'live.html', 'guide.html', 'ota.html', 'sip.html',
                    'tr064.html', 'logs.html', 'logs-doorbell.html', 'logs-camera.html']
-    
+
     files_data = {}
-    
+
     for filename in embed_files:
         file_path = data_path / filename
         if not file_path.exists():
             print(f"Warning: Skipping {filename} - not found")
             continue
-        
+
         print(f"Embedding {filename}...")
-        
+
         try:
             with open(file_path, 'rb') as f:
                 content = f.read()
-            
+
             compressed = compress_content(content)
             original_size = len(content)
 
             # Generate header
-            header_content = generate_header(filename, compressed, original_size, use_progmem)
-            
+            header_content = generate_header(filename, compressed, original_size)
+
             # Write individual header
             header_file = output_path / f"embedded_{Path(filename).stem}.h"
             with open(header_file, 'w') as f:
                 f.write(header_content)
-            
+
             files_data[filename] = {
                 'var_name': Path(filename).stem.replace('-', '_').replace('.', '_'),
                 'original_size': original_size,
                 'compressed_size': len(compressed),
                 'mime_type': get_mime_type(filename)
             }
-            
+
             print(f"  ✓ {filename}: {original_size} → {len(compressed)} bytes")
-        
+
         except Exception as e:
             print(f"  ✗ Error processing {filename}: {e}")
             return False
-    
+
     # Generate master header with file registry
-    master_header = generate_master_header(files_data, use_progmem)
+    master_header = generate_master_header(files_data)
     master_file = output_path / "embedded_web_assets.h"
     with open(master_file, 'w') as f:
         f.write(master_header)
-    
+
     print(f"\n✓ Generated {len(files_data)} embedded assets")
     print(f"  Output: {output_path}/")
     return True
 
-def generate_master_header(files_data, use_progmem=True):
+def generate_master_header(files_data):
     """Generate master header with registry of all embedded files."""
     includes = '\n'.join([f'#include "embedded_{f.replace(".html", "").replace(".css", "")}.h"'
                           for f in files_data.keys()])
@@ -143,18 +140,6 @@ def generate_master_header(files_data, use_progmem=True):
 
     registry = ',\n'.join(entries)
 
-    # Generate C-compatible or C++ headers based on use_progmem
-    progmem = "PROGMEM " if use_progmem else ""
-    null_value = "nullptr" if use_progmem else "NULL"
-    strcmp_func = "strcmp_P" if use_progmem else "strcmp"
-    inline_keyword = "inline " if use_progmem else "static inline "
-
-    # For C (IDF), we need to add string.h for strcmp
-    c_includes = "" if use_progmem else "#include <string.h>\n"
-
-    # For C++ (Arduino), use pointer magic; for C (IDF), direct access
-    filename_access = "(const char*)pgm_read_ptr(&embedded_files[i].filename)" if use_progmem else "embedded_files[i].filename"
-
     header = f"""// Auto-generated master header for embedded web assets
 // This file includes all embedded web assets and provides a registry
 
@@ -162,7 +147,8 @@ def generate_master_header(files_data, use_progmem=True):
 
 #include <stdint.h>
 #include <stddef.h>
-{c_includes}
+#include <string.h>
+
 {includes}
 
 // File registry entry
@@ -174,39 +160,33 @@ struct EmbeddedFile {{
 }};
 
 // Registry of all embedded files
-const struct EmbeddedFile {progmem}embedded_files[] = {{
+const struct EmbeddedFile embedded_files[] = {{
 {registry}
 }};
 
 const size_t embedded_files_count = {len(files_data)};
 
 // Helper function to find file by name
-{inline_keyword}const struct EmbeddedFile* find_embedded_file(const char* filename) {{
+static inline const struct EmbeddedFile* find_embedded_file(const char* filename) {{
     for (size_t i = 0; i < embedded_files_count; i++) {{
-        if ({strcmp_func}(filename, {filename_access}) == 0) {{
+        if (strcmp(filename, embedded_files[i].filename) == 0) {{
             return &embedded_files[i];
         }}
     }}
-    return {null_value};
+    return NULL;
 }}
 """
     return header
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
-        print("Usage: python3 embed_web_assets.py <data_dir> <output_dir> [--idf]")
+        print("Usage: python3 embed_web_assets.py <data_dir> <output_dir>")
         sys.exit(1)
 
     data_dir = sys.argv[1]
     output_dir = sys.argv[2]
 
-    # Check if building for ESP-IDF (no PROGMEM)
-    use_progmem = "--idf" not in sys.argv
+    print("Generating C headers for ESP-IDF")
 
-    if not use_progmem:
-        print("Generating C-compatible headers for ESP-IDF (no PROGMEM)")
-    else:
-        print("Generating C++ headers for Arduino (with PROGMEM)")
-
-    success = embed_web_assets(data_dir, output_dir, use_progmem)
+    success = embed_web_assets(data_dir, output_dir)
     sys.exit(0 if success else 1)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Small helper to build and export OTA-ready binaries.
-- Builds firmware and LittleFS images for the target PlatformIO environment.
+- Builds firmware for the target PlatformIO environment.
 - Renames the artifacts to include the version string for easier OTA uploads.
 - Drops the outputs into dist/ota so they are easy to find.
 """
@@ -13,7 +13,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_ENV = "seeed_xiao_esp32s3"
+DEFAULT_ENV = "seeed_xiao_esp32s3_idf"
 DEFAULT_PREFIX = "XIAOS3Sense"
 
 
@@ -40,7 +40,7 @@ def copy_artifact(src: Path, dest: Path) -> None:
     shutil.copy2(src, dest)
 
 
-def build_and_export(env: str, prefix: str, version: str, skip_firmware: bool, skip_fs: bool) -> None:
+def build_and_export(env: str, prefix: str, version: str, skip_firmware: bool) -> None:
     build_dir = ROOT / ".pio" / "build" / env
 
     if not skip_firmware:
@@ -50,14 +50,6 @@ def build_and_export(env: str, prefix: str, version: str, skip_firmware: bool, s
         firmware_dest = ROOT / "dist" / "ota" / f"{prefix}-{version}-firmware.bin"
         copy_artifact(firmware_src, firmware_dest)
         print(f"[firmware] Exported to {firmware_dest}")
-
-    if not skip_fs:
-        print(f"[littlefs] Building filesystem for env {env}...")
-        run_cmd(["pio", "run", "-t", "buildfs", "-e", env])
-        littlefs_src = build_dir / "littlefs.bin"
-        littlefs_dest = ROOT / "dist" / "ota" / f"{prefix}-{version}-littlefs.bin"
-        copy_artifact(littlefs_src, littlefs_dest)
-        print(f"[littlefs] Exported to {littlefs_dest}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -69,14 +61,13 @@ def parse_args() -> argparse.Namespace:
         help="Override firmware version. Defaults to custom_fw_version from platformio.ini",
     )
     parser.add_argument("--skip-firmware", action="store_true", help="Skip building firmware.bin")
-    parser.add_argument("--skip-fs", action="store_true", help="Skip building littlefs.bin")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     version = args.version or load_version(ROOT / "platformio.ini", args.env)
-    build_and_export(args.env, args.prefix, version, args.skip_firmware, args.skip_fs)
+    build_and_export(args.env, args.prefix, version, args.skip_firmware)
 
 
 if __name__ == "__main__":

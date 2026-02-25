@@ -150,7 +150,7 @@
         </div>
 
         <div class="container card setup-card">
-            <h3 class="card-title">🔊 Audio and 🎤 Mic config</h3>
+            <h3 class="card-title">🔊 Audio and 🎤 Mic config <span id="audioSaveStatus" style="font-size:0.7em;font-weight:normal;color:#4caf50;opacity:0;transition:opacity 0.4s;"></span></h3>
 
             <div class="info-grid">
                 <div class="info-item">
@@ -167,9 +167,19 @@
                         <span class="range-value" id="audioOutVolumeValue">{{AUDIO_OUT_VOLUME}}</span>
                     </div>
                 </div>
+                <div class="info-item">
+                    <span><strong>🧪 Hardware Diagnostic Mode</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="hardware_diag_mode">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                When enabled, Test Gong runs a 1 kHz diagnostic tone and logs detailed audio TX telemetry.
             </div>
 
-            <label class="card-group-title" style="margin-top: 12px;"><strong>Audio (Mic)</strong></label>
+            <label class="card-group-title" style="margin-top: 12px;"><strong>🎤 Microphone</strong></label>
             <div class="info-grid">
                 <div class="info-item">
                     <span>Mic enabled</span>
@@ -192,7 +202,7 @@
                 <option value="1">External INMP441 (IP44 enclosure)</option>
             </select>
             <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                INMP441 mode disables the speaker (shared I2S bus). Requires reboot to take effect.
+                INMP441 uses shared I2S clock lines (GPIO7/GPIO8) with separate data lines. Requires reboot to take effect.
             </div>
             <label><strong>Mic Sensitivity</strong></label>
             <div class="range-wrap">
@@ -215,7 +225,9 @@
             </div>
             <div class="button-row button-grid" style="margin-top: 8px;">
                 <button class="button btn-test" title="Play the local gong through MAX98357A speaker output." onclick="testLocalGong()">🔔 Test Gong</button>
+                <button class="button btn-test" id="testMicBtn" title="Record 2s from mic and play back through speaker." onclick="testMic()">🎤 Record &amp; Play</button>
             </div>
+            <div id="micTestResult" style="font-size:0.85em;padding:4px 8px;margin-top:4px;display:none;border-radius:4px;border:1px solid rgba(128,128,128,0.35);"></div>
         </div>
 
         <div class="container card setup-card">
@@ -315,7 +327,7 @@
 
     <div class="button-row button-grid log-actions" style="margin-top: 20px;">
         <button class="button btn-save" title="Save feature toggles and restart." onclick="saveFeatures()">💾 Save Features</button>
-        <button class="button danger-btn" title="Reboot the ESP32 device." onclick="location.href='/restart';">🔄 Restart</button>
+        <button class="button danger-btn" title="Reboot the ESP32 device." onclick="confirmRestart()">🔄 Restart</button>
         <a class="button btn-info" href="/logs.html?filter=core" target="_blank" title="Open filtered core logs.">🔧 Core Logs</a>
         <a class="button btn-info" href="/logs.html?filter=camera" target="_blank" title="Open filtered camera/streaming logs.">📹 Camera Logs</a>
 
@@ -338,6 +350,18 @@
         });
 
         function saveFeatures() {
+            if (!validateScryptedOptions()) {
+                alert("Scrypted options are invalid. Enable the required stream type.");
+                return;
+            }
+            showConfirm(
+                "\ud83d\udcbe Confirm Save Features",
+                buildChangeSummary() + "<p style='margin:12px 0 0;color:#888;font-size:0.85em;'>Saves all settings and reloads the page.</p>",
+                doSaveFeatures
+            );
+        }
+
+        function doSaveFeatures() {
             const features = {
                 timezone: document.getElementById("timezone").value,
                 sip_enabled: document.getElementById("sip_enabled").checked,
@@ -362,23 +386,15 @@
                 aac_bitrate: parseInt(document.getElementById("aac_bitrate").value || "32", 10),
                 audio_out_enabled: document.getElementById("audio_out_enabled").checked,
                 audio_out_muted: document.getElementById("audio_out_muted").checked,
+                hardware_diag_mode: document.getElementById("hardware_diag_mode").checked,
                 audio_out_volume: parseInt(document.getElementById("audio_out_volume").value || "70", 10)
             };
-
-            if (!validateScryptedOptions()) {
-                alert("Scrypted options are invalid. Enable the required stream type.");
-                return;
-            }
-
             fetch("/saveFeatures", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(features)
             }).then(r => r.text())
-              .then(t => {
-                  alert(t);
-                  setTimeout(() => window.location.reload(), 1000);
-              })
+              .then(t => { alert(t); setTimeout(() => window.location.reload(), 1000); })
               .catch(e => alert("Save failed: " + e));
         }
 
@@ -387,6 +403,40 @@
                 .then(r => r.text())
                 .then(t => alert(t))
                 .catch(e => alert("HomeKit test failed: " + e));
+        }
+
+        function testMic() {
+            var btn = document.getElementById("testMicBtn");
+            var result = document.getElementById("micTestResult");
+            btn.disabled = true;
+            btn.textContent = "🎤 Recording...";
+            result.style.display = "none";
+            fetch("/api/mic/test", { method: "POST" })
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (d.error) {
+                        result.textContent = "⚠️ " + d.error;
+                    } else {
+                        var noSignal = d.zero_pct >= 99;
+                        result.textContent =
+                            "Source: " + d.source +
+                            " | Peak: " + d.peak_pct + "%" +
+                            " | RMS: " + d.rms +
+                            " | Zeros: " + d.zero_pct + "%" +
+                            " | Sensitivity: " + d.sensitivity + "%" +
+                            (d.played_back ? " | ✅ Played back" : " | ⚠️ Playback failed") +
+                            (noSignal ? " | ⚠️ No mic signal — check wiring or switch to PDM" : "");
+                    }
+                    result.style.display = "block";
+                })
+                .catch(function(e) {
+                    result.textContent = "⚠️ " + e.message;
+                    result.style.display = "block";
+                })
+                .finally(function() {
+                    btn.disabled = false;
+                    btn.textContent = "🎤 Record & Play";
+                });
         }
 
         function testLocalGong() {
@@ -407,6 +457,130 @@
                     }
                 })
                 .catch(e => alert("Local gong test failed: " + e.message));
+        }
+
+        let _audioSaveTimer = null;
+        var rebootRequired = false;
+
+        function debouncedAudioSave() {
+            clearTimeout(_audioSaveTimer);
+            _audioSaveTimer = setTimeout(autoSaveAudioMic, 400);
+        }
+
+        // --- Confirmation modal ---
+        // okClass: optional CSS class for confirm button (default "btn-save"; use "danger-btn" for destructive)
+        function showConfirm(title, bodyHTML, onConfirm, okClass) {
+            document.getElementById("confirmTitle").textContent = title;
+            document.getElementById("confirmBody").innerHTML = bodyHTML;
+            document.getElementById("confirmOkBtn").className = "button " + (okClass || "btn-save");
+            document.getElementById("confirmOkBtn").onclick = function() { closeConfirm(); onConfirm(); };
+            document.getElementById("confirmModal").style.display = "flex";
+        }
+        function closeConfirm() {
+            document.getElementById("confirmModal").style.display = "none";
+        }
+        function escapeHtml(s) {
+            return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+        }
+
+        // --- Change tracking for Save Features dialog ---
+        var initialValues = {};
+        var _fieldLabels = {
+            timezone:"Timezone", sip_enabled:"SIP", tr064_enabled:"TR-064",
+            http_cam_enabled:"HTTP Camera", rtsp_enabled:"RTSP",
+            http_cam_max_clients:"Max MJPEG Clients",
+            framesize:"Frame Size", quality:"JPEG Quality",
+            brightness:"Brightness", contrast:"Contrast",
+            audio_out_enabled:"Audio Output", audio_out_muted:"Speaker Muted",
+            audio_out_volume:"Speaker Volume", hardware_diag_mode:"HW Diagnostic Mode",
+            mic_enabled:"Mic Enabled", mic_muted:"Mic Muted",
+            mic_source:"Mic Source", mic_sensitivity:"Mic Sensitivity",
+            aac_sample_rate:"AAC Sample Rate", aac_bitrate:"AAC Bitrate",
+            scrypted_source:"Scrypted Source", scrypted_webhook:"HomeKit Webhook",
+            scrypted_low_latency:"Low Latency", scrypted_low_buffer:"Reduce Buffering",
+            scrypted_rtsp_udp:"RTSP UDP"
+        };
+        function snapshotInitialValues() {
+            Object.keys(_fieldLabels).forEach(function(id) {
+                if (id === "scrypted_source") {
+                    var r = document.querySelector("input[name='scrypted_source']:checked");
+                    initialValues[id] = r ? r.value : "http";
+                } else {
+                    var el = document.getElementById(id);
+                    if (el) initialValues[id] = el.type === "checkbox" ? el.checked : el.value;
+                }
+            });
+        }
+        function buildChangeSummary() {
+            var changes = [];
+            Object.keys(_fieldLabels).forEach(function(id) {
+                var cur;
+                if (id === "scrypted_source") {
+                    var r = document.querySelector("input[name='scrypted_source']:checked");
+                    cur = r ? r.value : "http";
+                } else {
+                    var el = document.getElementById(id);
+                    if (!el) return;
+                    cur = el.type === "checkbox" ? el.checked : el.value;
+                }
+                var orig = initialValues[id];
+                if (orig !== undefined && String(cur) !== String(orig)) {
+                    var disp = function(v) { return v === true ? "Yes" : v === false ? "No" : escapeHtml(String(v)); };
+                    changes.push("<li><strong>" + _fieldLabels[id] + "</strong>: " + disp(orig) + " \u2192 " + disp(cur) + "</li>");
+                }
+            });
+            if (!changes.length) return "<p style='color:#888;font-style:italic;'>No changes since page loaded.</p>";
+            return "<ul style='margin:4px 0;padding-left:20px;'>" + changes.join("") + "</ul>";
+        }
+
+        function confirmRestart() {
+            var body = rebootRequired
+                ? "<p>\u26a0\ufe0f Reboot required for <strong>Mic Source</strong> change to take effect.</p><p>Restart the device now?</p>"
+                : "<p>Restart the device now?</p>";
+            showConfirm("\ud83d\udd04 Confirm Restart", body, function() { location.href = '/restart'; }, "danger-btn");
+        }
+
+        function autoSaveAudioMic() {
+            clearTimeout(_audioSaveTimer);
+            const statusEl = document.getElementById("audioSaveStatus");
+            const data = {
+                audio_out_muted:    document.getElementById("audio_out_muted").checked,
+                audio_out_volume:   parseInt(document.getElementById("audio_out_volume").value || "70", 10),
+                hardware_diag_mode: document.getElementById("hardware_diag_mode").checked,
+                mic_enabled:        document.getElementById("mic_enabled").checked,
+                mic_muted:          document.getElementById("mic_muted").checked,
+                mic_source:         parseInt(document.getElementById("mic_source").value || "0", 10),
+                mic_sensitivity:    parseInt(document.getElementById("mic_sensitivity").value || "70", 10),
+                aac_sample_rate:    parseInt(document.getElementById("aac_sample_rate").value || "16", 10),
+                aac_bitrate:        parseInt(document.getElementById("aac_bitrate").value || "32", 10)
+            };
+            fetch("/saveFeatures", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(data)
+            }).then(function(r) { return r.text(); })
+              .then(function() {
+                  if (statusEl) {
+                      if (rebootRequired) {
+                          statusEl.textContent = "\u26a0\ufe0f Reboot required";
+                          statusEl.style.color = "#e65100";
+                          statusEl.style.opacity = "1";
+                      } else {
+                          statusEl.textContent = "\u2713 Saved";
+                          statusEl.style.color = "";
+                          statusEl.style.opacity = "1";
+                          setTimeout(function() { statusEl.style.opacity = "0"; }, 2000);
+                      }
+                  }
+              })
+              .catch(function(e) {
+                  if (statusEl) {
+                      statusEl.textContent = "✗ Error";
+                      statusEl.style.opacity = "1";
+                      setTimeout(function() { statusEl.style.opacity = "0"; }, 3000);
+                  }
+                  console.error("Audio/Mic auto-save failed:", e);
+              });
         }
 
         const cameraSetupStatusEl = document.getElementById("cameraSetupStatus");
@@ -528,35 +702,31 @@
             const password = otaPassEl.value;
             const confirm = otaPassConfirmEl.value;
 
-            if (!username) {
-                alert("OTA username is required.");
-                return;
-            }
-            if (password !== confirm) {
-                alert("New passwords do not match.");
-                return;
-            }
+            if (!username) { alert("OTA username is required."); return; }
+            if (password !== confirm) { alert("New passwords do not match."); return; }
             if (!isStrongPassword(password)) {
                 alert("Password must be at least 12 characters and include upper, lower, digit, and symbol.");
                 return;
             }
+            showConfirm(
+                "\ud83d\udd11 Confirm OTA Credentials",
+                "<p>Update OTA credentials?</p><ul style='margin:4px 0;padding-left:20px;'>" +
+                "<li>Username: <strong>" + escapeHtml(username) + "</strong></li>" +
+                "<li>Password: \u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022</li></ul>",
+                function() { doSaveOtaConfig(username, password); }
+            );
+        }
 
+        function doSaveOtaConfig(username, password) {
             const headers = { "Content-Type": "application/json" };
             const authHeader = buildOtaAuthHeader();
-            if (authHeader) {
-                headers["Authorization"] = authHeader;
-            }
-
+            if (authHeader) headers["Authorization"] = authHeader;
             fetch("/ota/config", {
                 method: "POST",
                 headers,
                 body: JSON.stringify({ username, password })
             }).then(r => r.text())
-              .then(t => {
-                  alert(t);
-                  otaCurrentPassEl.value = "";
-                  fetchOtaStatus();
-              })
+              .then(t => { alert(t); otaCurrentPassEl.value = ""; fetchOtaStatus(); })
               .catch(e => alert("OTA save failed: " + e));
         }
 
@@ -582,7 +752,7 @@
         }
 
         function fetchCameraSetupStatus() {
-            fetch("/status")
+            fetch("/status", { cache: "no-store" })
                 .then(r => r.json())
                 .then(data => {
                     cameraSetupStatusEl.innerHTML = `<strong>Camera:</strong> ${data.PID || "Unknown"} | size=${data.framesize} | quality=${data.quality}`;
@@ -621,6 +791,9 @@
                         document.getElementById("audio_out_volume").value = data.aud_volume;
                         updateRangeDisplay(document.getElementById("audio_out_volume"), audioOutVolumeValueEl);
                     }
+                    if (data.hardware_diag_mode !== undefined) {
+                        document.getElementById("hardware_diag_mode").checked = data.hardware_diag_mode;
+                    }
                     if (data.aac_bitrate !== undefined) {
                         document.getElementById("aac_bitrate").value = data.aac_bitrate;
                         applyAacBitrateBounds();
@@ -645,7 +818,10 @@
         bindRange("audio_out_volume", "audioOutVolumeValue");
 
         if (aacRateEl) {
-            aacRateEl.addEventListener("change", applyAacBitrateBounds);
+            aacRateEl.addEventListener("change", function() {
+                applyAacBitrateBounds();
+                autoSaveAudioMic();
+            });
         }
         applyAacBitrateBounds();
 
@@ -654,9 +830,10 @@
             document.getElementById("mic_muted").disabled = !micEnabled;
             document.getElementById("mic_sensitivity").disabled = !micEnabled;
 
+            // Note: audio_out_volume is always interactive — you should be able to
+            // set the volume independently of the audio_out_enabled feature toggle.
             const audioOutEnabled = document.getElementById("audio_out_enabled").checked;
             document.getElementById("audio_out_muted").disabled = !audioOutEnabled;
-            document.getElementById("audio_out_volume").disabled = !audioOutEnabled;
         }
 
         function getScryptedSource() {
@@ -726,6 +903,8 @@
             const source = getScryptedSource();
             const rtspEnabled = document.getElementById("rtsp_enabled").checked;
             const httpEnabled = document.getElementById("http_cam_enabled").checked;
+            // If neither streaming type is enabled, Scrypted isn't in use — skip validation
+            if (!httpEnabled && !rtspEnabled) return true;
             if (source === "rtsp" && !rtspEnabled) {
                 return false;
             }
@@ -752,7 +931,7 @@
         }
 
         function loadFeatures() {
-            fetch("/api/features")
+            fetch("/api/features", { cache: "no-store" })
                 .then(r => r.json())
                 .then(data => {
                     if (data.timezone !== undefined) {
@@ -776,17 +955,65 @@
                     if (data.audio_out_muted !== undefined) {
                         document.getElementById("audio_out_muted").checked = data.audio_out_muted;
                     }
+                    if (data.hardware_diag_mode !== undefined) {
+                        document.getElementById("hardware_diag_mode").checked = data.hardware_diag_mode;
+                    }
                     updateScryptedUi();
                     updateAudioUi();
                 })
                 .catch(e => console.error("Failed to load features:", e));
         }
 
+        // Auto-save listeners for Audio/Mic card — changes apply immediately, no Save button needed
+        ["audio_out_muted", "hardware_diag_mode", "mic_enabled", "mic_muted"].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) el.addEventListener("change", autoSaveAudioMic);
+        });
+        document.getElementById("mic_source").addEventListener("change", function() {
+            rebootRequired = true;
+            autoSaveAudioMic();
+            var statusEl = document.getElementById("audioSaveStatus");
+            if (statusEl) {
+                statusEl.textContent = "\u26a0\ufe0f Reboot required";
+                statusEl.style.color = "#e65100";
+                statusEl.style.opacity = "1";
+            }
+        });
+        // Range sliders: fire on input (while dragging, debounced) and on change
+        // (mouse/touch release) as a reliable fallback for browsers that don't
+        // fire input continuously.
+        ["audio_out_volume", "mic_sensitivity", "aac_bitrate"].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) {
+                el.addEventListener("input", debouncedAudioSave);
+                el.addEventListener("change", autoSaveAudioMic);
+            }
+        });
+
         fetchCameraSetupStatus();
         updateScryptedUi();
         updateAudioUi();
         fetchOtaStatus();
         loadFeatures();
+        // Snapshot field values after both async fetches complete (local network < 200ms each)
+        setTimeout(snapshotInitialValues, 800);
     </script>
+
+<style>
+@media (prefers-color-scheme: dark) {
+    #confirmBox { background: #2d2d2d !important; color: #e0e0e0 !important; }
+    #confirmBox button[onclick="closeConfirm()"] { background: #555 !important; }
+}
+</style>
+<div id="confirmModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center;">
+    <div id="confirmBox" style="background:#fff;color:#333;padding:24px;border-radius:8px;max-width:480px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.3);max-height:80vh;overflow-y:auto;">
+        <h3 id="confirmTitle" style="margin:0 0 12px;font-size:1.1em;"></h3>
+        <div id="confirmBody" style="margin-bottom:20px;font-size:0.9em;line-height:1.6;"></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;">
+            <button class="button" style="background:#9e9e9e;color:#fff;" onclick="closeConfirm()">Cancel</button>
+            <button id="confirmOkBtn" class="button btn-save">Confirm</button>
+        </div>
+    </div>
+</div>
 </body>
 </html>

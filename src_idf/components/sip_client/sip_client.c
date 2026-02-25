@@ -8,6 +8,9 @@
 #include "sip_client.h"
 #include "nvs_manager.h"
 #include "wifi_manager.h"
+#include "audio_capture.h"
+#include "audio_output.h"
+#include "config.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -46,6 +49,13 @@ static const char *TAG = "sip";
 #define SIP_RING_DURATION_MS    30000
 #define SIP_CANCEL_WAIT_MS      3000
 #define SIP_IN_CALL_HOLD_MS     60000
+
+// SIP audio constants
+#define SIP_AUDIO_RATE          8000
+#define SIP_RTP_SAMPLES         160     // 20ms at 8kHz
+#define SIP_MIC_SAMPLES         ((AUDIO_SAMPLE_RATE / SIP_AUDIO_RATE) * SIP_RTP_SAMPLES)
+#define SIP_MIC_TIMEOUT_MS      25
+#define SIP_MAX_CALL_MS         60000
 
 // NVS namespace and keys
 #define NVS_SIP_NAMESPACE   "sip"
@@ -134,6 +144,8 @@ typedef struct {
     uint16_t rtp_seq;
     uint32_t rtp_timestamp;
     uint32_t rtp_ssrc;
+    uint8_t last_dtmf_event;
+    uint32_t last_dtmf_end_ms;
     sip_config_t config;
 } sip_call_session_t;
 
@@ -1754,13 +1766,263 @@ void sip_handle_incoming(void) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// G.711 codecs (ported from src_arduino/sip_client.cpp)
+// ---------------------------------------------------------------------------
+
+static uint8_t linear2ulaw(int16_t pcm) {
+    static const int16_t seg_end[8] = {0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF, 0x3FFF, 0x7FFF};
+    int16_t mask, seg;
+
+    if (pcm < 0) { pcm = -pcm; mask = 0x7F; }
+    else { mask = 0xFF; }
+
+    if (pcm > 0x3FFF) pcm = 0x3FFF;
+    pcm += 0x84;
+    for (seg = 0; seg < 8; seg++) { if (pcm <= seg_end[seg]) break; }
+    if (seg >= 8) return (uint8_t)(0x7F ^ mask);
+
+    uint8_t uval = (seg << 4) | ((pcm >> (seg + 3)) & 0x0F);
+    return (uint8_t)(uval ^ mask);
+}
+
+static uint8_t linear2alaw(int32_t pcm) {
+    static const int16_t seg_end[8] = {0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF, 0x3FFF, 0x7FFF};
+    int16_t mask, seg;
+
+    if (pcm >= 0) { mask = 0xD5; }
+    else { mask = 0x55; pcm = -pcm - 1; }
+
+    if (pcm > 0x7FFF) pcm = 0x7FFF;
+    for (seg = 0; seg < 8; seg++) { if (pcm <= seg_end[seg]) break; }
+    if (seg >= 8) return (uint8_t)(0x7F ^ mask);
+
+    uint8_t aval = (uint8_t)(seg << 4);
+    if (seg < 2) { aval |= (pcm >> 4) & 0x0F; }
+    else { aval |= (pcm >> (seg + 3)) & 0x0F; }
+    return (uint8_t)(aval ^ mask);
+}
+
+static int16_t ulaw2linear(uint8_t uval) {
+    uval = ~uval;
+    int t = ((uval & 0x0F) << 3) + 0x84;
+    t <<= (uval & 0x70) >> 4;
+    return (uval & 0x80) ? (int16_t)(0x84 - t) : (int16_t)(t - 0x84);
+}
+
+static int16_t alaw2linear(uint8_t aval) {
+    aval ^= 0x55;
+    int t = (aval & 0x0F) << 4;
+    int seg = (aval & 0x70) >> 4;
+    switch (seg) {
+        case 0:  t += 8; break;
+        case 1:  t += 0x108; break;
+        default: t += 0x108; t <<= seg - 1; break;
+    }
+    return (aval & 0x80) ? (int16_t)t : (int16_t)(-t);
+}
+
+static void downsample_to_8k(const int16_t *in, size_t in_n,
+                              int16_t *out, size_t out_n) {
+    size_t step = AUDIO_SAMPLE_RATE / SIP_AUDIO_RATE;
+    if (step < 1) step = 1;
+    for (size_t i = 0; i < out_n; i++) {
+        size_t start = i * step;
+        if (start >= in_n) { out[i] = 0; continue; }
+        int32_t sum = 0;
+        size_t cnt = 0;
+        for (size_t j = 0; j < step && (start + j) < in_n; j++) {
+            sum += in[start + j]; cnt++;
+        }
+        out[i] = cnt > 0 ? (int16_t)(sum / (int32_t)cnt) : 0;
+    }
+}
+
+static void upsample_to_output(const int16_t *in, size_t in_n,
+                                int16_t *out, size_t out_n) {
+    size_t step = AUDIO_SAMPLE_RATE / SIP_AUDIO_RATE;
+    if (step < 1) step = 1;
+    size_t idx = 0;
+    for (size_t i = 0; i < in_n && idx < out_n; i++) {
+        for (size_t j = 0; j < step && idx < out_n; j++) {
+            out[idx++] = in[i];
+        }
+    }
+    while (idx < out_n) out[idx++] = 0;
+}
+
+static void encode_g711(const int16_t *pcm, size_t n, uint8_t *enc, uint8_t pt) {
+    for (size_t i = 0; i < n; i++) {
+        enc[i] = (pt == 8) ? linear2alaw(pcm[i]) : linear2ulaw(pcm[i]);
+    }
+}
+
+static void decode_g711(const uint8_t *enc, size_t n, int16_t *pcm, uint8_t pt) {
+    for (size_t i = 0; i < n; i++) {
+        pcm[i] = (pt == 8) ? alaw2linear(enc[i]) : ulaw2linear(enc[i]);
+    }
+}
+
+static char dtmf_event_to_char(uint8_t event) {
+    if (event <= 9) return (char)('0' + event);
+    if (event == 10) return '*';
+    if (event == 11) return '#';
+    if (event >= 12 && event <= 15) return (char)('A' + (event - 12));
+    return '\0';
+}
+
+// ---------------------------------------------------------------------------
+// SIP RTP send/receive
+// ---------------------------------------------------------------------------
+
+static bool send_sip_rtp_frame(void) {
+    if (!sip_call.active || !sip_call.acked) return false;
+    if (rtp_socket < 0 || sip_call.rtp_remote_port == 0 || sip_call.rtp_remote_ip == 0) return false;
+    if (!sip_call.remote_receives) return false;
+    if (!audio_capture_is_enabled()) return false;
+
+    int16_t mic_buf[SIP_MIC_SAMPLES];
+    int16_t audio_buf[SIP_RTP_SAMPLES];
+    uint8_t encoded[SIP_RTP_SAMPLES];
+
+    bool has_mic = !audio_capture_is_muted() &&
+                   audio_capture_read(mic_buf, SIP_MIC_SAMPLES, SIP_MIC_TIMEOUT_MS);
+    if (has_mic) {
+        downsample_to_8k(mic_buf, SIP_MIC_SAMPLES, audio_buf, SIP_RTP_SAMPLES);
+        encode_g711(audio_buf, SIP_RTP_SAMPLES, encoded, sip_call.audio_payload);
+    } else {
+        uint8_t silence = (sip_call.audio_payload == 8) ? 0xD5 : 0xFF;
+        memset(encoded, silence, sizeof(encoded));
+    }
+
+    if (sip_call.rtp_ssrc == 0) {
+        sip_call.rtp_ssrc = esp_random();
+    }
+
+    uint8_t packet[12 + SIP_RTP_SAMPLES];
+    packet[0] = 0x80;
+    packet[1] = sip_call.audio_payload;
+    packet[2] = (sip_call.rtp_seq >> 8) & 0xFF;
+    packet[3] = sip_call.rtp_seq & 0xFF;
+    packet[4] = (sip_call.rtp_timestamp >> 24) & 0xFF;
+    packet[5] = (sip_call.rtp_timestamp >> 16) & 0xFF;
+    packet[6] = (sip_call.rtp_timestamp >> 8) & 0xFF;
+    packet[7] = sip_call.rtp_timestamp & 0xFF;
+    packet[8] = (sip_call.rtp_ssrc >> 24) & 0xFF;
+    packet[9] = (sip_call.rtp_ssrc >> 16) & 0xFF;
+    packet[10] = (sip_call.rtp_ssrc >> 8) & 0xFF;
+    packet[11] = sip_call.rtp_ssrc & 0xFF;
+    memcpy(packet + 12, encoded, SIP_RTP_SAMPLES);
+
+    struct sockaddr_in dest;
+    memset(&dest, 0, sizeof(dest));
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(sip_call.rtp_remote_port);
+    dest.sin_addr.s_addr = sip_call.rtp_remote_ip;
+
+    int sent = sendto(rtp_socket, packet, sizeof(packet), 0,
+                      (struct sockaddr *)&dest, sizeof(dest));
+    if (sent < 0) return false;
+
+    sip_call.rtp_seq++;
+    sip_call.rtp_timestamp += SIP_RTP_SAMPLES;
+    return true;
+}
+
+static void handle_sip_rtp_packet(const uint8_t *data, size_t len) {
+    if (!sip_call.active || !sip_call.acked) return;
+    if (!sip_call.remote_sends) return;
+    if (len < 12) return;
+
+    uint8_t vpxcc = data[0];
+    if ((vpxcc >> 6) != 2) return; // RTP version must be 2
+
+    bool has_ext = (vpxcc & 0x10) != 0;
+    uint8_t csrc_count = vpxcc & 0x0F;
+    size_t header_len = 12 + (csrc_count * 4);
+    if (len < header_len) return;
+
+    if (has_ext) {
+        if (len < header_len + 4) return;
+        uint16_t ext_len = (data[header_len + 2] << 8) | data[header_len + 3];
+        header_len += 4 + (ext_len * 4);
+        if (len < header_len) return;
+    }
+
+    uint8_t pt = data[1] & 0x7F;
+    const uint8_t *payload = data + header_len;
+    size_t payload_len = len - header_len;
+    if (payload_len == 0) return;
+
+    // DTMF event (RFC 4733)
+    if (pt == sip_call.dtmf_payload) {
+        if (payload_len >= 4) {
+            uint8_t event = payload[0];
+            bool end = (payload[1] & 0x80) != 0;
+            if (end) {
+                uint32_t now = millis();
+                if (event != sip_call.last_dtmf_event || (now - sip_call.last_dtmf_end_ms) >= 250) {
+                    char digit = dtmf_event_to_char(event);
+                    if (digit != '\0' && dtmf_callback) {
+                        dtmf_callback(digit);
+                    }
+                    sip_call.last_dtmf_event = event;
+                    sip_call.last_dtmf_end_ms = now;
+                }
+            }
+        }
+        return;
+    }
+
+    // Audio (PCMU=0, PCMA=8)
+    if (pt != 0 && pt != 8) return;
+    if (!audio_output_is_available()) return;
+
+    size_t samples = payload_len < SIP_RTP_SAMPLES ? payload_len : SIP_RTP_SAMPLES;
+    int16_t pcm[SIP_RTP_SAMPLES];
+    decode_g711(payload, samples, pcm, pt);
+
+    size_t out_n = (AUDIO_SAMPLE_RATE / SIP_AUDIO_RATE) * SIP_RTP_SAMPLES;
+    int16_t out_buf[out_n];
+    upsample_to_output(pcm, samples, out_buf, out_n);
+    audio_output_write(out_buf, out_n, 5);
+    sip_call.last_rtp_recv_ms = millis();
+}
+
+// ---------------------------------------------------------------------------
+// SIP media process — called from main loop during active calls
+// ---------------------------------------------------------------------------
+
 void sip_media_process(void) {
-    // RTP media handling - placeholder for Phase 5
-    // Full implementation requires ESP-ADF for audio encoding/decoding
     if (!sip_call.active || !sip_call.acked) return;
 
-    // For now, just check for timeout and send BYE
-    // Full RTP handling will be added in Phase 5
+    uint32_t now = millis();
+
+    // Max call duration
+    if (sip_call.inbound && SIP_MAX_CALL_MS > 0 &&
+        (now - sip_call.start_ms) > SIP_MAX_CALL_MS) {
+        // TODO: send BYE and reset call
+        return;
+    }
+
+    // TX: send 20ms audio frame every 20ms
+    if (now - sip_call.last_rtp_send_ms >= 20) {
+        send_sip_rtp_frame();
+        sip_call.last_rtp_send_ms = now;
+    }
+
+    // RX: poll for incoming RTP packets (up to 4 per iteration)
+    if (rtp_socket >= 0) {
+        for (int i = 0; i < 4; i++) {
+            uint8_t buf[512];
+            struct sockaddr_in from;
+            socklen_t from_len = sizeof(from);
+            int n = recvfrom(rtp_socket, buf, sizeof(buf), MSG_DONTWAIT,
+                             (struct sockaddr *)&from, &from_len);
+            if (n <= 0) break;
+            handle_sip_rtp_packet(buf, (size_t)n);
+        }
+    }
 }
 
 void sip_get_status(sip_status_t *status) {
