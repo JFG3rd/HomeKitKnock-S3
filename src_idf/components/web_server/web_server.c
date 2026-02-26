@@ -833,7 +833,7 @@ static esp_err_t api_features_get_handler(httpd_req_t *req) {
     load_timezone(timezone, sizeof(timezone));
 
     snprintf(response, sizeof(response),
-             "{\"timezone\":\"%s\",\"sip_enabled\":%s,\"tr064_enabled\":false,"
+             "{\"timezone\":\"%s\",\"sip_enabled\":%s,"
              "\"http_cam_enabled\":%s,\"rtsp_enabled\":%s,"
              "\"audio_out_enabled\":%s,\"audio_out_muted\":%s,"
              "\"hardware_diag_mode\":%s}",

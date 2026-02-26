@@ -94,7 +94,7 @@
         <div class="container card">
             <h3 class="card-title">☎️ SIP</h3>
             <p>FRITZ!Box SIP integration for doorbell notifications.</p>
-            <div class="flash-stats" id="tr064Status">
+            <div class="flash-stats" id="sipStatus">
                 <strong>Status:</strong> loading...
             </div>
             <hr>
@@ -154,7 +154,7 @@
 
     <script>
         const statusEl = document.getElementById("cameraStatus");
-        const trStatusEl = document.getElementById("tr064Status");
+        const sipStatusEl = document.getElementById("sipStatus");
         const darkToggle = document.getElementById("darkModeToggle");
         const ipAddressEl = document.getElementById("ipAddress");
         const rssiEl = document.getElementById("rssi");
@@ -441,10 +441,10 @@
                     } else {
                         status = "not registered";
                     }
-                    trStatusEl.innerHTML = `<strong>Status:</strong> ${status} | user=${data.user || "-"} | target=${data.target || "-"}`;
+                    sipStatusEl.innerHTML = `<strong>Status:</strong> ${status} | user=${data.user || "-"} | target=${data.target || "-"}`;
                 })
                 .catch(() => {
-                    trStatusEl.innerHTML = "<strong>Status:</strong> unavailable";
+                    sipStatusEl.innerHTML = "<strong>Status:</strong> unavailable";
                 });
         }
 

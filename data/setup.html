@@ -64,17 +64,6 @@
                 </div>
 
                 <div class="info-item">
-                    <span><strong>📡 TR-064 Integration</strong></span>
-                    <label class="switch">
-                        <input type="checkbox" id="tr064_enabled" {{TR064_ENABLED_CHECKED}}>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                    Enable TR-064 SOAP protocol for advanced FRITZ!Box control.
-                </div>
-
-                <div class="info-item">
                     <span><strong>📹 HTTP Camera Streaming</strong></span>
                     <label class="switch">
                         <input type="checkbox" id="http_cam_enabled" {{HTTP_CAM_ENABLED_CHECKED}}>
@@ -331,7 +320,7 @@
         <a class="button btn-info" href="/logs.html?filter=core" target="_blank" title="Open filtered core logs.">🔧 Core Logs</a>
         <a class="button btn-info" href="/logs.html?filter=camera" target="_blank" title="Open filtered camera/streaming logs.">📹 Camera Logs</a>
 
-        <a class="button btn-info" href="/logs.html?filter=doorbell" target="_blank" title="Open filtered doorbell/SIP/TR-064 logs.">☎️ Doorbell Logs</a>
+        <a class="button btn-info" href="/logs.html?filter=doorbell" target="_blank" title="Open filtered doorbell/SIP logs.">☎️ Doorbell Logs</a>
         <a class="button btn-nav" href="/" title="Return to the main dashboard.">Back</a>
     </div>
 
@@ -365,7 +354,6 @@
             const features = {
                 timezone: document.getElementById("timezone").value,
                 sip_enabled: document.getElementById("sip_enabled").checked,
-                tr064_enabled: document.getElementById("tr064_enabled").checked,
                 http_cam_enabled: document.getElementById("http_cam_enabled").checked,
                 rtsp_enabled: document.getElementById("rtsp_enabled").checked,
                 http_cam_max_clients: parseInt(document.getElementById("http_cam_max_clients").value || "2", 10),
@@ -486,7 +474,7 @@
         // --- Change tracking for Save Features dialog ---
         var initialValues = {};
         var _fieldLabels = {
-            timezone:"Timezone", sip_enabled:"SIP", tr064_enabled:"TR-064",
+            timezone:"Timezone", sip_enabled:"SIP",
             http_cam_enabled:"HTTP Camera", rtsp_enabled:"RTSP",
             http_cam_max_clients:"Max MJPEG Clients",
             framesize:"Frame Size", quality:"JPEG Quality",
@@ -939,9 +927,6 @@
                     }
                     if (data.sip_enabled !== undefined) {
                         document.getElementById("sip_enabled").checked = data.sip_enabled;
-                    }
-                    if (data.tr064_enabled !== undefined) {
-                        document.getElementById("tr064_enabled").checked = data.tr064_enabled;
                     }
                     if (data.http_cam_enabled !== undefined) {
                         document.getElementById("http_cam_enabled").checked = data.http_cam_enabled;

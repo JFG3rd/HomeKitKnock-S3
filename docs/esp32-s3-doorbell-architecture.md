@@ -46,7 +46,7 @@ HomeKit Doorbell                Exposed via Scrypted HomeKit plugin
 Doorbell event flow:
 	1.	Physical button press
 	2.	ESP32 detects GPIO edge
-	3.  ESP32 Triggers **GPIO3** -> Original gong relay IN (.8s high then 2s low then .8 seconds high)
+	3.  ESP32 Triggers **GPIO3** -> Original gong relay IN (.8s high then back to low)
 	3.  ESP32 plays gong.pcm over MAX98357A DAC/Amp to speaker
 	4.	ESP32 performs HTTP GET to Scrypted doorbell endpoint
 	5.	ESP32 triggers FRITZ!Box SIP internal ring (DECT group)
@@ -308,7 +308,7 @@ Guiding principle:
 Current direction:
 	•	MJPEG stream server tasks pinned to core 1
 	•	RTSP handling runs on core 1 task
-	•	Main loop remains lightweight (SIP/TR-064, button debounce)
+	•	Main loop remains lightweight (SIP, button debounce)
 
 Current audio plan:
 	•	I2S mic capture + DAC playback on core 1
@@ -415,7 +415,6 @@ This document should evolve along with:
 	•	`docs/SIP_INTEGRATION.md` — SIP flow, authentication, and RTP notes.
 	•	`docs/SIP-Fritzbox JSON Spec.md` — structured SIP/Fritz!Box config model.
 	•	`docs/ESP32-Fritzbox-SIP-Documentation.md` — SIP interoperability notes.
-	•	`docs/TR064_DEBUGGING.md` — TR-064 call testing and diagnostics.
 	•	`docs/SCRYPTED_RTSP_SETUP.md` — Scrypted camera setup guidance.
 	•	`docs/OTA_UPDATE_FILE.md` — OTA image creation and naming.
 	•	`docs/UPDATING_WEB_INTERFACE.md` — LittleFS UI update workflow.

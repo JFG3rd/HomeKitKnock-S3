@@ -20,7 +20,7 @@ Integrated SIP client functionality into the ESP32-S3 doorbell to ring FRITZ!Box
    - Added `#include "sip_client.h"`
    - Declared global `SipConfig sipConfig`
    - Added SIP initialization in `setup()`
-   - Replaced TR-064 ring logic with SIP in `handleDoorbellPress()`
+   - Replaced ring logic with SIP in `handleDoorbellPress()`
    - Added periodic SIP REGISTER in `loop()`
    - Added `/sip` setup page endpoint
    - Added `/saveSIP` POST endpoint for saving configuration
@@ -155,8 +155,8 @@ SIP/2.0 200 OK
 
 ## Key Features
 
-### Advantages Over TR-064/HTTP
-- ✅ **Works on all FRITZ!Box models** (TR-064 dialing disabled on 6591 Cable)
+### Advantages Over HTTP
+- ✅ **Works on all FRITZ!Box models**
 - ✅ **No authentication issues** (simple SIP credentials)
 - ✅ **Standard SIP protocol** (RFC 3261 compliant)
 - ✅ **Real IP phone** (appears as genuine device in FRITZ!Box)
@@ -165,7 +165,6 @@ SIP/2.0 200 OK
 - Existing WiFi provisioning system intact
 - Camera integration still works (MJPEG streaming)
 - Web UI with dark mode preserved
-- TR-064 setup page still available (for reference)
 
 ## Technical Details
 
@@ -216,11 +215,7 @@ platformio device monitor
 
 ## Configuration Migration
 
-Old TR-064 config (stored in NVS):
-- Namespace: `tr064`
-- Keys: `tr064_user`, `tr064_pass`, `number`
-
-New SIP config:
+SIP config:
 - Namespace: `sip`
 - Keys: `sip_user`, `sip_password`, `sip_displayname`, `sip_target`
 

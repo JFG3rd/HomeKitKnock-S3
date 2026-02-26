@@ -22,7 +22,6 @@ Firmware for the **ESP32-S3 Sense–based DIY video doorbell**, built with **Pla
 - Stream camera video from **XIAO ESP32-S3 Sense** to Scrypted
 - Detect a physical doorbell button press
 - Trigger a Scrypted **doorbell endpoint**
-- Trigger a FRITZ!Box **TR-064 internal ring** for a phone group
 - Let Scrypted expose the device as a **HomeKit Secure Video doorbell**
 
 Audio streaming is planned for a later phase.
@@ -120,25 +119,12 @@ If none are found or the connection fails, it starts a configuration AP:
 
 ### Legacy Endpoints (Arduino Compatibility)
 - `GET /deviceStatus` - JSON status (RSSI + uptime)
-- `GET /ring` - Trigger ring (tries SIP then TR-064)
-- `GET /ring/tr064` - Trigger FRITZ!Box TR-064 ring
+- `GET /ring` - Trigger ring (SIP)
 - `GET /ring/sip` - Trigger FRITZ!Box SIP ring
-- `GET /tr064` - TR-064 ring setup page
-- `GET /tr064Debug` - TR-064 debug JSON
 - `GET /sip` - SIP setup page
 - `GET /sipDebug` - SIP debug JSON
 - `GET /logs/camera` - Camera/streaming logs (legacy)
-- `GET /logs/doorbell` - Doorbell/SIP/TR-064 logs (legacy)
-
-### TR-064 Settings
-The setup page lets you configure FRITZ!Box TR-064 credentials and the internal
-ring number (e.g., `**9` or a group extension). These settings are stored in NVS.
-The router IP is derived from the WiFi gateway after the device connects.
-Assign a custom ringtone on the handset for that internal number.
-
-TR-064 is configurable from:
-- AP setup page: `http://192.168.4.1/wifiSetup`
-- Normal mode page: `http://<device-ip>/tr064`
+- `GET /logs/doorbell` - Doorbell/SIP logs (legacy)
 
 ### Camera Stream
 - Stream URL: `http://<device-ip>:81/stream`
@@ -167,26 +153,15 @@ If Scrypted shows an ffmpeg error about “Unable to choose an output format for
 1. Flash firmware: `pio run -t upload`
 2. Upload UI assets: `pio run -t uploadfs`
 3. Connect to `ESP32_Doorbell_Setup` and open `http://192.168.4.1/wifiSetup`
-4. Save WiFi and TR-064 credentials
+4. Save WiFi credentials
 5. After reboot, open `http://<device-ip>/` for the main UI
 6. Verify camera and stream URLs, then add to Scrypted
-
-### FRITZ!Box TR-064 Setup (DECT Ring)
-1. Enable TR-064 access: FRITZ!Box UI → Heimnetz → Heimnetzübersicht → Netzwerkeinstellungen → enable „Zugriff für Anwendungen zulassen“.
-2. TR-064 endpoints are available at `http://fritz.box:49000` and `https://fritz.box:49443`.
-3. Create a dedicated user: System → FRITZ!Box-Benutzer.
-4. Grant permissions: FRITZ!Box Einstellungen, Telefonie, Smart Home (if needed).
-5. Configure an internal group number for the handsets you want to ring (e.g., `**9` or `**610`).
-6. In AP setup (`/wifiSetup`) or normal mode (`/tr064`), enter the TR-064 username, password, and group number.
-7. On each handset, assign a custom ringtone to that internal number.
-8. If rings still fail, enable “Wählhilfe / Click-to-dial” for the device in FRITZ!Box and retry.
 
 ### Troubleshooting
 - If the stream does not load, confirm `http://<device-ip>:81/stream` is reachable and that port 81 is not blocked.
 - If snapshots fail, try `http://<device-ip>/capture` first and check serial logs for camera init errors.
 - If the camera fails to initialize, confirm the XIAO ESP32-S3 Sense pin map in `include/camera_pins.h`.
-- If TR-064 calls fail, verify TR-064 is enabled and the user has permissions, then re-save credentials in `/wifiSetup`.
-- If DECT phones do not ring, confirm the internal group number and assign a ringtone for that number on the handsets.
+- If DECT phones do not ring, confirm the SIP target number and that the SIP account is active in FRITZ!Box.
 
 ### Web-Based Log Viewer
 The ESP-IDF build includes a full-featured log viewer at `/logs.html`:

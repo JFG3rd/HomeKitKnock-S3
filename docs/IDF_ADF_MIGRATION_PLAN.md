@@ -284,9 +284,9 @@ src_idf/
 - **Verbose Logging**: Single-line format with `|` separators
 
 ### Web Assets (Embedded Gzip)
-12 files totaling ~35KB compressed:
+11 files totaling ~35KB compressed:
 - index.html, style.css, wifi-setup.html, setup.html
-- live.html, guide.html, ota.html, sip.html, tr064.html
+- live.html, guide.html, ota.html, sip.html
 - logs.html, logs-camera.html, logs-doorbell.html
 
 ---

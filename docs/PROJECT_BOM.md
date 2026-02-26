@@ -145,10 +145,6 @@ Complete parts list for the ESP32-S3 doorbell with supercapacitor-based power su
 
 ---
 
-## 8. Optional: TR-064 / FRITZ!Box Integration
-
-No additional hardware needed; uses existing FRITZ!Box on the home network.
-
 ---
 
 ## Cost Summary

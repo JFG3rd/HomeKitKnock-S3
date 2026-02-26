@@ -29,7 +29,7 @@ typedef enum {
     LOG_FILTER_ALL = 0,
     LOG_FILTER_CORE,        // main, wifi, nvs, web_server, dns, httpd
     LOG_FILTER_CAMERA,      // camera, rtsp, mjpeg, stream, ov2640
-    LOG_FILTER_DOORBELL,    // doorbell, sip, button, ring, tr064
+    LOG_FILTER_DOORBELL,    // doorbell, sip, button, ring
 } log_filter_t;
 
 /**

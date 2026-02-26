@@ -17,7 +17,7 @@
 
     <div class="header-container">
         <h1 class="main-title">☎️ Doorbell Logs</h1>
-        <p>Ring events, SIP, TR-064, and webhook activity.</p>
+        <p>Ring events, SIP, and webhook activity.</p>
     </div>
 
     <div class="log-toolbar">
@@ -51,7 +51,7 @@
         const wrapToggle = document.getElementById("wrapToggle");
         let lastEventId = 0;
 
-        const doorbellKeywords = ["SIP", "TR-064", "FRITZ", "Ring", "Doorbell", "☎️", "📞", "🔔", "🔐"];
+        const doorbellKeywords = ["SIP", "FRITZ", "Ring", "Doorbell", "☎️", "📞", "🔔", "🔐"];
         function matchesDoorbellLog(message) {
             return doorbellKeywords.some(kw => message.includes(kw));
         }

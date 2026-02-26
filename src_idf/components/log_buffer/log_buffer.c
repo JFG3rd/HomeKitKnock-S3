@@ -46,7 +46,7 @@ static const char *camera_tags[] = {
 };
 
 static const char *doorbell_tags[] = {
-    "doorbell", "sip", "sip_client", "button", "ring", "tr064", "tr-064",
+    "doorbell", "sip", "sip_client", "button", "ring",
     "gpio", "relay", "audio", "i2s", "mic",
     "audio_output", "audio_capture", "i2s_shared_bus", "aac_encoder_pipe", NULL
 };

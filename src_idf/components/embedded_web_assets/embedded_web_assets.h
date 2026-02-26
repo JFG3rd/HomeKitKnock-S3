@@ -15,7 +15,6 @@
 #include "embedded_guide.h"
 #include "embedded_ota.h"
 #include "embedded_sip.h"
-#include "embedded_tr064.h"
 #include "embedded_logs.h"
 #include "embedded_logs-doorbell.h"
 #include "embedded_logs-camera.h"
@@ -38,13 +37,12 @@ const struct EmbeddedFile embedded_files[] = {
     {"guide.html", guide_data, guide_size, guide_mime},
     {"ota.html", ota_data, ota_size, ota_mime},
     {"sip.html", sip_data, sip_size, sip_mime},
-    {"tr064.html", tr064_data, tr064_size, tr064_mime},
     {"logs.html", logs_data, logs_size, logs_mime},
     {"logs-doorbell.html", logs_doorbell_data, logs_doorbell_size, logs_doorbell_mime},
     {"logs-camera.html", logs_camera_data, logs_camera_size, logs_camera_mime}
 };
 
-const size_t embedded_files_count = 12;
+const size_t embedded_files_count = 11;
 
 // Helper function to find file by name
 static inline const struct EmbeddedFile* find_embedded_file(const char* filename) {

@@ -78,7 +78,7 @@ def embed_web_assets(data_dir, output_dir):
     # Files to embed
     embed_files = ['index.html', 'style.css', 'setup.html', 'wifi-setup.html',
                    'live.html', 'guide.html', 'ota.html', 'sip.html',
-                   'tr064.html', 'logs.html', 'logs-doorbell.html', 'logs-camera.html']
+                   'logs.html', 'logs-doorbell.html', 'logs-camera.html']
 
     files_data = {}
 

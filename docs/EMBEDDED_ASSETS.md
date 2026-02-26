@@ -66,7 +66,6 @@ data/                          # Source files
 ├── guide.html                 (7.2 KB)
 ├── ota.html                   (5.1 KB)
 ├── sip.html                   (6.9 KB)
-├── tr064.html                 (5.4 KB)
 ├── logs-camera.html           (4.2 KB)
 └── logs-doorbell.html         (4.3 KB)
 

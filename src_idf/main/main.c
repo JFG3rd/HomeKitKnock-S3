@@ -38,6 +38,8 @@
 #include "audio_capture.h"
 #include "audio_output.h"
 #include "aac_encoder_pipe.h"
+#include "relay_controller.h"
+#include "config.h"
 
 static const char *TAG = "main";
 static httpd_handle_t http_server = NULL;
@@ -125,6 +127,9 @@ static void initialize_sntp(void) {
  */
 static void on_button_press(void) {
     ESP_LOGI(TAG, "Doorbell button pressed!");
+
+    // Pulse original gong relay (GPIO3) for GONG_RELAY_PULSE_MS (async)
+    relay_controller_pulse_async(GONG_RELAY_PULSE_MS);
 
     // Trigger status LED ring animation
     status_led_mark_ring();
@@ -228,6 +233,12 @@ void app_main(void) {
         ESP_LOGW(TAG, "Button init failed (non-fatal)");
     } else {
         button_set_callback(on_button_press);
+    }
+
+    // Initialize gong relay output (GPIO3, active-high, default LOW)
+    err = relay_controller_init();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Relay controller init failed (non-fatal)");
     }
 
     // Initialize audio output unconditionally — speaker (gong) is a core
