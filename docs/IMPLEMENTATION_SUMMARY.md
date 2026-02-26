@@ -7,15 +7,15 @@
 
 # ESP32-S3 Doorbell - Implementation Summary
 
-## Project Status: ESP-IDF Migration Phase 5 In Progress 🔧
+## Project Status: ESP-IDF Migration Phase 5 Complete ✅
 
-Phases 0-4 complete. Phase 5 (Audio Path) is in progress: speaker (MAX98357A) works end-to-end with gong playback, volume control, and test tone. INMP441 mic integration via shared I2S bus is the current work.
+Phases 0–5 complete. Phase 5 (Audio Path) is fully working: MAX98357A speaker (gong, volume control) + INMP441 mic capture via shared I2S bus — Record & Play verified end-to-end. Next: Phase 6 (HomeKit) and audio stretch goals (SIP bidirectional audio, RTSP AAC).
 
 ---
 
 ## What's Working
 
-### Audio Output (Speaker) ✅ (Phase 5 partial)
+### Audio Output (Speaker) ✅ (Phase 5)
 - **MAX98357A I2S DAC**: I2S_NUM_1, GPIO7 (BCLK), GPIO8 (WS), GPIO9 (DOUT)
 - **Shared I2S Bus**: `i2s_shared_bus` component manages full-duplex I2S_NUM_1 — BCLK/WS shared between speaker TX and INMP441 RX
 - **Gong Playback**: Embedded PCM from flash (`gong_data.c`) with synthesized 880/660 Hz fallback
@@ -24,6 +24,17 @@ Phases 0-4 complete. Phase 5 (Audio Path) is in progress: speaker (MAX98357A) wo
 - **Test Tone**: 440 Hz 2s tone via setup page "🔔 Test Gong" button
 - **Audio out enabled**: NVS default is 1 (enabled) — gong is a core feature
 - **Unconditional Init**: `audio_output_init()` runs at boot, independent of camera enable flag
+- **DMA Flush**: `audio_output_flush_and_stop()` prevents circular buffer replay after playback
+
+### Audio Capture (Mic) ✅ (Phase 5)
+- **INMP441 External Mic**: I2S_NUM_1 RX via shared bus, **GPIO5 (D4)** = SD pin
+- **GPIO5 required**: GPIO12 forbidden — OV2640 camera Y7 data output, driven by hardware at all times
+- **BCLK from TX**: TX channel enabled before RX capture; kept alive while INMP441 is running
+- **Stereo DMA de-interleave**: ESP-IDF RX returns `[L, R, L, R, ...]` even in MONO mode; `audio_capture_read()` extracts L channel in 256-frame chunks
+- **PDM fallback**: Onboard PDM mic (GPIO41/42, I2S_NUM_0) — physically integrated on the XIAO ESP32-S3 Sense PCB by Seeedstudio; available as software-selectable source
+- **Mic Test**: `POST /api/mic/test` — 2s record → stats (peak/rms/zeros) → playback → JSON
+- **Record & Play**: "🎤 Record & Play" button on setup page — end-to-end verified ✅
+- **Sensitivity**: Software scaling 0–100%, NVS persistence
 
 ### Camera & MJPEG Streaming ✅ (Phase 4)
 - **OV2640 Camera**: VGA JPEG, 2 frame buffers in PSRAM (8MB OPI)
@@ -199,8 +210,9 @@ src_idf/
 | GPIO7 | Shared I2S BCLK | MAX98357A BCLK + INMP441 SCK (shared clock line) |
 | GPIO8 | Shared I2S WS | MAX98357A LRC + INMP441 WS (shared word select) |
 | GPIO9 | I2S_NUM_1 TX | MAX98357A DIN (speaker data out) |
-| GPIO12 | I2S_NUM_1 RX | INMP441 SD/DOUT (mic data in) |
-| GPIO41/42 | PDM Mic (onboard) | Onboard hardware — NOT connected in required wiring; INMP441 is the active mic |
+| GPIO5 | I2S_NUM_1 RX | INMP441 SD/DOUT (mic data in) — **GPIO12 forbidden**: camera Y7 |
+| GPIO12 | OV2640 Camera Y7 | Camera data pin — DO NOT use for INMP441 SD |
+| GPIO41/42 | PDM Mic (onboard) | Integrated on XIAO ESP32-S3 Sense PCB by Seeedstudio; INMP441 is active source |
 
 ---
 
@@ -247,7 +259,7 @@ src_idf/
 | Phase 2 | ✅ Complete | Config services, captive portal, logs |
 | Phase 3 | ✅ Complete | SIP intercom, button, LED, SNTP |
 | Phase 4 | ✅ Complete | Video path — camera, MJPEG, RTSP |
-| Phase 5 | 🔧 In Progress | Audio path — speaker working; mic (INMP441 shared bus) in progress |
+| Phase 5 | ✅ Complete | Audio path — speaker + INMP441 mic working; Record & Play verified |
 | Phase 6 | ❌ Pending | HomeKit doorbell |
 | Phase 7 | ❌ Pending | OTA update system (credentials, time-limited window) |
 | Phase 8 | ❌ Pending | Cleanup & resilience |
@@ -330,27 +342,23 @@ python3 tools/embed_web_assets.py data/ include/
 **PSRAM:** 8 MB (OPI)
 **Camera:** OV2640
 
-**Memory Usage (ESP-IDF build, Phase 4):**
-- RAM: 80,728 bytes used (24.6%)
-- Flash: 1,043,865 bytes (26.5%)
+**Memory Usage (ESP-IDF build, Phase 5 complete):**
+- RAM: 93,304 bytes used (28.5%)
+- Flash: 1,231,045 bytes (31.3%)
 
 ---
 
 ## Next Steps
 
-### Phase 5 Remaining: INMP441 Mic Integration
-1. Wire `audio_capture.c` to use `i2s_shared_bus` (replace standalone I2S_NUM_1 channel creation)
-2. Wire `audio_output.c` to use `i2s_shared_bus` TX channel (true full-duplex, no stop-capture during gong)
-3. Move `audio_capture_init()` out of camera-gated block in `main.c`
-4. Propagate `hardware_diag_mode` changes at runtime from `camera.c` to `audio_output.c`
-5. `POST /api/mic/test` endpoint: 2s record → stats → playback → JSON
-6. "🎤 Record & Play" button on setup page Audio/Mic card
+### Audio Stretch Goals (Phase 5 follow-on)
+1. SIP bidirectional audio — RTP TX path for mic-to-caller (G.711 PCMU/PCMA)
+2. RTSP AAC audio — wire `aac_encoder_pipe` (ESP-ADF) into RTSP server pipeline
 
 ### Phase 6: HomeKit Doorbell
-7. Integrate Espressif HAP SDK or bridge; expose doorbell + camera to Home app
+3. Integrate Espressif HAP SDK or Scrypted bridge; expose doorbell + camera to Home app
 
 ### Phase 7: OTA Update System
-8. Credential management (username + SHA-256 hash in NVS)
-9. Time-limited upload window with Basic auth
+4. Credential management (username + SHA-256 hash in NVS)
+5. Time-limited upload window with Basic auth
 
 See [IDF_ADF_MIGRATION_PLAN.md](IDF_ADF_MIGRATION_PLAN.md) for full roadmap.

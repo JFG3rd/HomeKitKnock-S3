@@ -97,44 +97,50 @@ Note: ESP-ADF is NOT used — audio is implemented with native ESP-IDF I2S drive
 | RTSP stream (port 8554) | ✅ | MJPEG-over-RTP implemented |
 | Stable stream to Scrypted | ✅ | Both HTTP MJPEG and RTSP working |
 
-## Phase 5 — Audio path (pure ESP-IDF, no ADF) 🔧 IN PROGRESS
+## Phase 5 — Audio path (pure ESP-IDF, no ADF) ✅ COMPLETE
 
 **Architecture decision**: Audio is implemented with native ESP-IDF I2S drivers, not ESP-ADF.
-Only INMP441 (external I2S mic) is used — PDM mic (GPIO41/42) is onboard hardware but NOT wired.
+INMP441 (external I2S mic) is the active source. The onboard PDM mic (GPIO41/42) is physically integrated on the XIAO ESP32-S3 Sense PCB by Seeedstudio and is available as a software-selectable fallback.
+`aac_encoder_pipe` will use ESP-ADF for future RTSP AAC streaming (not yet wired into build).
 
 ### Shared I2S Bus
 GPIO7 (BCLK) and GPIO8 (WS) are physically shared between MAX98357A speaker and INMP441 mic.
 The `i2s_shared_bus` component (`src_idf/components/i2s_shared_bus/`) creates a full-duplex
-I2S_NUM_1 channel pair — TX (GPIO9 → MAX98357A DIN) and RX (GPIO12 ← INMP441 SD) — simultaneously.
+I2S_NUM_1 channel pair — TX (GPIO9 → MAX98357A DIN) and RX (**GPIO5** ← INMP441 SD) — simultaneously.
 Both `audio_output` and `audio_capture` call `i2s_shared_bus_init()` (idempotent) and get their
 channel handles from the shared bus. No stop-capture-before-play required.
 
+**GPIO5 (D4) is the INMP441 SD pin.** GPIO12 must NOT be used — it is the OV2640 camera Y7 data
+output pin and the camera chip drives it electrically regardless of camera software state.
+
+### Key Implementation Insights
+- **TX = BCLK master**: TX channel must be enabled before INMP441 can clock out data. `start_inmp441_mic()` explicitly enables TX; `disable_tx_channel()` skips disable while INMP441 is running.
+- **Stereo DMA in MONO mode**: ESP-IDF STD I2S RX returns stereo-interleaved `[L, R, L, R, ...]` in the DMA buffer even when configured as `I2S_SLOT_MODE_MONO`. `audio_capture_read()` de-interleaves in 256-frame chunks to extract L-channel only (INMP441 with L/R=GND outputs on left channel).
+- **slot_bit_width=32**: INMP441 requires 64 BCLK per LRCLK (32-bit I2S frames). Default macro gives 16-bit → no output. Both TX and RX force `I2S_SLOT_BIT_WIDTH_32BIT`.
+
 ### Implemented ✅
-- ✅ `audio_output` component: MAX98357A speaker, I2S_NUM_1 via shared bus, gong PCM from flash,
-  synthesized 880/660 Hz fallback, volume 0–100%, deferred TX channel, NVS persistence
+- ✅ `audio_output` component: MAX98357A speaker, I2S_NUM_1 via shared bus, gong PCM from flash, synthesized 880/660 Hz fallback, volume 0–100%, deferred TX channel, NVS persistence
 - ✅ `audio_output_init()` runs unconditionally at boot (not gated by camera enable flag)
 - ✅ `audio_out_enabled` NVS default = 1 (gong is a core feature)
 - ✅ Volume slider always interactive (not disabled by audio_out_enabled checkbox)
-- ✅ `aac_encoder_pipe` component: AAC-LC encoder for RTSP audio
-
-### In Progress 🔧
-- 🔧 Wire `audio_output.c` to use shared bus TX channel (replace standalone `i2s_new_channel()`)
-- 🔧 Wire `audio_capture.c` to use shared bus RX channel for INMP441 (replace standalone channel)
-- 🔧 Move `audio_capture_init()` out of camera-gated block in `main.c`
-- 🔧 Propagate `hardware_diag_mode` from NVS write in `camera.c` to in-memory flag in `audio_output.c`
-- 🔧 `POST /api/mic/test`: record 2s → compute stats → play back → return JSON
-- 🔧 "🎤 Record & Play" button on setup page Audio/Mic card
+- ✅ `audio_capture` component: INMP441 via shared bus, stereo DMA de-interleave, PDM fallback, sensitivity scaling, NVS persistence
+- ✅ `i2s_shared_bus` component: full-duplex I2S_NUM_1, TX BCLK master, RX INMP441
+- ✅ `POST /api/mic/test`: record 2s → stats → play back → JSON (`peak`, `rms`, `zeros`, `played`)
+- ✅ "🎤 Record & Play" button on setup page — verified working end-to-end
+- ✅ `audio_output_flush_and_stop()`: DMA silence flush prevents circular buffer replay
+- ✅ `aac_encoder_pipe` component: AAC-LC encoder stub (wiring to RTSP pending)
+- ✅ setup.html: `rebootRequired` flag, confirmation modals for Save/Restart/OTA
 
 ### Success Criteria
 | Criterion | Status | Notes |
 |-----------|--------|-------|
-| Speaker gong on button press | ✅ | MAX98357A via I2S_NUM_1 |
+| Speaker gong on button press | ✅ | MAX98357A via I2S_NUM_1 shared bus |
 | Volume control 0–100% | ✅ | NVS persistence |
-| Shared bus full-duplex | 🔧 | Shared bus component exists, wiring in progress |
-| INMP441 capture independent of camera | 🔧 | Camera-gate bug fix in progress |
-| SIP bidirectional audio | 🔧 | Blocked on mic capture working |
-| RTSP audio (AAC) | 🔧 | aac_encoder_pipe ready, blocked on capture |
-| Mic test (Record & Play) | 🔧 | UI + endpoint in progress |
+| Shared bus full-duplex | ✅ | GPIO7/8 shared, TX=BCLK master |
+| INMP441 capture (Record & Play) | ✅ | GPIO5 SD, de-interleaved, verified |
+| INMP441 independent of camera | ✅ | Camera-gate bug fixed |
+| SIP bidirectional audio | 🔧 | Unblocked — RTP TX path next |
+| RTSP audio (AAC) | 🔧 | Unblocked — wire aac_encoder_pipe next |
 
 ## Phase 6 — HomeKit doorbell
 - Integrate Espressif HAP SDK (IDF) or external bridge; expose doorbell + camera.
@@ -176,9 +182,9 @@ src_idf/
     ├── camera/                   # OV2640 driver + NVS config (Phase 4)
     ├── mjpeg_server/             # MJPEG HTTP streaming port 81 (Phase 4)
     ├── rtsp_server/              # RTSP server port 8554 (Phase 4)
-    ├── audio_output/             # MAX98357A speaker, gong playback, volume (Phase 5)
-    ├── audio_capture/            # INMP441 mic capture via shared I2S bus (Phase 5)
-    ├── i2s_shared_bus/           # Full-duplex I2S_NUM_1 shared channel manager (Phase 5)
+    ├── audio_output/             # MAX98357A speaker, gong playback, volume ✅ (Phase 5)
+    ├── audio_capture/            # INMP441 mic capture via shared I2S bus ✅ (Phase 5)
+    ├── i2s_shared_bus/           # Full-duplex I2S_NUM_1 shared channel manager ✅ (Phase 5)
     └── aac_encoder_pipe/         # AAC-LC encoder pipeline for RTSP audio (Phase 5)
 ```
 
@@ -228,8 +234,8 @@ src_idf/
 | GPIO7 | Shared I2S BCLK | MAX98357A BCLK + INMP441 SCK (shared via i2s_shared_bus) |
 | GPIO8 | Shared I2S WS | MAX98357A LRC + INMP441 WS (shared via i2s_shared_bus) |
 | GPIO9 | I2S_NUM_1 TX data | MAX98357A DIN (speaker data out) |
-| GPIO12 | I2S_NUM_1 RX data | INMP441 SD/DOUT (mic data in) |
-| GPIO41/42 | PDM Mic (onboard) | Onboard hardware — NOT connected in required wiring |
+| GPIO5 | I2S_NUM_1 RX data | INMP441 SD/DOUT (mic data in) — GPIO12 forbidden (camera Y7) |
+| GPIO41/42 | PDM Mic (onboard) | Integrated on XIAO ESP32-S3 Sense PCB by Seeedstudio; INMP441 is active source |
 
 ### API Endpoints
 | Endpoint | Method | Purpose |
@@ -366,6 +372,26 @@ pio run -t erase -e seeed_xiao_esp32s3_idf
 - Implement RTSP MJPEG server on port 8554 using ESP-ADF `esp_media_protocols` library
 - Wire `rtsp_enabled` feature toggle
 - Test with Scrypted RTSP source
+
+---
+
+## Session Summary (February 26, 2026)
+
+### Phase 5 Completion — INMP441 Mic Working End-to-End
+
+1. **GPIO conflict found and fixed**: INMP441 SD was on GPIO12. GPIO12 = OV2640 camera Y7 data output pin on the Seeed XIAO ESP32-S3 Sense expansion board. Camera chip drives GPIO12 at all times regardless of software camera state → all-zeros on I2S DIN. Moved INMP441 SD to **GPIO5 (D4 header pin)** which is free.
+2. **BCLK not generated**: TX channel (BCLK master on I2S_NUM_1) was not enabled when `audio_capture_start()` was called. INMP441 requires BCLK to clock out data. Fix: `start_inmp441_mic()` explicitly enables TX; `disable_tx_channel()` checks `audio_capture_is_running()` and skips disable while INMP441 is capturing.
+3. **50% zeros root cause**: ESP-IDF STD I2S RX always returns stereo-interleaved DMA data `[L, R, L, R, ...]` even in `I2S_SLOT_MODE_MONO`. INMP441 with L/R=GND outputs only on the left channel; R slot is always zero. Fix: `audio_capture_read()` reads 256-frame stereo chunks and extracts `chunk[2*i]` (L channel) into the output buffer.
+4. **Result**: `peak=~22%, zeros=~0%, played=yes` — Record & Play produces clear audible playback. ✅
+
+### Key Bug Fixes
+1. **GPIO12 camera conflict** — Never use GPIO12 for INMP441 SD on XIAO ESP32-S3 Sense with expansion board
+2. **BCLK not generated** — TX must be enabled before RX capture starts; must stay enabled while INMP441 is running
+3. **Stereo DMA in MONO mode** — ESP-IDF always returns stereo DMA; must de-interleave to get mono L-channel
+
+### Memory Usage (Phase 5 Complete)
+- RAM: 28.5% (93,304 / 327,680 bytes)
+- Flash: 31.3% (1,231,045 / 3,932,160 bytes)
 
 ---
 

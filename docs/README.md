@@ -2,170 +2,88 @@
  Project: HomeKitKnock-S3
  File: docs/README.md
  Purpose: Documentation index and navigation guide
+ Last Updated: February 26, 2026
  -->
 
 # ESP32-S3 Doorbell Documentation
 
-Welcome to the complete documentation for the ESP32-S3 Doorbell project. This guide will help you understand the current status, implementation details, and known issues.
+DIY HomeKit doorbell using Seeed XIAO ESP32-S3 Sense → Scrypted → Apple HomeKit.
+Pure ESP-IDF 5.5.0 firmware (no Arduino), Phases 0–5 complete.
 
 ## 🚀 Start Here
 
-### For First-Time Users
-1. **[QUICK_START.md](QUICK_START.md)** — 30-second setup guide
-2. **[esp32-s3-doorbell-architecture.md](esp32-s3-doorbell-architecture.md)** — System overview and architecture
+1. **[CURRENT_STATUS.md](CURRENT_STATUS.md)** — Current status, what's working, next steps
+2. **[esp32-s3-doorbell-architecture.md](esp32-s3-doorbell-architecture.md)** — Full system architecture
+3. **[WIRING_DIAGRAM.md](WIRING_DIAGRAM.md)** — Physical wiring and GPIO assignments
 
-### For Contributors/Troubleshooters
-1. **[CURRENT_STATUS.md](CURRENT_STATUS.md)** ⚠️ **READ THIS FIRST** — Current blocker (NVS boot loop) and how to help
-2. **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** — Technical status and what's working/blocked
+## 📊 Implementation Status
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Phase 0 | ✅ Complete | Pre-migration hygiene |
+| Phase 1 | ✅ Complete | IDF base (boot, NVS, WiFi, web) |
+| Phase 2 | ✅ Complete | Captive portal, log viewer, config |
+| Phase 3 | ✅ Complete | SIP intercom, button, LED, SNTP |
+| Phase 4 | ✅ Complete | Video — camera, MJPEG, RTSP |
+| Phase 5 | ✅ Complete | Audio — speaker + INMP441 mic, Record & Play |
+| Phase 6 | ❌ Pending | HomeKit doorbell integration |
+| Phase 7 | ❌ Pending | Full OTA update system |
+| Phase 8 | ❌ Pending | Cleanup & resilience |
 
 ## 📚 Documentation by Topic
 
-### 🔴 Current Blocker
-- **[CURRENT_STATUS.md](CURRENT_STATUS.md)** — Detailed explanation of NVS corruption boot loop (error 4363)
-  - What's tried
-  - Root cause theories
-  - How to help resolve
-
 ### 🔧 Architecture & Design
-- **[esp32-s3-doorbell-architecture.md](esp32-s3-doorbell-architecture.md)** — Full system architecture
-- **[GPIO_MAP.md](GPIO_MAP.md)** — Pin assignments and hardware connections
-- **[WIRING_DIAGRAM.md](WIRING_DIAGRAM.md)** — Physical wiring guide
-- **[PROJECT_BOM.md](PROJECT_BOM.md)** — Bill of materials and component list
+- **[esp32-s3-doorbell-architecture.md](esp32-s3-doorbell-architecture.md)** — Full system architecture and design notes
+- **[IDF_ADF_MIGRATION_PLAN.md](IDF_ADF_MIGRATION_PLAN.md)** — Phased migration plan with session summaries
+- **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** — What's working, component structure, API reference
+- **[GPIO_MAP.md](GPIO_MAP.md)** — Pin assignments and availability
+- **[WIRING_DIAGRAM.md](WIRING_DIAGRAM.md)** — Physical wiring map
+
+### 🔊 Audio
+- **[AUDIO_INTEGRATION.md](AUDIO_INTEGRATION.md)** — Mic + speaker path, formats, tuning
+- Audio uses native ESP-IDF I2S drivers (`driver/i2s_std.h`, `driver/i2s_pdm.h`)
+- `aac_encoder_pipe` component (future RTSP AAC) will use ESP-ADF
+- INMP441 external mic on GPIO5 (D4) via shared I2S1 bus
 
 ### 📹 Video Streaming
 - **[SCRYPTED_RTSP_SETUP.md](SCRYPTED_RTSP_SETUP.md)** — Scrypted camera integration
-- **[esp32-s3-doorbell-architecture.md](esp32-s3-doorbell-architecture.md#video-streaming)** — RTSP/MJPEG details
-
-### 🎵 Audio Streaming
-- **[AUDIO_INTEGRATION.md](AUDIO_INTEGRATION.md)** — Audio capture and streaming
-- **[EMBEDDED_ASSETS.md](EMBEDDED_ASSETS.md)** — Related: Web UI assets (mentions audio files)
+- MJPEG HTTP on port 81, RTSP MJPEG on port 8554
 
 ### ☎️ SIP Integration (FRITZ!Box)
 - **[SIP_INTEGRATION.md](SIP_INTEGRATION.md)** — SIP configuration guide
 - **[ESP32-Fritzbox-SIP-Documentation.md](ESP32-Fritzbox-SIP-Documentation.md)** — Technical SIP details
-- **[SIP-Fritzbox JSON Spec.md](SIP-Fritzbox%20JSON%20Spec.md)** — API specification
 
 ### 🌐 Web Interface
-- **[EMBEDDED_ASSETS.md](EMBEDDED_ASSETS.md)** — Web assets now embedded in firmware (eliminated LittleFS)
-- **[UPDATING_WEB_INTERFACE.md](UPDATING_WEB_INTERFACE.md)** — How to modify web UI
+- **[UPDATING_WEB_INTERFACE.md](UPDATING_WEB_INTERFACE.md)** — How to modify the embedded web UI
 
-### 🔄 Updates
-- **[OTA_UPDATE_FILE.md](OTA_UPDATE_FILE.md)** — Over-the-air update mechanism
+### 🔄 OTA Updates
+- **[OTA_UPDATE_FILE.md](OTA_UPDATE_FILE.md)** — OTA image creation and naming
 
-### 🔍 Debugging
-- **[TR064_DEBUGGING.md](TR064_DEBUGGING.md)** — TR-064 protocol debugging tips
+### ⚡ Hardware
+- **[PROJECT_BOM.md](PROJECT_BOM.md)** — Bill of materials
+- **[POWER_SUPPLY_DESIGNS.md](POWER_SUPPLY_DESIGNS.md)** — Power supply options
 
 ### 🎨 Diagrams & References
-- **[Mermaid Class Diagram — ESP32 SIP Client Architecture.md](Mermaid%20Class%20Diagram%20—%20ESP32%20SIP%20Client%20Architecture.md)** — SIP client architecture
-- **[Mermaid Flowchart — Digest Authentication Logic.md](Mermaid%20Flowchart%20—%20Digest%20Authentication%20Logic.md)** — SIP auth flow
-- **[Mermaid SIP Sequence Diagram.md](Mermaid%20SIP%20Sequence%20Diagram.md)** — SIP message sequence
-- **[Mermaid Timing Diagram — SIP Message Timing & Retransmissions.md](Mermaid%20Timing%20Diagram%20—%20SIP%20Message%20Timing%20&%20Retransmissions.md)** — Timing details
+- **[Mermaid SIP Sequence Diagram.md](Mermaid%20SIP%20Sequence%20Diagram.md)** — SIP message flow
+- **[Mermaid Class Diagram — ESP32 SIP Client Architecture.md](Mermaid%20Class%20Diagram%20—%20ESP32%20SIP%20Client%20Architecture.md)**
 
-### ⚡ Hardware Design
-- **[POWER_SUPPLY_DESIGNS.md](POWER_SUPPLY_DESIGNS.md)** — Power supply options and calculations
+## 🛠️ Quick Build & Flash
 
-## 📊 Implementation Status
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| **Video Streaming (RTSP)** | ✅ Implemented | Cannot test (NVS blocker) |
-| **Audio Streaming (AAC)** | ✅ Implemented | AAC codec needs ESP-ADF integration |
-| **SIP Integration** | ✅ Implemented | Cannot test (NVS blocker) |
-| **Web Interface** | ✅ Implemented | Embedded in firmware (PROGMEM) |
-| **WiFi AP Mode** | ❌ Blocked | NVS error 4363 prevents startup |
-| **OTA Updates** | ✅ Implemented | Cannot test (no WiFi) |
-| **Doorbell Button** | ✅ Implemented | Cannot test (no SIP) |
-
-## 🔴 Known Issues
-
-### Critical: NVS Boot Loop (Error 4363)
-- **Impact:** Device cannot boot past WiFi initialization
-- **Status:** Investigated, mitigation implemented (graceful feature disabling), root cause unclear
-- **Resolution:** Needs ESP-IDF or WiFi driver expert to investigate
-- **See:** [CURRENT_STATUS.md](CURRENT_STATUS.md)
-
-### Medium: AAC Audio Codec
-- **Impact:** Audio streams not properly encoded as AAC
-- **Status:** Needs ESP-ADF integration for proper AAC-LC encoding
-- **See:** [AUDIO_INTEGRATION.md](AUDIO_INTEGRATION.md)
-
-## 🛠️ Recent Changes
-
-### January 29, 2026: Embedded Web Assets
-- ✅ Eliminated LittleFS filesystem dependency
-- ✅ All HTML/CSS/JS now embedded as gzip-compressed PROGMEM
-- ✅ Reduced boot time by ~500ms
-- ✅ Reduced flash usage by 71% (110KB → 32KB)
-- 📖 See: [EMBEDDED_ASSETS.md](EMBEDDED_ASSETS.md)
-
-### January 29, 2026: NVS Graceful Degradation
-- ✅ Added NVS accessibility check at startup
-- ✅ Features automatically disabled if NVS not accessible
-- ✅ Eliminates Preferences error spam
-- ⚠️ Still doesn't resolve WiFi initialization failure
-
-## 🤝 How to Help
-
-### If You Know ESP-IDF/WiFi
-1. Read [CURRENT_STATUS.md](CURRENT_STATUS.md) for full context
-2. Investigate why WiFi driver fails with error 4363 after app's NVS operations
-3. Suggest fixes for NVS initialization order or configuration
-
-### If You Know Arduino/ESP32
-1. Test reproduction case with minimal WiFi + Preferences sketch
-2. Share known workarounds for NVS corruption on ESP32-S3
-3. Verify partition table compatibility
-
-### If You're a Community Member
-1. Share if you've encountered error 4363 with ESP32-S3
-2. Suggest alternate approaches for WiFi initialization
-3. Point to related issues or solutions
-
-## 📖 Document Relationships
-
-```
-QUICK_START.md
-    ↓
-esp32-s3-doorbell-architecture.md (full overview)
-    ├── GPIO_MAP.md (hardware details)
-    ├── WIRING_DIAGRAM.md (physical wiring)
-    └── PROJECT_BOM.md (components)
-
-CURRENT_STATUS.md (⚠️ BLOCKER - READ THIS)
-    ├── IMPLEMENTATION_SUMMARY.md (technical details)
-    ├── EMBEDDED_ASSETS.md (web UI in firmware)
-    └── AUDIO_INTEGRATION.md (audio codec planning)
-
-SCRYPTED_RTSP_SETUP.md (video streaming integration)
-SIP_INTEGRATION.md (FRITZ!Box integration)
-    └── ESP32-Fritzbox-SIP-Documentation.md (technical details)
-
-[Various debugging & reference docs]
+```bash
+pio run -e seeed_xiao_esp32s3_idf -t upload
+pio device monitor -e seeed_xiao_esp32s3_idf
 ```
 
 ## 🔗 External Resources
 
-### ESP32-S3 Documentation
-- [Seeed XIAO ESP32-S3 Sense](https://wiki.seeedstudio.com/xiao_esp32s3_sense/)
-- [ESP32-S3 Technical Reference](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/)
-
-### Libraries & Frameworks
+- [Seeed XIAO ESP32-S3 Sense Wiki](https://wiki.seeedstudio.com/xiao_esp32s3_sense/)
+- [ESP-IDF Documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/)
 - [PlatformIO Documentation](https://docs.platformio.org/)
-- [Arduino-ESP32 GitHub](https://github.com/espressif/arduino-esp32)
-- [ESP-ADF (Audio Development Framework)](https://github.com/espressif/esp-adf)
-
-### Protocols
-- [RTSP RFC 2326](https://tools.ietf.org/html/rfc2326)
-- [SIP RFC 3261](https://tools.ietf.org/html/rfc3261)
-- [TR-064 Protocol](https://avm.de/fileadmin/user_upload/documents/fritzbox/fritz-nas-03.89.pdf)
-
-## 📝 License
-
-See [LICENSE](../LICENSE) for details.
 
 ---
 
-**Project:** ESP32-S3 Doorbell  
-**Purpose:** HomeKit doorbell via Scrypted + FRITZ!Box IP phone  
-**Status:** Phase 1 complete, NVS boot loop blocking Phase 2  
-**Last Updated:** January 29, 2026
+**Project:** HomeKitKnock-S3
+**Device:** Seeed XIAO ESP32-S3 Sense
+**Framework:** Pure ESP-IDF 5.5.0 (PlatformIO)
+**Status:** Phase 5 complete — audio I/O fully working
+**Last Updated:** February 26, 2026
