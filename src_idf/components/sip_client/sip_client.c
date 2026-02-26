@@ -1539,6 +1539,7 @@ void sip_ring_process(void) {
             sip_call.remote_sends    = pending_invite.media.remote_sends;
             sip_call.audio_payload   = (pending_invite.media.preferred_audio_payload != 0xFF)
                                        ? pending_invite.media.preferred_audio_payload : 0;
+            sip_call.dtmf_payload    = pending_invite.media.dtmf_payload;
             sip_call.start_ms = now;
             memcpy(&sip_call.config, &pending_invite.config, sizeof(sip_config_t));
         }
