@@ -1535,6 +1535,10 @@ void sip_ring_process(void) {
             strncpy(sip_call.remote_tag, pending_invite.to_tag, sizeof(sip_call.remote_tag) - 1);
             sip_call.rtp_remote_ip = pending_invite.media.remote_ip;
             sip_call.rtp_remote_port = pending_invite.media.remote_port;
+            sip_call.remote_receives = pending_invite.media.remote_receives;
+            sip_call.remote_sends    = pending_invite.media.remote_sends;
+            sip_call.audio_payload   = (pending_invite.media.preferred_audio_payload != 0xFF)
+                                       ? pending_invite.media.preferred_audio_payload : 0;
             sip_call.start_ms = now;
             memcpy(&sip_call.config, &pending_invite.config, sizeof(sip_config_t));
         }
