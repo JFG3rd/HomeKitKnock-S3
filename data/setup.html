@@ -262,6 +262,24 @@
                 </div>
             </div>
 
+            <label class="card-group-title" style="margin-top: 12px;"><strong>Hardware Timing</strong></label>
+            <div class="info-grid">
+                <div class="info-item" style="flex-direction:column;align-items:flex-start;gap:4px;">
+                    <span style="font-size:0.9em;">Gong relay pulse (GPIO3): <strong id="gong_relay_ms_val">800</strong>ms</span>
+                    <input type="range" id="gong_relay_ms" min="100" max="900" step="50" value="800"
+                           style="width:100%;accent-color:var(--primary);"
+                           oninput="document.getElementById('gong_relay_ms_val').textContent=this.value">
+                    <span style="font-size:0.75em;color:#888;">Activates original 8VAC gong on button press (100–900ms)</span>
+                </div>
+                <div class="info-item" style="flex-direction:column;align-items:flex-start;gap:4px;">
+                    <span style="font-size:0.9em;">Door opener pulse (GPIO1): <strong id="door_opener_ms_val">800</strong>ms</span>
+                    <input type="range" id="door_opener_ms" min="500" max="2000" step="100" value="800"
+                           style="width:100%;accent-color:var(--primary);"
+                           oninput="document.getElementById('door_opener_ms_val').textContent=this.value">
+                    <span style="font-size:0.75em;color:#888;">Opens door when Fritz!fon user presses "1" during call (500–2000ms)</span>
+                </div>
+            </div>
+
             <label class="card-group-title" style="margin-top: 12px;"><strong>Doorbell Webhook (HomeKit)</strong></label>
             <input type="text" id="scrypted_webhook" value="{{SCRYPTED_WEBHOOK}}" placeholder="http://scrypted-ip:11080/endpoint/your-id/public/">
             <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
@@ -362,6 +380,8 @@
                 scrypted_low_latency: document.getElementById("scrypted_low_latency").checked,
                 scrypted_low_buffer: document.getElementById("scrypted_low_buffer").checked,
                 scrypted_rtsp_udp: document.getElementById("scrypted_rtsp_udp").checked,
+                gong_relay_ms: parseInt(document.getElementById("gong_relay_ms").value, 10),
+                door_opener_ms: parseInt(document.getElementById("door_opener_ms").value, 10),
                 framesize: parseInt(document.getElementById("framesize").value, 10),
                 quality: parseInt(document.getElementById("quality").value, 10),
                 brightness: parseInt(document.getElementById("brightness").value, 10),
@@ -486,7 +506,8 @@
             aac_sample_rate:"AAC Sample Rate", aac_bitrate:"AAC Bitrate",
             scrypted_source:"Scrypted Source", scrypted_webhook:"HomeKit Webhook",
             scrypted_low_latency:"Low Latency", scrypted_low_buffer:"Reduce Buffering",
-            scrypted_rtsp_udp:"RTSP UDP"
+            scrypted_rtsp_udp:"RTSP UDP",
+            gong_relay_ms:"Gong Relay Pulse (ms)", door_opener_ms:"Door Opener Pulse (ms)"
         };
         function snapshotInitialValues() {
             Object.keys(_fieldLabels).forEach(function(id) {
@@ -942,6 +963,16 @@
                     }
                     if (data.hardware_diag_mode !== undefined) {
                         document.getElementById("hardware_diag_mode").checked = data.hardware_diag_mode;
+                    }
+                    if (data.gong_relay_ms) {
+                        var el = document.getElementById("gong_relay_ms");
+                        el.value = data.gong_relay_ms;
+                        document.getElementById("gong_relay_ms_val").textContent = data.gong_relay_ms;
+                    }
+                    if (data.door_opener_ms) {
+                        var el = document.getElementById("door_opener_ms");
+                        el.value = data.door_opener_ms;
+                        document.getElementById("door_opener_ms_val").textContent = data.door_opener_ms;
                     }
                     updateScryptedUi();
                     updateAudioUi();

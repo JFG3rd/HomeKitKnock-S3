@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <math.h>
+#include "relay_controller.h"
 
 #ifndef MIN
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -37,6 +38,8 @@ static const char *TAG = "web_server";
 #define NVS_KEY_TIMEZONE     "timezone"
 #define DEFAULT_TIMEZONE     "CET-1CEST,M3.5.0,M10.5.0/3"
 #define MAX_TIMEZONE_LEN     64
+
+#define NVS_RELAY_NAMESPACE  "relay"
 
 static void load_timezone(char *out, size_t out_size) {
     if (!out || out_size == 0) {
@@ -593,9 +596,9 @@ static esp_err_t api_audio_gong_handler(httpd_req_t *req) {
         return httpd_resp_send(req, resp, strlen(resp));
     }
 
-    // Always play the PCM gong (same as physical button) regardless of HW diag mode.
-    // The test tone is redundant — if the PCM gong plays, the speaker works.
+    // Play gong sound and pulse the gong relay — same as physical button press.
     audio_output_play_gong();
+    relay_controller_pulse_gong();
 
     const char *resp = "{\"success\":true,\"message\":\"Gong triggered\"}";
     httpd_resp_set_type(req, "application/json");
@@ -821,7 +824,7 @@ static bool extract_json_int(const char *json, const char *key, int *out) {
 
 // GET /api/features - Get feature toggle states
 static esp_err_t api_features_get_handler(httpd_req_t *req) {
-    char response[640];
+    char response[720];
     char timezone[MAX_TIMEZONE_LEN];
 
     bool sip_enabled = sip_is_enabled();
@@ -832,18 +835,25 @@ static esp_err_t api_features_get_handler(httpd_req_t *req) {
     bool hardware_diag_mode = camera_is_hardware_diag_enabled();
     load_timezone(timezone, sizeof(timezone));
 
+    // Relay pulse durations (live from cached values in relay_controller)
+    uint32_t gong_ms = relay_controller_get_gong_ms();
+    uint32_t door_ms = relay_controller_get_door_ms();
+
     snprintf(response, sizeof(response),
              "{\"timezone\":\"%s\",\"sip_enabled\":%s,"
              "\"http_cam_enabled\":%s,\"rtsp_enabled\":%s,"
              "\"audio_out_enabled\":%s,\"audio_out_muted\":%s,"
-             "\"hardware_diag_mode\":%s}",
+             "\"hardware_diag_mode\":%s,"
+             "\"gong_relay_ms\":%lu,\"door_opener_ms\":%lu}",
              timezone,
              sip_enabled ? "true" : "false",
              http_cam_enabled ? "true" : "false",
              rtsp_enabled ? "true" : "false",
              audio_out_enabled ? "true" : "false",
              audio_out_muted ? "true" : "false",
-             hardware_diag_mode ? "true" : "false");
+             hardware_diag_mode ? "true" : "false",
+             (unsigned long)gong_ms,
+             (unsigned long)door_ms);
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, response, strlen(response));
@@ -933,6 +943,26 @@ static esp_err_t save_features_handler(httpd_req_t *req) {
     }
     if (extract_json_int(content, "audio_out_volume", &ival)) {
         camera_set_control("aud_volume", ival);
+    }
+
+    // --- Relay pulse durations ---
+    if (extract_json_int(content, "gong_relay_ms", &ival) && ival > 0) {
+        relay_controller_set_gong_ms((uint32_t)ival);
+        nvs_handle_t relay_h;
+        if (nvs_manager_open(NVS_RELAY_NAMESPACE, NVS_READWRITE, &relay_h) == ESP_OK) {
+            nvs_set_u32(relay_h, "gong_ms", (uint32_t)ival);
+            nvs_commit(relay_h);
+            nvs_close(relay_h);
+        }
+    }
+    if (extract_json_int(content, "door_opener_ms", &ival) && ival > 0) {
+        relay_controller_set_door_ms((uint32_t)ival);
+        nvs_handle_t relay_h;
+        if (nvs_manager_open(NVS_RELAY_NAMESPACE, NVS_READWRITE, &relay_h) == ESP_OK) {
+            nvs_set_u32(relay_h, "door_ms", (uint32_t)ival);
+            nvs_commit(relay_h);
+            nvs_close(relay_h);
+        }
     }
 
     httpd_resp_set_type(req, "text/plain");

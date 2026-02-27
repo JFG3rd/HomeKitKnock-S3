@@ -128,17 +128,18 @@ static void initialize_sntp(void) {
 static void on_button_press(void) {
     ESP_LOGI(TAG, "Doorbell button pressed!");
 
-    // Pulse original gong relay (GPIO3) for GONG_RELAY_PULSE_MS (async)
-    relay_controller_pulse_async(GONG_RELAY_PULSE_MS);
+    // Play gong sound first — I2S must start before relay fires (150ms delay in relay task)
+    audio_output_play_gong();
+
+    // Pulse original gong relay (GPIO3) — 150ms startup delay so I2S initializes first
+    relay_controller_pulse_gong();
 
     // Trigger status LED ring animation
     status_led_mark_ring();
 
-    // Play gong sound on speaker (async, fire-and-forget)
-    audio_output_play_gong();
-
-    // Request SIP ring (deferred to main loop)
-    if (sip_initialized && sip_is_enabled()) {
+    // Request SIP ring (deferred to main loop).
+    // Only checks sip_initialized — the enabled/disabled toggle is respected at init time.
+    if (sip_initialized) {
         esp_err_t err = sip_request_ring();
         if (err == ESP_OK) {
             ESP_LOGI(TAG, "SIP ring requested");
@@ -146,10 +147,21 @@ static void on_button_press(void) {
             ESP_LOGW(TAG, "SIP ring request failed: %s", esp_err_to_name(err));
         }
     } else {
-        ESP_LOGW(TAG, "SIP not available - ring not sent");
+        ESP_LOGW(TAG, "SIP not initialized - ring not sent");
     }
 
     // TODO: Add Scrypted webhook trigger here
+}
+
+/**
+ * DTMF callback — open door relay when Fritz!fon user presses '1'
+ */
+static void on_dtmf(char digit) {
+    ESP_LOGI(TAG, "DTMF: '%c'", digit);
+    if (digit == '1') {
+        ESP_LOGI(TAG, "Door opener triggered by DTMF '1'");
+        relay_controller_pulse_door();
+    }
 }
 
 /**
@@ -235,9 +247,23 @@ void app_main(void) {
         button_set_callback(on_button_press);
     }
 
-    // Initialize gong relay output (GPIO3, active-high, default LOW)
+    // Initialize relay outputs (GPIO3 gong, GPIO1 door opener), default LOW
     err = relay_controller_init();
-    if (err != ESP_OK) {
+    if (err == ESP_OK) {
+        // Load configurable pulse durations from NVS (set via setup.html)
+        nvs_handle_t relay_nvs;
+        if (nvs_manager_open("relay", NVS_READONLY, &relay_nvs) == ESP_OK) {
+            uint32_t gong_ms = 0, door_ms = 0;
+            nvs_get_u32(relay_nvs, "gong_ms", &gong_ms);
+            nvs_get_u32(relay_nvs, "door_ms", &door_ms);
+            nvs_close(relay_nvs);
+            if (gong_ms > 0) relay_controller_set_gong_ms(gong_ms);
+            if (door_ms > 0) relay_controller_set_door_ms(door_ms);
+        }
+        ESP_LOGI(TAG, "Relay: gong=%lums door=%lums",
+                 (unsigned long)relay_controller_get_gong_ms(),
+                 (unsigned long)relay_controller_get_door_ms());
+    } else {
         ESP_LOGW(TAG, "Relay controller init failed (non-fatal)");
     }
 
@@ -341,6 +367,7 @@ void app_main(void) {
                 esp_err_t sip_err = sip_client_init();
                 if (sip_err == ESP_OK) {
                     sip_initialized = true;
+                    sip_set_dtmf_callback(on_dtmf);
                     ESP_LOG_LEVEL(ESP_LOG_INFO, "sip", "SIP client initialized");
                     if (sip_config_load(&sip_config) && sip_config_valid(&sip_config)) {
                         sip_config_valid_flag = true;
