@@ -67,6 +67,13 @@ bool audio_output_get_hardware_diagnostic_mode(void);
 void audio_output_play_gong(void);
 
 /**
+ * Abort an in-progress gong playback immediately.
+ * Safe to call from any task; the gong task checks the flag between chunks
+ * and exits cleanly, releasing the I2S channel for SIP audio.
+ */
+void audio_output_stop_gong(void);
+
+/**
  * Play a 1 kHz test tone for 1 second (debug/diagnostic).
  */
 void audio_output_play_test_tone(void);

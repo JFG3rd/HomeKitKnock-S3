@@ -193,6 +193,7 @@ static bool sip_send(const char *msg, size_t len);
 static bool sip_send_to(uint32_t ip, uint16_t port, const char *msg, size_t len);
 static bool resolve_sip_proxy(uint32_t *ip);
 static void load_verbose_logging_state(void);
+static char dtmf_event_to_char(uint8_t event);
 
 // Get current time in milliseconds
 static uint32_t millis(void) {
@@ -1122,6 +1123,13 @@ static int wait_for_response(char *buf, size_t len, int timeout_ms) {
 
 // Reset call session
 static void reset_sip_call(void) {
+    // Flush I2S DMA with silence before zeroing call state. Without this the DMA
+    // circular buffer replays the last decoded RTP frame as a repeating knock/click.
+    // audio_output_flush_and_stop() keeps TX enabled (INMP441 needs it as BCLK source)
+    // but overwrites the DMA buffers with zeros so the MAX98357A goes quiet.
+    if (sip_call.active) {
+        audio_output_flush_and_stop();
+    }
     memset(&sip_call, 0, sizeof(sip_call));
 }
 
@@ -1526,6 +1534,10 @@ void sip_ring_process(void) {
                 return;
             }
 
+            // Stop gong immediately so the I2S channel is free for SIP audio.
+            // The gong task checks gong_abort between PCM chunks and exits cleanly.
+            audio_output_stop_gong();
+
             // Start call session
             sip_call.active = true;
             sip_call.inbound = false;
@@ -1542,6 +1554,15 @@ void sip_ring_process(void) {
             sip_call.dtmf_payload    = pending_invite.media.dtmf_payload;
             sip_call.start_ms = now;
             memcpy(&sip_call.config, &pending_invite.config, sizeof(sip_config_t));
+
+            // Diagnostic: always log RTP parameters so audio issues are immediately visible.
+            char rtp_ip_str[16] = "0.0.0.0";
+            ip_to_str(sip_call.rtp_remote_ip, rtp_ip_str, sizeof(rtp_ip_str));
+            ESP_LOGI(TAG, "CALL ACTIVE: RTP→%s:%u sends=%d recv=%d pt=%d dtmf=%d sock=%d",
+                     rtp_ip_str, (unsigned)sip_call.rtp_remote_port,
+                     sip_call.remote_sends, sip_call.remote_receives,
+                     sip_call.audio_payload, sip_call.dtmf_payload,
+                     rtp_socket);
         }
         // Send BYE after hold time (use static buffer)
         else if (!pending_invite.bye_sent &&
@@ -1637,13 +1658,64 @@ void sip_handle_incoming(void) {
         }
 
         if (strcasecmp(method, "BYE") == 0 || strcasecmp(method, "CANCEL") == 0) {
-            // Use static buffer to avoid stack overflow
+            // Always respond 200 OK per SIP spec, even for unknown/stale calls.
             int resp_len = build_ok_response(sip_msg_buf, sizeof(sip_msg_buf), sip_rx_buf);
             if (resp_len > 0) {
                 sip_send_response(sip_msg_buf, resp_len);
             }
-            pending_invite.active = false;
-            reset_sip_call();
+            // Only reset call state if the Call-ID matches our active call or pending
+            // invite. Fritz!Box retransmits BYE for old calls from previous sessions;
+            // processing those unconditionally would kill a currently-active new call.
+            char bye_call_id[64] = {0};
+            extract_header(sip_rx_buf, "Call-ID", bye_call_id, sizeof(bye_call_id));
+            bool matches_active  = (sip_call.active && sip_call.call_id[0] &&
+                                    strcasecmp(bye_call_id, sip_call.call_id) == 0);
+            bool matches_pending = (pending_invite.active && pending_invite.call_id[0] &&
+                                    strcasecmp(bye_call_id, pending_invite.call_id) == 0);
+            if (matches_active || matches_pending) {
+                ESP_LOGI(TAG, "%s matched active call — resetting", method);
+                pending_invite.active = false;
+                reset_sip_call();
+            } else {
+                ESP_LOGW(TAG, "%s for unknown Call-ID '%s' — ignored (stale)", method, bye_call_id);
+            }
+            return;
+        }
+
+        // Handle SIP INFO — Fritz!Box delivers door-opener DTMF via
+        // application/dtmf-relay (RFC 2976) rather than RTP telephone-event.
+        if (strcasecmp(method, "INFO") == 0) {
+            // Always respond 200 OK per RFC 2976
+            int resp_len = build_ok_response(sip_msg_buf, sizeof(sip_msg_buf), sip_rx_buf);
+            if (resp_len > 0) {
+                sip_send_response(sip_msg_buf, resp_len);
+            }
+            // Parse DTMF signal only if this INFO belongs to our active call
+            if (sip_call.active && dtmf_callback) {
+                char info_call_id[64] = {0};
+                extract_header(sip_rx_buf, "Call-ID", info_call_id, sizeof(info_call_id));
+                if (strcasecmp(info_call_id, sip_call.call_id) == 0) {
+                    const char *body = strstr(sip_rx_buf, "\r\n\r\n");
+                    if (body) {
+                        body += 4;
+                        const char *sig = strstr(body, "Signal=");
+                        if (sig) {
+                            sig += 7;
+                            int signal = -1;
+                            if (*sig == '*')       signal = 10;
+                            else if (*sig == '#')  signal = 11;
+                            else if (*sig >= '0' && *sig <= '9') signal = *sig - '0';
+                            if (signal >= 0) {
+                                char digit = dtmf_event_to_char((uint8_t)signal);
+                                if (digit != '\0') {
+                                    ESP_LOGI(TAG, "SIP INFO DTMF: Signal=%d ('%c')", signal, digit);
+                                    dtmf_callback(digit);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             return;
         }
 
@@ -1886,9 +1958,11 @@ static bool send_sip_rtp_frame(void) {
     if (!sip_call.remote_receives) return false;
     if (!audio_capture_is_enabled()) return false;
 
-    int16_t mic_buf[SIP_MIC_SAMPLES];
-    int16_t audio_buf[SIP_RTP_SAMPLES];
-    uint8_t encoded[SIP_RTP_SAMPLES];
+    // Static buffers — SIP TX path is single-threaded; avoids ~1.3KB stack allocation
+    // that overflows the main task stack when combined with the RX path below.
+    static int16_t mic_buf[SIP_MIC_SAMPLES];
+    static int16_t audio_buf[SIP_RTP_SAMPLES];
+    static uint8_t encoded[SIP_RTP_SAMPLES];
 
     bool has_mic = !audio_capture_is_muted() &&
                    audio_capture_read(mic_buf, SIP_MIC_SAMPLES, SIP_MIC_TIMEOUT_MS);
@@ -1904,7 +1978,7 @@ static bool send_sip_rtp_frame(void) {
         sip_call.rtp_ssrc = esp_random();
     }
 
-    uint8_t packet[12 + SIP_RTP_SAMPLES];
+    static uint8_t packet[12 + SIP_RTP_SAMPLES];
     packet[0] = 0x80;
     packet[1] = sip_call.audio_payload;
     packet[2] = (sip_call.rtp_seq >> 8) & 0xFF;
@@ -1984,11 +2058,12 @@ static void handle_sip_rtp_packet(const uint8_t *data, size_t len) {
     if (!audio_output_is_available()) return;
 
     size_t samples = payload_len < SIP_RTP_SAMPLES ? payload_len : SIP_RTP_SAMPLES;
-    int16_t pcm[SIP_RTP_SAMPLES];
+    // Static buffers — eliminates ~960 bytes of stack (including the former VLA).
+    static int16_t pcm[SIP_RTP_SAMPLES];
     decode_g711(payload, samples, pcm, pt);
 
-    size_t out_n = (AUDIO_SAMPLE_RATE / SIP_AUDIO_RATE) * SIP_RTP_SAMPLES;
-    int16_t out_buf[out_n];
+    static const size_t out_n = (AUDIO_SAMPLE_RATE / SIP_AUDIO_RATE) * SIP_RTP_SAMPLES;
+    static int16_t out_buf[(AUDIO_SAMPLE_RATE / SIP_AUDIO_RATE) * SIP_RTP_SAMPLES];
     upsample_to_output(pcm, samples, out_buf, out_n);
     audio_output_write(out_buf, out_n, 5);
     sip_call.last_rtp_recv_ms = millis();
@@ -2018,14 +2093,27 @@ void sip_media_process(void) {
 
     // RX: poll for incoming RTP packets (up to 4 per iteration)
     if (rtp_socket >= 0) {
+        int rx_count = 0;
+        static uint8_t buf[512]; // static — avoids 512-byte stack alloc per poll
         for (int i = 0; i < 4; i++) {
-            uint8_t buf[512];
             struct sockaddr_in from;
             socklen_t from_len = sizeof(from);
             int n = recvfrom(rtp_socket, buf, sizeof(buf), MSG_DONTWAIT,
                              (struct sockaddr *)&from, &from_len);
             if (n <= 0) break;
+            rx_count++;
             handle_sip_rtp_packet(buf, (size_t)n);
+        }
+        // Log first RTP packet received to confirm Fritz!Box is sending to us.
+        if (rx_count > 0 && sip_call.last_rtp_recv_ms == 0) {
+            ESP_LOGI(TAG, "First RTP packet received (%d bytes)", rx_count);
+        }
+    } else {
+        // Log once if socket is missing — indicates sip_client_init() RTP bind failed.
+        static bool rtp_sock_warn = false;
+        if (!rtp_sock_warn) {
+            ESP_LOGW(TAG, "RTP socket not open — no audio possible");
+            rtp_sock_warn = true;
         }
     }
 }

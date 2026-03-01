@@ -47,6 +47,7 @@ static bool initialized = false;
 static bool tx_enabled = false;
 static bool tx_from_shared_bus = false;
 static bool gong_task_running = false;
+static volatile bool gong_abort = false;
 static i2s_port_t tx_port = I2S_NUM_1;
 static bool hardware_diagnostic_mode = false;
 static uint32_t diag_writes_ok = 0;
@@ -386,6 +387,11 @@ static void play_embedded_pcm(void) {
     size_t offset = 0;
 
     while (offset < total_samples) {
+        if (gong_abort) {
+            ESP_LOGI(TAG, "Gong aborted (SIP call answered)");
+            break;
+        }
+
         size_t chunk = total_samples - offset;
         if (chunk > 256) chunk = 256;
 
@@ -506,7 +512,12 @@ void audio_output_play_gong(void) {
     if (gong_task_running) return;
     if (volume == 0) return;
 
+    gong_abort = false;
     xTaskCreatePinnedToCore(gong_task, "gong", AUDIO_TASK_STACK_SIZE, NULL, AUDIO_TASK_PRIORITY, NULL, STREAM_TASK_CORE);
+}
+
+void audio_output_stop_gong(void) {
+    gong_abort = true;
 }
 
 // ---------- Debug test tone ----------

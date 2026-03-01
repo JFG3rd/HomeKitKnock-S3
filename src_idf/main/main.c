@@ -18,7 +18,9 @@
 #include "freertos/task.h"
 #include "esp_system.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_sntp.h"
+#include <string.h>
 #include <time.h>
 #include <sys/time.h>
 #include "nvs.h"
@@ -137,29 +139,61 @@ static void on_button_press(void) {
     // Trigger status LED ring animation
     status_led_mark_ring();
 
-    // Request SIP ring (deferred to main loop).
-    // Only checks sip_initialized — the enabled/disabled toggle is respected at init time.
-    if (sip_initialized) {
-        esp_err_t err = sip_request_ring();
+    // Send SIP ring directly — we are in the main task (large stack), so we can
+    // call sip_ring() immediately instead of using the deferred sip_request_ring()
+    // mechanism (which exists only to protect the smaller httpd task stack).
+    if (sip_initialized && sip_config_valid_flag) {
+        esp_err_t err = sip_ring(&sip_config);
         if (err == ESP_OK) {
-            ESP_LOGI(TAG, "SIP ring requested");
+            ESP_LOGI(TAG, "SIP ring sent");
         } else {
-            ESP_LOGW(TAG, "SIP ring request failed: %s", esp_err_to_name(err));
+            ESP_LOGW(TAG, "SIP ring failed: %s", esp_err_to_name(err));
         }
-    } else {
+    } else if (!sip_initialized) {
         ESP_LOGW(TAG, "SIP not initialized - ring not sent");
+    } else {
+        ESP_LOGW(TAG, "SIP config invalid - ring not sent");
     }
 
     // TODO: Add Scrypted webhook trigger here
 }
 
 /**
- * DTMF callback — open door relay when Fritz!fon user presses '1'
+ * DTMF callback — open door relay when Fritz!Box delivers the "Open" key sequence.
+ *
+ * Fritz!Box is configured with door-opener sequence "123" (Fritz!Box UI:
+ * "Character sequence for door opener"). When the Fritz!fon user presses the
+ * "Open" key, Fritz!Box sends DTMF digits '1', '2', '3' in sequence via RTP
+ * telephone-event (RFC 4733, PT=101). We buffer incoming digits and fire the
+ * relay when the tail of the buffer matches "123".
+ *
+ * A 500ms idle gap resets the buffer so stale partial sequences don't linger.
  */
+#define DTMF_OPEN_SEQ       "123"
+#define DTMF_OPEN_SEQ_LEN   3
+#define DTMF_SEQ_RESET_MS   500
+
 static void on_dtmf(char digit) {
-    ESP_LOGI(TAG, "DTMF: '%c'", digit);
-    if (digit == '1') {
-        ESP_LOGI(TAG, "Door opener triggered by DTMF '1'");
+    static char seq_buf[DTMF_OPEN_SEQ_LEN + 1] = {0};
+    static uint32_t last_digit_ms = 0;
+
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+
+    // Reset buffer if too much time has passed since the last digit
+    if (last_digit_ms != 0 && (now - last_digit_ms) > DTMF_SEQ_RESET_MS) {
+        memset(seq_buf, 0, sizeof(seq_buf));
+    }
+    last_digit_ms = now;
+
+    // Shift buffer left and append new digit
+    memmove(seq_buf, seq_buf + 1, DTMF_OPEN_SEQ_LEN - 1);
+    seq_buf[DTMF_OPEN_SEQ_LEN - 1] = digit;
+
+    ESP_LOGI(TAG, "DTMF: '%c'  buf='%s'", digit, seq_buf);
+
+    if (strcmp(seq_buf, DTMF_OPEN_SEQ) == 0) {
+        ESP_LOGI(TAG, "Door opener triggered by DTMF sequence '%s'", DTMF_OPEN_SEQ);
+        memset(seq_buf, 0, sizeof(seq_buf));  // prevent double-fire
         relay_controller_pulse_door();
     }
 }
@@ -494,12 +528,14 @@ void app_main(void) {
         // Update LED pattern
         status_led_update();
 
-        // Short delay for responsiveness (50ms)
-        vTaskDelay(pdMS_TO_TICKS(50));
+        // Short delay — 10ms gives sip_media_process() enough resolution to hit the 20ms
+        // RTP cadence (G.711 frames every 20ms). At 50ms the ESP32 was sending RTP every
+        // 50ms instead of 20ms, causing ~60% packet loss and broken bidirectional audio.
+        vTaskDelay(pdMS_TO_TICKS(10));
 
-        // Periodic status log (every ~10 seconds)
+        // Periodic status log (every ~10 seconds at 10ms/loop = 1000 iterations)
         status_log_counter++;
-        if (status_log_counter >= 200) {
+        if (status_log_counter >= 1000) {
             status_log_counter = 0;
             if (wifi_manager_is_connected()) {
                 char ip[16];

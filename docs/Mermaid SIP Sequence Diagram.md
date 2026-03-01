@@ -4,6 +4,7 @@ sequenceDiagram
     participant ESP32 as ESP32 Doorbell
     participant FB as FRITZ!Box
     participant PH as Phones (**11)
+    participant FF as FRITZ!Fon (Talk/Open Keys)
 
     %% --- Registration Phase ---
     ESP32->>FB: REGISTER (no auth)
@@ -27,8 +28,9 @@ sequenceDiagram
     FB-->>PH: Trigger ringing for group **11
     FB-->>ESP32: 180 Ringing / 183 Session Progress
 
-    PH-->>FB: 200 OK (Call answered)
-    FB-->>ESP32: 200 OK (Call established)
+    %% --- FRITZ!Fon User Interaction ---
+    FF-->>FB: TALK key pressed\n(Answer incoming call)
+    FB-->>ESP32: 200 OK (Call answered)
 
     ESP32->>FB: ACK
     ESP32->>FB: Start RTP (audio stream)
@@ -36,12 +38,17 @@ sequenceDiagram
     %% --- Active Call ---
     ESP32->>ESP32: In-call audio exchange
 
+    %% --- Door Opening (Optional) ---
+    FF-->>FB: OPEN key pressed\n(Sends DTMF or SIP INFO)
+    FB-->>ESP32: DTMF/INFO event\n(Open door trigger)
+    ESP32->>ESP32: Execute door-open action
+
     %% --- Hangup ---
-    alt Remote hangs up
-        PH-->>FB: BYE
+    alt Remote hangs up (FRITZ!Fon)
+        FF-->>FB: BYE
         FB-->>ESP32: BYE
         ESP32->>FB: 200 OK
-    else Local hangs up
+    else Local hangs up (ESP32)
         ESP32->>FB: BYE
         FB-->>ESP32: 200 OK
     end

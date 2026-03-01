@@ -82,12 +82,14 @@ uint32_t relay_controller_get_door_ms(void) {
 }
 
 void relay_controller_pulse_gong(void) {
-    // 150ms startup delay lets gong I2S initialize before relay fires
+    // 150ms startup delay lets gong I2S initialize before relay fires.
+    // Task pinned to core 0 so it cannot compete with the gong audio task on core 1.
+    // Stack is 4096 bytes — ESP_LOGI needs ~2-3 KB for vsnprintf formatting.
     s_gong_args = (pulse_args_t){ .pin = GONG_RELAY_PIN, .ms = s_gong_ms, .delay_ms = 150 };
-    xTaskCreate(pulse_task, "relay_gong", 2048, &s_gong_args, 5, NULL);
+    xTaskCreatePinnedToCore(pulse_task, "relay_gong", 4096, &s_gong_args, 5, NULL, 0);
 }
 
 void relay_controller_pulse_door(void) {
     s_door_args = (pulse_args_t){ .pin = DOOR_OPENER_PIN, .ms = s_door_ms, .delay_ms = 0 };
-    xTaskCreate(pulse_task, "relay_door", 2048, &s_door_args, 5, NULL);
+    xTaskCreatePinnedToCore(pulse_task, "relay_door", 4096, &s_door_args, 5, NULL, 0);
 }
