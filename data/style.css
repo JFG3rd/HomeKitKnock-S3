@@ -247,6 +247,26 @@ h3 {
     overflow-y: auto;
 }
 
+/* Camera thumbnail hover hint */
+.thumb-refresh-hint {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    text-align: center;
+    padding: 4px 0;
+    border-radius: 0 0 6px 6px;
+    font-size: 0.8em;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+}
+#cameraThumb:hover .thumb-refresh-hint {
+    opacity: 1;
+}
+
 /* Info grid for system information */
 .info-grid {
     display: grid;
@@ -1162,17 +1182,18 @@ footer {
 
 @media screen and (min-width: 1001px) {
     body {
-        overflow: hidden;
+        overflow-y: auto;
     }
 
     .dashboard {
         flex-wrap: nowrap;
-        align-items: stretch;
+        align-items: flex-start;
     }
 
     .card {
         flex: 1 1 0;
         max-width: none;
+        align-self: flex-start;
     }
 
     .setup-card {
@@ -1309,3 +1330,18 @@ footer {
 
 .log-ts { font-family: monospace; color: #888; }
 .log-tag { font-weight: 500; color: #9ad7ff; }
+
+/* Mobile: footer action bar uses 2-column grid instead of collapsing to 1 */
+@media screen and (max-width: 600px) {
+    .button-row.log-actions {
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+    }
+}
+
+/* Mobile: prevent long header titles from running under the top-right dark-mode toggle */
+@media screen and (max-width: 480px) {
+    .header-container {
+        padding-right: 90px;
+    }
+}

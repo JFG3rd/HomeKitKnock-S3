@@ -1,12 +1,69 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>ESP32 Live Stream</title>
+    <title>ESP32 A/V Debug</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="/style.css">
+    <style>
+        .cmd-block {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 6px;
+            padding: 8px 10px;
+            margin: 6px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .cmd-block code {
+            flex: 1;
+            font-family: monospace;
+            font-size: 0.85em;
+            word-break: break-all;
+            white-space: pre-wrap;
+            color: var(--card-text);
+        }
+        .copy-btn {
+            background: rgba(128,128,128,0.15);
+            border: 1px solid rgba(128,128,128,0.45);
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 2px 8px;
+            font-size: 0.85em;
+            flex-shrink: 0;
+            width: auto;
+            min-height: unset;
+            color: var(--card-text);
+        }
+        .ip-badge {
+            display: inline-block;
+            background: rgba(128,128,128,0.15);
+            border: 1px solid rgba(128,128,128,0.3);
+            border-radius: 4px;
+            padding: 1px 7px;
+            font-family: monospace;
+            font-size: 0.85em;
+            margin: 2px 3px 2px 0;
+        }
+        .metric-row {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            margin-bottom: 6px;
+        }
+        .metric-label { font-size: 0.85em; color: var(--muted-text); }
+        .metric-value { font-weight: bold; }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        @media (max-width: 480px) { .metrics-grid { grid-template-columns: 1fr; } }
+    </style>
 </head>
-<body class="full-width-page">
+<body>
     <div class="dark-mode-toggle">
         <label class="switch">
             <input type="checkbox" id="darkModeToggle">
@@ -15,63 +72,321 @@
         <span>Dark Mode</span>
     </div>
     <div class="version-info">
-        <div>Version {{FW_VERSION}}</div>
-        <div>Build {{FW_BUILD_TIME}}</div>
+        <div>Version <span id="fwVersionBadge">--</span></div>
+        <div>Build <span id="fwBuildBadge">--</span></div>
     </div>
 
     <div class="header-container">
-        <h1 class="main-title">Live Stream + Audio</h1>
-        <p>MJPEG video with the companion AAC audio stream.</p>
+        <h1 class="main-title">📡 A/V Stream Debug</h1>
+        <p>Test and inspect HTTP MJPEG and RTSP audio/video streams.</p>
     </div>
 
-    <div class="container full-width">
-        <div class="flash-stats">
-            <strong>Video:</strong> http://{{LOCAL_IP}}:81/stream<br>
-            <strong>Audio:</strong> http://{{LOCAL_IP}}:81/audio.aac<br>
-            <span style="font-size: 0.85em;">Audio playback requires a click to comply with browser autoplay rules.</span>
+    <div class="dashboard">
+
+        <!-- Card 1: HTTP MJPEG Stream -->
+        <div class="container card setup-card">
+            <h3 class="card-title">📹 HTTP MJPEG Stream</h3>
+            <div class="flash-stats" id="mjpegStatus"><strong>Status:</strong> loading...</div>
+            <img id="mjpegImg" style="width:100%;border-radius:6px;margin:8px 0;display:none;" alt="MJPEG stream">
+            <div class="cmd-block" style="margin-top:6px;">
+                <code id="mjpegUrl"></code>
+                <button class="copy-btn" onclick="copyEl('mjpegUrl')" title="Copy URL">📋</button>
+            </div>
+            <div class="button-row button-grid" style="margin-top:8px;">
+                <button class="button btn-save" onclick="startMjpeg()">▶️ Load Stream</button>
+                <button class="button danger-btn" onclick="stopMjpeg()">⏹ Stop</button>
+                <button class="button btn-test" onclick="refreshSnapshot()">📷 Snapshot</button>
+            </div>
+            <img id="snapshotImg" style="width:100%;border-radius:6px;margin-top:8px;display:none;" alt="Snapshot">
         </div>
 
-        <div style="display: flex; flex-direction: column; gap: 12px; align-items: center;">
-            <img src="http://{{LOCAL_IP}}:81/stream" alt="Live MJPEG stream" style="max-width: 100%; border-radius: 10px; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);">
-            <audio id="liveAudio" controls></audio>
-            <div class="button-row button-grid" style="width: 100%; justify-content: center;">
-                <button class="button btn-save" id="startAudio">Start Audio</button>
-                <button class="button danger-btn" id="stopAudio">Stop Audio</button>
-                <a class="button btn-nav" href="/" title="Return to the main dashboard.">Back</a>
+        <!-- Card 2: RTSP Stream + FFmpeg -->
+        <div class="container card setup-card">
+            <h3 class="card-title">🎥 RTSP Stream</h3>
+            <div class="flash-stats" id="rtspStatus">
+                <strong>RTSP URL:</strong> <span id="rtspUrlDisplay" style="font-family:monospace;word-break:break-all;">loading...</span>
+                <button class="copy-btn" onclick="copyEl('rtspUrlDisplay')" title="Copy RTSP URL" style="margin-left:6px;">📋</button>
+            </div>
+
+            <div style="margin-top:10px;">
+                <div style="font-size:0.85em;margin-bottom:4px;"><strong>▶️ Play (video + audio)</strong></div>
+                <div class="cmd-block"><code id="ffCmd1"></code><button class="copy-btn" onclick="copyEl('ffCmd1')">📋</button></div>
+
+                <div style="font-size:0.85em;margin-bottom:4px;margin-top:8px;"><strong>🔊 Audio only</strong></div>
+                <div class="cmd-block"><code id="ffCmd2"></code><button class="copy-btn" onclick="copyEl('ffCmd2')">📋</button></div>
+
+                <div style="font-size:0.85em;margin-bottom:4px;margin-top:8px;"><strong>💾 Record 10s to file</strong></div>
+                <div class="cmd-block"><code id="ffCmd3"></code><button class="copy-btn" onclick="copyEl('ffCmd3')">📋</button></div>
+            </div>
+
+            <div class="flash-stats" style="margin-top:10px;font-size:0.82em;">
+                Replace <code>PASS</code> with the actual password.<br>
+                Use <code>-rtsp_transport udp</code> if UDP transport is enabled.
             </div>
         </div>
+
+        <!-- Card 3: Stream Metrics -->
+        <div class="container card setup-card">
+            <h3 class="card-title">📊 Stream Metrics</h3>
+            <div class="metrics-grid">
+                <div class="metric-row">
+                    <span class="metric-label">RTSP Sessions</span>
+                    <span class="metric-value" id="mRtspSessions">--</span>
+                    <div id="mRtspIps"></div>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">HTTP MJPEG Clients</span>
+                    <span class="metric-value" id="mMjpegClients">--</span>
+                    <div id="mMjpegIps"></div>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">UDP Send Failures</span>
+                    <span class="metric-value" id="mUdpFails">--</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">UDP Backoff</span>
+                    <span class="metric-value" id="mUdpBackoff">--</span>
+                </div>
+            </div>
+            <div style="font-size:0.8em;color:var(--muted-text);margin-bottom:8px;">Auto-refreshes every 5s</div>
+            <div class="button-row">
+                <button class="button btn-test" onclick="pollMetrics()">🔄 Refresh Now</button>
+                <button class="button danger-btn" onclick="resetUdpCounters()">🗑 Reset UDP Counters</button>
+            </div>
+            <div id="metricsMsg" style="font-size:0.85em;margin-top:6px;display:none;"></div>
+        </div>
+
+        <!-- Card 4: Audio Tests -->
+        <div class="container card setup-card">
+            <h3 class="card-title">🔊 Audio Tests</h3>
+            <p style="font-size:0.85em;color:var(--muted-text);margin-top:0;">Test the speaker output and microphone capture.</p>
+
+            <div class="button-row button-grid" style="margin-bottom:8px;">
+                <button class="button btn-test" onclick="testGong()" id="gongBtn">🔔 Test Gong</button>
+                <button class="button btn-test" onclick="testMic()" id="micBtn">🎤 Record &amp; Play</button>
+            </div>
+
+            <div id="gongResult" style="display:none;font-size:0.85em;padding:4px 8px;border-radius:4px;border:1px solid rgba(128,128,128,0.35);margin-bottom:6px;"></div>
+            <div id="micResult" style="display:none;font-size:0.85em;padding:4px 8px;border-radius:4px;border:1px solid rgba(128,128,128,0.35);"></div>
+        </div>
+
+    </div><!-- .dashboard -->
+
+    <div class="button-row button-grid log-actions" style="margin-top:20px;">
+        <button class="button danger-btn" onclick="restartDevice()">🔄 Restart</button>
+        <a class="button btn-info" href="/logs.html?filter=core" target="_blank">🔧 Core Logs</a>
+        <a class="button btn-info" href="/logs.html?filter=camera" target="_blank">📹 Camera Logs</a>
+        <a class="button btn-info" href="/logs.html?filter=rtsp" target="_blank">🎥 RTSP Logs</a>
+        <a class="button btn-info" href="/logs.html?filter=doorbell" target="_blank">☎️ Doorbell Logs</a>
+        <a class="button btn-nav" href="/">Back</a>
     </div>
 
     <script>
+        // --- Dark mode ---
         const darkToggle = document.getElementById("darkModeToggle");
-        const audioEl = document.getElementById("liveAudio");
-        const startAudioBtn = document.getElementById("startAudio");
-        const stopAudioBtn = document.getElementById("stopAudio");
-        const audioUrl = "http://{{LOCAL_IP}}:81/audio.aac";
-
-        function setDarkMode(enabled) {
-            document.body.classList.toggle("dark-mode", enabled);
-            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        function setDarkMode(e) {
+            document.body.classList.toggle("dark-mode", e);
+            localStorage.setItem("darkMode", e ? "enabled" : "disabled");
         }
-
-        const savedDarkMode = localStorage.getItem("darkMode");
-        const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
-        darkToggle.checked = darkModeEnabled;
-        setDarkMode(darkModeEnabled);
+        const saved = localStorage.getItem("darkMode");
+        const dm = saved === null ? true : saved === "enabled";
+        darkToggle.checked = dm;
+        setDarkMode(dm);
         darkToggle.addEventListener("change", () => setDarkMode(darkToggle.checked));
 
-        startAudioBtn.addEventListener("click", () => {
-            audioEl.src = audioUrl;
-            audioEl.play().catch(() => {
-                alert("Audio playback blocked. Click again to enable audio.");
-            });
+        // --- Firmware version ---
+        fetch("/api/status").then(r => r.json()).then(d => {
+            if (d.fw_version) document.getElementById("fwVersionBadge").textContent = d.fw_version;
+            if (d.build_time) document.getElementById("fwBuildBadge").textContent = d.build_time;
+        }).catch(() => {});
+
+        // --- State ---
+        const deviceIP = window.location.hostname;
+        const mjpegStreamUrl = `http://${deviceIP}:81/stream`;
+        let rtspUrl = `rtsp://${deviceIP}:8554/mjpeg/1`;
+
+        // --- Card 1: MJPEG ---
+        document.getElementById("mjpegUrl").textContent = mjpegStreamUrl;
+
+        function startMjpeg() {
+            const img = document.getElementById("mjpegImg");
+            img.src = mjpegStreamUrl + "?t=" + Date.now();
+            img.style.display = "block";
+        }
+
+        function stopMjpeg() {
+            const img = document.getElementById("mjpegImg");
+            img.removeAttribute("src");
+            img.style.display = "none";
+        }
+
+        function refreshSnapshot() {
+            const snap = document.getElementById("snapshotImg");
+            snap.src = `http://${deviceIP}/capture?t=${Date.now()}`;
+            snap.style.display = "block";
+        }
+
+        // Fetch camera status
+        fetch("/cameraStreamInfo").then(r => r.json()).then(d => {
+            const el = document.getElementById("mjpegStatus");
+            const ready = d.camera_ready ? "✅ Ready" : "❌ Not ready";
+            const stream = d.streaming ? "streaming" : "idle";
+            el.innerHTML = `<strong>Camera:</strong> ${ready} &nbsp;|&nbsp; <strong>State:</strong> ${stream} &nbsp;|&nbsp; <strong>Clients:</strong> ${d.clients}`;
+        }).catch(() => {
+            document.getElementById("mjpegStatus").textContent = "Status unavailable";
         });
 
-        stopAudioBtn.addEventListener("click", () => {
-            audioEl.pause();
-            audioEl.removeAttribute("src");
-            audioEl.load();
+        // --- Card 2: RTSP + FFmpeg ---
+        function buildFfmpegCommands(url) {
+            document.getElementById("rtspUrlDisplay").textContent = url;
+            document.getElementById("ffCmd1").textContent =
+                `ffplay -rtsp_transport tcp ${url}`;
+            document.getElementById("ffCmd2").textContent =
+                `ffplay -rtsp_transport tcp -vn ${url}`;
+            document.getElementById("ffCmd3").textContent =
+                `ffmpeg -rtsp_transport tcp -i ${url} -t 10 -c copy capture.mkv`;
+        }
+
+        fetch("/api/features").then(r => r.json()).then(d => {
+            const user = d.rtsp_user || "";
+            const base = `${deviceIP}:8554/mjpeg/1`;
+            rtspUrl = user ? `rtsp://${user}:PASS@${base}` : `rtsp://${base}`;
+            buildFfmpegCommands(rtspUrl);
+        }).catch(() => {
+            buildFfmpegCommands(rtspUrl);
         });
+
+        // --- Card 3: Metrics ---
+        function renderIpBadges(ips) {
+            if (!ips || ips.length === 0) return "";
+            return ips.map(ip => `<span class="ip-badge">${ip}</span>`).join("");
+        }
+
+        function pollMetrics() {
+            fetch("/api/metrics").then(r => r.json()).then(d => {
+                document.getElementById("mRtspSessions").textContent = d.rtsp_sessions ?? "--";
+                document.getElementById("mMjpegClients").textContent = d.http_mjpeg_clients ?? "--";
+                document.getElementById("mUdpFails").textContent = d.rtsp_udp_endpacket_fail ?? "--";
+                const backoff = d.rtsp_udp_backoff_ms || 0;
+                document.getElementById("mUdpBackoff").textContent =
+                    backoff > 0 ? `ON (${backoff}ms remaining)` : "OFF";
+                document.getElementById("mRtspIps").innerHTML = renderIpBadges(d.rtsp_client_ips);
+                document.getElementById("mMjpegIps").innerHTML = renderIpBadges(d.mjpeg_client_ips);
+            }).catch(() => {
+                ["mRtspSessions","mMjpegClients","mUdpFails","mUdpBackoff"]
+                    .forEach(id => { document.getElementById(id).textContent = "--"; });
+            });
+        }
+
+        function resetUdpCounters() {
+            const msg = document.getElementById("metricsMsg");
+            fetch("/api/metrics/reset", { method: "POST" })
+                .then(r => r.json())
+                .then(() => {
+                    msg.textContent = "✅ UDP counters reset.";
+                    msg.style.display = "block";
+                    pollMetrics();
+                    setTimeout(() => { msg.style.display = "none"; }, 3000);
+                })
+                .catch(e => {
+                    msg.textContent = "⚠️ Reset failed: " + e.message;
+                    msg.style.display = "block";
+                });
+        }
+
+        setInterval(pollMetrics, 5000);
+        pollMetrics();
+
+        // --- Card 4: Audio Tests ---
+        function testGong() {
+            const btn = document.getElementById("gongBtn");
+            const result = document.getElementById("gongResult");
+            btn.disabled = true;
+            result.style.display = "none";
+            fetch("/api/audio/gong", { method: "POST" })
+                .then(async r => {
+                    const text = await r.text();
+                    let msg;
+                    try { msg = JSON.parse(text).message || "Gong triggered"; }
+                    catch { msg = text || "Gong triggered"; }
+                    result.textContent = r.ok ? "✅ " + msg : "⚠️ " + msg;
+                    result.style.display = "block";
+                })
+                .catch(e => {
+                    result.textContent = "⚠️ " + e.message;
+                    result.style.display = "block";
+                })
+                .finally(() => { btn.disabled = false; });
+        }
+
+        function testMic() {
+            const btn = document.getElementById("micBtn");
+            const result = document.getElementById("micResult");
+            btn.disabled = true;
+            btn.textContent = "🎤 Recording...";
+            result.style.display = "none";
+            fetch("/api/mic/test", { method: "POST" })
+                .then(r => r.json())
+                .then(d => {
+                    if (d.error) {
+                        result.textContent = "⚠️ " + d.error;
+                    } else {
+                        const noSignal = d.zero_pct >= 99;
+                        result.textContent =
+                            "Source: " + d.source +
+                            " | Peak: " + d.peak_pct + "%" +
+                            " | RMS: " + d.rms +
+                            " | Zeros: " + d.zero_pct + "%" +
+                            " | Sensitivity: " + d.sensitivity + "%" +
+                            (d.played_back ? " | ✅ Played back" : " | ⚠️ Playback failed") +
+                            (noSignal ? " | ⚠️ No mic signal — check wiring" : "");
+                    }
+                    result.style.display = "block";
+                })
+                .catch(e => {
+                    result.textContent = "⚠️ " + e.message;
+                    result.style.display = "block";
+                })
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.textContent = "🎤 Record & Play";
+                });
+        }
+
+        // --- Restart ---
+        function restartDevice() {
+            if (!confirm("Restart the device?")) return;
+            fetch("/restart").catch(() => {});
+        }
+
+        // --- Copy utility (HTTP-safe: execCommand fallback + visual feedback) ---
+        function copyEl(id) {
+            const el = document.getElementById(id);
+            const text = el.textContent.trim();
+            const btn = event ? event.target : null;
+            function flash(ok) {
+                if (!btn) return;
+                const orig = btn.textContent;
+                btn.textContent = ok ? "✅" : "❌";
+                setTimeout(() => { btn.textContent = orig; }, 1500);
+            }
+            function execCopy() {
+                const ta = document.createElement("textarea");
+                ta.value = text;
+                ta.style.cssText = "position:fixed;opacity:0;top:0;left:0;";
+                document.body.appendChild(ta);
+                ta.focus(); ta.select();
+                let ok = false;
+                try { ok = document.execCommand("copy"); } catch(e) {}
+                document.body.removeChild(ta);
+                flash(ok);
+            }
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(() => flash(true)).catch(execCopy);
+            } else {
+                execCopy();
+            }
+        }
     </script>
 </body>
 </html>

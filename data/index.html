@@ -5,6 +5,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="/style.css">
+    <style>
+        .ip-badge {
+            display: inline-block;
+            background: rgba(128,128,128,0.15);
+            border: 1px solid rgba(128,128,128,0.3);
+            border-radius: 4px;
+            padding: 1px 7px;
+            font-family: monospace;
+            font-size: 0.85em;
+            margin: 2px 3px 2px 0;
+        }
+    </style>
 </head>
 <body class="full-width-page">
     <div class="dark-mode-toggle">
@@ -15,8 +27,8 @@
         <span>Dark Mode</span>
     </div>
     <div class="version-info">
-        <div>Version {{FW_VERSION}}</div>
-        <div>Build {{FW_BUILD_TIME}}</div>
+        <div>Version <span id="fwVersionBadge">--</span></div>
+        <div>Build <span id="fwBuildBadge">--</span></div>
     </div>
 
     <div class="header-container">
@@ -42,11 +54,11 @@
                 </div>
                 <div class="info-item">
                     <span class="info-label">Version:</span>
-                    <span class="info-value">{{FW_VERSION}}</span>
+                    <span class="info-value" id="fwVersion">--</span>
                 </div>
                 <div class="info-item">
                     <span class="info-label">Build:</span>
-                    <span class="info-value">{{FW_BUILD_TIME}}</span>
+                    <span class="info-value" id="fwBuild">--</span>
                 </div>
                 <div class="info-item">
                     <span class="info-label">Signal Strength:</span>
@@ -63,10 +75,6 @@
             </div>
             <hr>
             <button class="danger-btn" title="Clear saved WiFi credentials and reboot into AP mode." onclick="forgetWifi()">Forget WiFi</button>
-            <div class="button-row button-grid" style="margin-top: 12px;">
-                <a class="button btn-nav" href="/setup" title="Configure features, streams, and Scrypted options.">⚙️ Feature Setup</a>
-                <button class="button danger-btn" title="Reboot the ESP32 device." onclick="restartDevice()">🔄 Restart</button>
-            </div>
         </div>
 
         <!-- Camera Settings Card -->
@@ -78,14 +86,21 @@
             <div class="flash-stats" id="streamStatus">
                 <strong>Stream:</strong> loading...
             </div>
-            
+
+            <!-- Live camera thumbnail (shown when a core streaming feature is active) -->
+            <div id="cameraThumb" style="display:none; margin-top:10px; position:relative;">
+                <img id="captureImg" src="/capture?t=0"
+                     style="width:100%; border-radius:6px; cursor:pointer; display:block;"
+                     title="Click to refresh">
+                <div class="thumb-refresh-hint">🔄 Click to refresh</div>
+            </div>
+
             <hr>
             {{STREAM_INFO}}
             <hr>
             <div class="button-row button-grid">
                 <a class="button btn-nav" href="/capture" target="_blank" title="Open a single JPEG snapshot.">📸 Snapshot</a>
-                <a class="button btn-nav" id="liveStreamLink" href="http://{{LOCAL_IP}}:81/stream" target="_blank" title="Open the MJPEG live stream.">🎥 Live Stream</a>
-                <a class="button btn-nav" id="liveAudioLink" href="/live" target="_blank" title="Open MJPEG with the companion audio stream.">🎧 Live + Audio</a>
+                <a class="button btn-nav" id="liveStreamLink" href="/live" title="Open the live stream with audio.">🎥 Live Stream</a>
                 <a class="button btn-nav" href="/guide" title="Open setup instructions and stream URLs.">📘 Setup Guide</a>
             </div>
         </div>
@@ -100,7 +115,6 @@
             <hr>
             <div class="button-row button-grid">
                 <button class="button btn-test" title="Trigger a SIP ring test." onclick="testRingSip()">🔔 Test Ring (SIP)</button>
-                <a class="button btn-nav" href="/sip" title="Configure SIP credentials and ring target.">⚙️ Setup</a>
             </div>
             <a class="button btn-info" href="/sipDebug" target="_blank" title="Open SIP debug JSON.">🐛 Debug JSON</a>
         </div>
@@ -113,9 +127,17 @@
                     <span class="info-label" title="Active RTSP PLAY sessions (streaming).">RTSP Sessions:</span>
                     <span class="info-value" id="metricRtspSessions">--</span>
                 </div>
+                <div class="info-item" id="rtspIpRow" style="display:none;grid-column:1/-1;">
+                    <span class="info-label">RTSP client IPs:</span>
+                    <span class="info-value" id="metricRtspClientIps"></span>
+                </div>
                 <div class="info-item">
                     <span class="info-label" title="Active MJPEG HTTP stream clients.">HTTP MJPEG Clients:</span>
                     <span class="info-value" id="metricHttpClients">--</span>
+                </div>
+                <div class="info-item" id="mjpegIpRow" style="display:none;grid-column:1/-1;">
+                    <span class="info-label">MJPEG client IPs:</span>
+                    <span class="info-value" id="metricMjpegClientIps"></span>
                 </div>
                 <div class="info-item">
                     <span class="info-label" title="Active HTTP audio stream clients (AAC).">HTTP Audio Clients:</span>
@@ -143,13 +165,16 @@
                 </div>
             </div>
             <hr>
-            <div class="button-row button-grid">
-                <a class="button btn-info" href="/logs.html" title="View all system logs.">All Logs</a>
-                <a class="button btn-info" href="/logs.html?filter=core" title="View core system logs (WiFi, NVS, web server).">Core Logs</a>
-                <a class="button btn-info" href="/logs.html?filter=camera" title="View camera/streaming logs.">Camera Logs</a>
-                <a class="button btn-info" href="/logs.html?filter=doorbell" title="View doorbell/SIP logs.">Doorbell Logs</a>
-            </div>
         </div>
+    </div>
+
+    <div class="button-row button-grid log-actions" style="margin-top:20px;">
+        <a class="button btn-nav" href="/setup" title="Configure features, streams, and options.">⚙️ Feature Setup</a>
+        <button class="button danger-btn" title="Reboot the ESP32 device." onclick="restartDevice()">🔄 Restart</button>
+        <a class="button btn-info" href="/logs.html?filter=core" target="_blank" title="Core system logs.">🔧 Core Logs</a>
+        <a class="button btn-info" href="/logs.html?filter=camera" target="_blank" title="Camera/streaming logs.">📹 Camera Logs</a>
+        <a class="button btn-info" href="/logs.html?filter=rtsp" target="_blank" title="RTSP logs.">🎥 RTSP Logs</a>
+        <a class="button btn-info" href="/logs.html?filter=doorbell" target="_blank" title="Doorbell/SIP logs.">☎️ Doorbell Logs</a>
     </div>
 
     <script>
@@ -171,14 +196,18 @@
         const metricPsramFreeEl = document.getElementById("metricPsramFree");
         const wifiConnectTime = Date.now();
         const liveStreamLink = document.getElementById("liveStreamLink");
-        const liveAudioLink = document.getElementById("liveAudioLink");
+        const captureImg = document.getElementById("captureImg");
+        const cameraThumb = document.getElementById("cameraThumb");
+
+        // Shared state for cross-function status display
+        let lastRtspSessions = 0;
+        let lastHttpAudioClients = 0;
 
         function setDarkMode(enabled) {
             document.body.classList.toggle("dark-mode", enabled);
             localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
         }
 
-        // Initialize dark mode from localStorage (default: enabled)
         const savedDarkMode = localStorage.getItem("darkMode");
         const darkModeEnabled = savedDarkMode === null ? true : savedDarkMode === "enabled";
         darkToggle.checked = darkModeEnabled;
@@ -228,84 +257,68 @@
             }
         }
 
+        function buildStreamStatus(httpClients, streaming) {
+            const rtspStatus = lastRtspSessions > 0
+                ? `RTSP: ${lastRtspSessions} session(s)`
+                : "RTSP: idle";
+            if (!streaming) {
+                return `<strong>Stream:</strong> HTTP: disabled<br>${rtspStatus}`;
+            }
+            const httpStatus = httpClients > 0
+                ? `HTTP: ${httpClients} client(s)`
+                : "HTTP: no clients";
+            const audioStatus = lastHttpAudioClients > 0
+                ? `HTTP Audio: ${lastHttpAudioClients} client(s)`
+                : "HTTP Audio: idle";
+            return `<strong>Stream:</strong> ${httpStatus}<br>${audioStatus}<br>${rtspStatus}`;
+        }
+
         function fetchStreamInfo() {
             fetch("/cameraStreamInfo")
                 .then(r => r.json())
                 .then(data => {
-                    const rtspSessions = data.rtsp_sessions || 0;
+                    const streaming = data.streaming || data.running || false;
                     const httpClients = data.clients || 0;
-                    const httpAudioClients = data.audio_clients || 0;
-                    const rtspUdpFails = data.rtsp_udp_endpacket_fail || 0;
-                    const rtspUdpBackoffMs = data.rtsp_udp_backoff_ms || 0;
-                    metricRtspSessionsEl.textContent = rtspSessions;
-                    metricHttpClientsEl.textContent = httpClients;
-                    metricHttpAudioClientsEl.textContent = httpAudioClients;
-                    metricRtspUdpFailsEl.textContent = rtspUdpFails;
-                    metricRtspUdpBackoffActiveEl.textContent = rtspUdpBackoffMs > 0 ? "ON" : "OFF";
-                    metricRtspUdpBackoffMsEl.textContent = `${rtspUdpBackoffMs}ms`;
-
-                    const rtspStatus = rtspSessions > 0
-                        ? `RTSP: ${rtspSessions} session(s)`
-                        : "RTSP: idle";
-
-                    if (!data.running) {
-                        streamStatusEl.innerHTML = `<strong>Stream:</strong> HTTP: disabled<br>${rtspStatus}`;
-                        setLinkEnabled(liveStreamLink, false);
-                        setLinkEnabled(liveAudioLink, false);
-                        return;
-                    }
-                    setLinkEnabled(liveStreamLink, true);
-                    setLinkEnabled(liveAudioLink, true);
-                    
-                    // Build HTTP stream status
-                    let httpStatus = "";
-                    if (!data.active) {
-                        httpStatus = "HTTP: no clients";
-                    } else {
-                        const ip = data.client_ip || "unknown";
-                        const clients = data.clients || 0;
-                        const connectedFor = formatMs(data.connected_ms);
-                        const lastFrame = formatMs(data.last_frame_age_ms);
-                        const list = Array.isArray(data.clients_list) ? data.clients_list.join(", ") : "";
-                        const listText = list.length ? ` | ${list}` : "";
-                        httpStatus = `HTTP: ${clients} client(s)${listText} | connected ${connectedFor} | last frame ${lastFrame} ago`;
-                    }
-                    
-                    const audioStatus = httpAudioClients > 0
-                        ? `HTTP Audio: ${httpAudioClients} client(s)`
-                        : "HTTP Audio: idle";
-                    streamStatusEl.innerHTML = `<strong>Stream:</strong> ${httpStatus}<br>${audioStatus}<br>${rtspStatus}`;
+                    streamStatusEl.innerHTML = buildStreamStatus(httpClients, streaming);
+                    setLinkEnabled(liveStreamLink, streaming);
                 })
                 .catch(() => {
                     streamStatusEl.innerHTML = "<strong>Stream:</strong> unavailable";
                     setLinkEnabled(liveStreamLink, false);
-                    setLinkEnabled(liveAudioLink, false);
-                    metricRtspSessionsEl.textContent = "--";
-                    metricHttpClientsEl.textContent = "--";
-                    metricHttpAudioClientsEl.textContent = "--";
-                    metricRtspUdpFailsEl.textContent = "--";
-                    metricRtspUdpBackoffActiveEl.textContent = "--";
-                    metricRtspUdpBackoffMsEl.textContent = "--";
                 });
         }
 
-        function resetRtspUdpFails() {
-            fetch("/resetRtspUdpFails", { method: "POST" })
-                .then(r => r.text())
-                .then(() => {
-                    metricRtspUdpFailsEl.textContent = "0";
-                })
-                .catch(() => alert("Failed to reset UDP fail count"));
+        function renderIpBadges(ips) {
+            if (!ips || ips.length === 0) return "";
+            return ips.map(ip => `<span class="ip-badge">${ip}</span>`).join("");
         }
 
-        function resetRtspUdpBackoff() {
-            fetch("/resetRtspUdpBackoff", { method: "POST" })
-                .then(r => r.text())
-                .then(() => {
-                    metricRtspUdpBackoffActiveEl.textContent = "OFF";
-                    metricRtspUdpBackoffMsEl.textContent = "0ms";
+        function fetchMetrics() {
+            fetch("/api/metrics")
+                .then(r => r.json())
+                .then(data => {
+                    lastRtspSessions = data.rtsp_sessions || 0;
+                    lastHttpAudioClients = data.http_audio_clients || 0;
+                    const udpBackoffMs = data.rtsp_udp_backoff_ms || 0;
+                    metricRtspSessionsEl.textContent = lastRtspSessions;
+                    metricHttpClientsEl.textContent = data.http_mjpeg_clients || 0;
+                    metricHttpAudioClientsEl.textContent = lastHttpAudioClients;
+                    metricRtspUdpFailsEl.textContent = data.rtsp_udp_endpacket_fail || 0;
+                    metricRtspUdpBackoffActiveEl.textContent = data.rtsp_udp_backoff_active ? "ON" : "OFF";
+                    metricRtspUdpBackoffMsEl.textContent = `${udpBackoffMs}ms`;
+
+                    const rtspIps = data.rtsp_client_ips || [];
+                    const mjpegIps = data.mjpeg_client_ips || [];
+                    document.getElementById("metricRtspClientIps").innerHTML = renderIpBadges(rtspIps);
+                    document.getElementById("metricMjpegClientIps").innerHTML = renderIpBadges(mjpegIps);
+                    document.getElementById("rtspIpRow").style.display = rtspIps.length ? "" : "none";
+                    document.getElementById("mjpegIpRow").style.display = mjpegIps.length ? "" : "none";
                 })
-                .catch(() => alert("Failed to clear UDP backoff state"));
+                .catch(() => {
+                    [metricRtspSessionsEl, metricHttpClientsEl, metricHttpAudioClientsEl,
+                     metricRtspUdpFailsEl, metricRtspUdpBackoffActiveEl, metricRtspUdpBackoffMsEl]
+                        .forEach(el => { if (el) el.textContent = "--"; });
+                });
         }
 
         function formatUptime(seconds) {
@@ -313,16 +326,10 @@
             const hours = Math.floor((seconds % 86400) / 3600);
             const minutes = Math.floor((seconds % 3600) / 60);
             const secs = seconds % 60;
-            
-            if (days > 0) {
-                return `${days}d ${hours}h ${minutes}m`;
-            } else if (hours > 0) {
-                return `${hours}h ${minutes}m ${secs}s`;
-            } else if (minutes > 0) {
-                return `${minutes}m ${secs}s`;
-            } else {
-                return `${secs}s`;
-            }
+            if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+            if (hours > 0) return `${hours}h ${minutes}m ${secs}s`;
+            if (minutes > 0) return `${minutes}m ${secs}s`;
+            return `${secs}s`;
         }
 
         function formatDateTime(timestamp) {
@@ -349,15 +356,20 @@
             fetch("/api/status")
                 .then(r => r.json())
                 .then(data => {
-                    // Update system info fields
                     ipAddressEl.textContent = data.ip || "--";
                     rssiEl.textContent = data.rssi || "--";
                     uptimeEl.textContent = formatUptime(data.uptime || 0);
                     wifiConnectedEl.textContent = formatDateTime(wifiConnectTime);
-
-                    // Update PSRAM metrics
                     metricPsramTotalEl.textContent = formatBytes(data.psram_total);
                     metricPsramFreeEl.textContent = formatBytes(data.psram_free);
+                    if (data.fw_version) {
+                        document.getElementById('fwVersion').textContent = data.fw_version;
+                        document.getElementById('fwVersionBadge').textContent = data.fw_version;
+                    }
+                    if (data.fw_build_time) {
+                        document.getElementById('fwBuild').textContent = data.fw_build_time;
+                        document.getElementById('fwBuildBadge').textContent = data.fw_build_time;
+                    }
                 })
                 .catch(() => {
                     ipAddressEl.textContent = "--";
@@ -369,39 +381,36 @@
                 });
         }
 
-        function forgetWifi() {
-            if (!confirm("Are you sure you want to clear WiFi credentials? The device will reboot into AP mode.")) {
-                return;
-            }
+        function fetchFeatures() {
+            fetch("/api/features")
+                .then(r => r.json())
+                .then(data => {
+                    const showThumb = data.sip_enabled || data.http_cam_enabled || data.rtsp_enabled;
+                    cameraThumb.style.display = showThumb ? "block" : "none";
+                })
+                .catch(() => {});
+        }
 
+        function forgetWifi() {
+            if (!confirm("Are you sure you want to clear WiFi credentials? The device will reboot into AP mode.")) return;
             fetch("/api/wifi", { method: "DELETE" })
                 .then(r => {
-                    if (!r.ok) {
-                        throw new Error("HTTP " + r.status);
-                    }
+                    if (!r.ok) throw new Error("HTTP " + r.status);
                     return r.json();
                 })
                 .then(data => {
                     if (data.success) {
                         alert("WiFi credentials cleared. Device will restart now.");
-                        setTimeout(() => {
-                            location.href = "/restart";
-                        }, 1000);
+                        setTimeout(() => { location.href = "/restart"; }, 1000);
                     } else {
                         alert("Failed to clear WiFi credentials: " + (data.message || "Unknown error"));
                     }
                 })
-                .catch((err) => {
-                    alert("Failed to clear WiFi credentials: " + err.message);
-                    console.error("Forget WiFi error:", err);
-                });
+                .catch(err => { alert("Failed to clear WiFi credentials: " + err.message); });
         }
 
         function restartDevice() {
-            if (!confirm("Are you sure you want to restart the device?")) {
-                return;
-            }
-
+            if (!confirm("Are you sure you want to restart the device?")) return;
             alert("Device restarting...");
             location.href = "/restart";
         }
@@ -448,13 +457,26 @@
                 });
         }
 
+        // Camera thumbnail click-to-refresh
+        if (captureImg) {
+            captureImg.addEventListener("click", () => {
+                captureImg.src = "/capture?t=" + Date.now();
+            });
+            captureImg.addEventListener("error", () => {
+                cameraThumb.style.display = "none";
+            });
+        }
+
         fetchStatus();
         fetchStreamInfo();
+        fetchMetrics();
         fetchDeviceStatus();
+        fetchFeatures();
         fetchSipStatus();
         setInterval(fetchDeviceStatus, 5000);
         setInterval(fetchSipStatus, 10000);
         setInterval(fetchStreamInfo, 3000);
+        setInterval(fetchMetrics, 5000);
     </script>
 </body>
 </html>
