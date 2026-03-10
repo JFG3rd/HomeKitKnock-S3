@@ -17,6 +17,7 @@
 #include "esp_chip_info.h"
 #include "esp_heap_caps.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "embedded_web_assets.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -27,6 +28,10 @@
 #include <time.h>
 #include <math.h>
 #include "relay_controller.h"
+#include "rtsp_server.h"
+#include "version_info.h"
+#include "mbedtls/sha256.h"
+#include "mbedtls/base64.h"
 
 #ifndef MIN
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -40,6 +45,296 @@ static const char *TAG = "web_server";
 #define MAX_TIMEZONE_LEN     64
 
 #define NVS_RELAY_NAMESPACE  "relay"
+#define NVS_RTSP_NAMESPACE   "rtsp"
+
+// ---------------------------------------------------------------------------
+// OTA authentication & window state
+// ---------------------------------------------------------------------------
+#define NVS_OTA_NAMESPACE    "ota"
+#define OTA_WINDOW_US        (5LL * 60 * 1000000LL)   // 5 minutes in microseconds
+
+static bool    s_ota_enabled    = false;
+static int64_t s_ota_enable_us  = 0;
+static char    s_ota_user[64]   = {0};
+static char    s_ota_hash[65]   = {0};  // 64 hex chars of SHA-256 + NUL
+
+/** Hash a C-string password to lowercase hex SHA-256 (64 chars + NUL in out). */
+static void sha256_hex(const char *input, char out[65]) {
+    uint8_t digest[32];
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0);
+    mbedtls_sha256_update(&ctx, (const uint8_t *)input, strlen(input));
+    mbedtls_sha256_finish(&ctx, digest);
+    mbedtls_sha256_free(&ctx);
+    for (int i = 0; i < 32; i++) {
+        snprintf(out + i * 2, 3, "%02x", digest[i]);
+    }
+}
+
+/** Load OTA credentials from NVS into module-level state. */
+static void ota_load_credentials(void) {
+    nvs_handle_t h;
+    if (nvs_open(NVS_OTA_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return;
+    size_t len = sizeof(s_ota_user);
+    nvs_get_str(h, "username", s_ota_user, &len);
+    len = sizeof(s_ota_hash);
+    nvs_get_str(h, "pass_hash", s_ota_hash, &len);
+    nvs_close(h);
+}
+
+/** Return true if the OTA upload window is currently open; expires window if timed out. */
+static bool ota_is_window_open(void) {
+    if (!s_ota_enabled) return false;
+    if ((esp_timer_get_time() - s_ota_enable_us) >= OTA_WINDOW_US) {
+        s_ota_enabled = false;
+        return false;
+    }
+    return true;
+}
+
+/** Return remaining OTA window in ms (0 if closed). */
+static int32_t ota_remaining_ms(void) {
+    if (!ota_is_window_open()) return 0;
+    int64_t elapsed_us = esp_timer_get_time() - s_ota_enable_us;
+    int64_t rem_us = OTA_WINDOW_US - elapsed_us;
+    return (int32_t)(rem_us / 1000);
+}
+
+/**
+ * Validate HTTP Basic auth against stored OTA credentials.
+ * Returns true if auth is present and correct.
+ */
+static bool ota_check_basic_auth(httpd_req_t *req) {
+    char auth_hdr[256] = {0};
+    if (httpd_req_get_hdr_value_str(req, "Authorization", auth_hdr, sizeof(auth_hdr)) != ESP_OK) {
+        return false;
+    }
+    // Must start with "Basic "
+    if (strncmp(auth_hdr, "Basic ", 6) != 0) return false;
+    const char *b64 = auth_hdr + 6;
+
+    // Decode base64
+    uint8_t decoded[128] = {0};
+    size_t decoded_len = 0;
+    if (mbedtls_base64_decode(decoded, sizeof(decoded) - 1, &decoded_len,
+                              (const uint8_t *)b64, strlen(b64)) != 0) {
+        return false;
+    }
+    decoded[decoded_len] = '\0';
+
+    // Split at first ':'
+    char *colon = strchr((char *)decoded, ':');
+    if (!colon) return false;
+    *colon = '\0';
+    const char *req_user = (const char *)decoded;
+    const char *req_pass = colon + 1;
+
+    // Compare username (case-sensitive)
+    if (strcmp(req_user, s_ota_user) != 0) return false;
+
+    // Compare SHA-256(password) with stored hash
+    char req_hash[65];
+    sha256_hex(req_pass, req_hash);
+    return strcmp(req_hash, s_ota_hash) == 0;
+}
+
+// ---------------------------------------------------------------------------
+// OTA HTTP handlers
+// ---------------------------------------------------------------------------
+
+/** GET /ota/status — returns OTA configured/enabled state.
+ *  Requires Basic auth if credentials are configured; returns 401 otherwise.
+ *  If not configured, returns {"configured":false,...} without requiring auth.
+ */
+static esp_err_t ota_status_handler(httpd_req_t *req) {
+    bool configured = (s_ota_user[0] != '\0' && s_ota_hash[0] != '\0');
+    if (configured && !ota_check_basic_auth(req)) {
+        httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"OTA\"");
+        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Authentication required");
+        return ESP_OK;
+    }
+    bool enabled = ota_is_window_open();
+    int32_t rem  = ota_remaining_ms();
+    char resp[256];
+    if (configured) {
+        snprintf(resp, sizeof(resp),
+                 "{\"configured\":true,\"enabled\":%s,\"remaining_ms\":%ld,\"username\":\"%s\"}",
+                 enabled ? "true" : "false", (long)rem, s_ota_user);
+    } else {
+        snprintf(resp, sizeof(resp),
+                 "{\"configured\":false,\"enabled\":false,\"remaining_ms\":0}");
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, resp, strlen(resp));
+    return ESP_OK;
+}
+
+/** POST /ota/config — set/update OTA credentials.
+ *  Body JSON: {"username":"...","password":"..."}
+ *  If already configured: requires valid Basic auth.
+ *  If not configured: accepts without auth (initial setup).
+ */
+static esp_err_t ota_config_handler(httpd_req_t *req) {
+    bool configured = (s_ota_user[0] != '\0' && s_ota_hash[0] != '\0');
+    if (configured && !ota_check_basic_auth(req)) {
+        httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"OTA\"");
+        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Authentication required");
+        return ESP_OK;
+    }
+
+    // Read body
+    char body[512] = {0};
+    int total = 0, remaining = req->content_len;
+    while (remaining > 0) {
+        int ret = httpd_req_recv(req, body + total, MIN(remaining, (int)(sizeof(body) - 1 - total)));
+        if (ret <= 0) break;
+        total += ret;
+        remaining -= ret;
+    }
+    body[total] = '\0';
+
+    // Parse "username" and "password" from JSON (minimal)
+    char new_user[64] = {0}, new_pass[128] = {0};
+    // username
+    char *p = strstr(body, "\"username\"");
+    if (p) {
+        p = strchr(p + 10, '"'); if (p) p++;
+        if (p) { int i = 0; while (*p && *p != '"' && i < 63) new_user[i++] = *p++; new_user[i] = '\0'; }
+    }
+    // password
+    p = strstr(body, "\"password\"");
+    if (p) {
+        p = strchr(p + 10, '"'); if (p) p++;
+        if (p) { int i = 0; while (*p && *p != '"' && i < 127) new_pass[i++] = *p++; new_pass[i] = '\0'; }
+    }
+
+    if (new_user[0] == '\0' || new_pass[0] == '\0') {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "username and password required");
+        return ESP_OK;
+    }
+
+    // Compute SHA-256 of new password
+    char new_hash[65];
+    sha256_hex(new_pass, new_hash);
+
+    // Save to NVS
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_OTA_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "NVS open failed");
+        return ESP_OK;
+    }
+    nvs_set_str(h, "username", new_user);
+    nvs_set_str(h, "pass_hash", new_hash);
+    nvs_commit(h);
+    nvs_close(h);
+
+    // Update in-memory state
+    strncpy(s_ota_user, new_user, sizeof(s_ota_user) - 1);
+    strncpy(s_ota_hash, new_hash, sizeof(s_ota_hash) - 1);
+
+    ESP_LOGI(TAG, "OTA credentials updated for user: %s", new_user);
+    const char *resp = "{\"success\":true,\"message\":\"OTA credentials saved\"}";
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, resp, strlen(resp));
+    return ESP_OK;
+}
+
+/** POST /ota/enable — open the 5-minute OTA upload window.
+ *  Requires valid Basic auth and credentials to be configured.
+ */
+static esp_err_t ota_enable_handler(httpd_req_t *req) {
+    bool configured = (s_ota_user[0] != '\0' && s_ota_hash[0] != '\0');
+    if (!configured) {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "OTA credentials not configured");
+        return ESP_OK;
+    }
+    if (!ota_check_basic_auth(req)) {
+        httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"OTA\"");
+        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Authentication required");
+        return ESP_OK;
+    }
+    s_ota_enabled   = true;
+    s_ota_enable_us = esp_timer_get_time();
+    ESP_LOGI(TAG, "OTA upload window opened (5 min)");
+    const char *resp = "{\"enabled\":true,\"remaining_ms\":300000}";
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, resp, strlen(resp));
+    return ESP_OK;
+}
+
+/** POST /ota/update — upload and flash firmware binary.
+ *  Requires OTA window to be open (enabled via /ota/enable).
+ */
+static esp_err_t ota_update_handler(httpd_req_t *req) {
+    if (!ota_is_window_open()) {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "OTA not enabled — enable it first in Setup");
+        return ESP_OK;
+    }
+
+    esp_ota_handle_t ota_handle;
+    const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
+    if (update_partition == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No OTA partition available");
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "OTA: writing to %s at 0x%lx", update_partition->label, update_partition->address);
+
+    esp_err_t err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "OTA begin failed: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA begin failed");
+        return err;
+    }
+
+    char buf[1024];
+    int remaining = req->content_len;
+    size_t total_written = 0;
+    while (remaining > 0) {
+        int received = httpd_req_recv(req, buf, MIN(remaining, (int)sizeof(buf)));
+        if (received <= 0) {
+            if (received == HTTPD_SOCK_ERR_TIMEOUT) continue;
+            esp_ota_abort(ota_handle);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Upload failed");
+            return ESP_FAIL;
+        }
+        err = esp_ota_write(ota_handle, buf, received);
+        if (err != ESP_OK) {
+            esp_ota_abort(ota_handle);
+            ESP_LOGE(TAG, "OTA write failed: %s", esp_err_to_name(err));
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA write failed");
+            return err;
+        }
+        remaining -= received;
+        total_written += received;
+        if (total_written % (100 * 1024) == 0)
+            ESP_LOGI(TAG, "OTA progress: %zu bytes", total_written);
+    }
+    ESP_LOGI(TAG, "OTA write complete: %zu bytes", total_written);
+
+    err = esp_ota_end(ota_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "OTA end/validate failed: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OTA validation failed");
+        return err;
+    }
+    err = esp_ota_set_boot_partition(update_partition);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Set boot partition failed: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Set boot partition failed");
+        return err;
+    }
+
+    s_ota_enabled = false;  // close window after successful flash
+    ESP_LOGI(TAG, "✓ OTA update successful! Rebooting...");
+    const char *resp = "{\"success\":true,\"message\":\"Update successful, rebooting...\"}";
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, resp, strlen(resp));
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    esp_restart();
+    return ESP_OK;
+}
 
 static void load_timezone(char *out, size_t out_size) {
     if (!out || out_size == 0) {
@@ -450,7 +745,7 @@ static esp_err_t wifi_scan_results_handler(httpd_req_t *req) {
  * GET /api/status
  */
 static esp_err_t api_status_handler(httpd_req_t *req) {
-    char response[768];
+    char response[1024];
     char ip[16] = "Not connected";
     char gateway[16] = "";
 
@@ -502,7 +797,9 @@ static esp_err_t api_status_handler(httpd_req_t *req) {
              "\"rssi\":%d,"
              "\"chip_model\":\"%s\","
              "\"chip_cores\":%d,"
-             "\"chip_revision\":%d"
+             "\"chip_revision\":%d,"
+             "\"fw_version\":\"%s\","
+             "\"fw_build_time\":\"%s\""
              "}",
              wifi_manager_is_connected() ? "true" : "false",
              ip,
@@ -516,7 +813,9 @@ static esp_err_t api_status_handler(httpd_req_t *req) {
              rssi,
              "ESP32-S3",
              chip_info.cores,
-             chip_info.revision);
+             chip_info.revision,
+             FW_VERSION,
+             FW_BUILD_TIME);
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, response, strlen(response));
@@ -672,7 +971,7 @@ static esp_err_t api_mic_test_handler(httpd_req_t *req) {
 
 /**
  * Handler for logs API
- * GET /api/logs?filter=all|core|camera|doorbell
+ * GET /api/logs?filter=all|core|camera|doorbell|rtsp
  * Returns JSON array of log entries
  */
 static esp_err_t api_logs_handler(httpd_req_t *req) {
@@ -689,6 +988,8 @@ static esp_err_t api_logs_handler(httpd_req_t *req) {
                 filter = LOG_FILTER_CAMERA;
             } else if (strcmp(param, "doorbell") == 0) {
                 filter = LOG_FILTER_DOORBELL;
+            } else if (strcmp(param, "rtsp") == 0) {
+                filter = LOG_FILTER_RTSP;
             }
         }
     }
@@ -737,15 +1038,21 @@ static esp_err_t api_sip_get_handler(httpd_req_t *req) {
     sip_config_load(&config);
     sip_get_status(&status);
 
+    uint32_t gong_ms = relay_controller_get_gong_ms();
+    uint32_t door_ms = relay_controller_get_door_ms();
+
     char response[512];
     snprintf(response, sizeof(response),
         "{\"user\":\"%s\",\"displayname\":\"%s\",\"target\":\"%s\","
-        "\"registered\":%s,\"last_status\":%d}",
+        "\"registered\":%s,\"last_status\":%d,"
+        "\"gong_relay_ms\":%lu,\"door_opener_ms\":%lu}",
         config.sip_user,
         config.sip_displayname,
         config.sip_target,
         status.registered ? "true" : "false",
-        status.last_status_code);
+        status.last_status_code,
+        (unsigned long)gong_ms,
+        (unsigned long)door_ms);
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, response, strlen(response));
@@ -824,12 +1131,13 @@ static bool extract_json_int(const char *json, const char *key, int *out) {
 
 // GET /api/features - Get feature toggle states
 static esp_err_t api_features_get_handler(httpd_req_t *req) {
-    char response[720];
+    char response[900];
     char timezone[MAX_TIMEZONE_LEN];
 
     bool sip_enabled = sip_is_enabled();
     bool http_cam_enabled = camera_is_enabled();
     bool rtsp_enabled = camera_is_rtsp_enabled();
+    bool rtsp_udp_enabled = camera_is_rtsp_udp_enabled();
     bool audio_out_enabled = camera_is_audio_out_enabled();
     bool audio_out_muted = camera_is_audio_out_muted();
     bool hardware_diag_mode = camera_is_hardware_diag_enabled();
@@ -839,9 +1147,19 @@ static esp_err_t api_features_get_handler(httpd_req_t *req) {
     uint32_t gong_ms = relay_controller_get_gong_ms();
     uint32_t door_ms = relay_controller_get_door_ms();
 
+    // RTSP auth username (password not returned for security)
+    char rtsp_user[32] = {0};
+    nvs_handle_t rtsp_h;
+    if (nvs_manager_open(NVS_RTSP_NAMESPACE, NVS_READONLY, &rtsp_h) == ESP_OK) {
+        size_t len = sizeof(rtsp_user);
+        nvs_get_str(rtsp_h, "user", rtsp_user, &len);
+        nvs_close(rtsp_h);
+    }
+
     snprintf(response, sizeof(response),
              "{\"timezone\":\"%s\",\"sip_enabled\":%s,"
              "\"http_cam_enabled\":%s,\"rtsp_enabled\":%s,"
+             "\"rtsp_udp_enabled\":%s,\"rtsp_user\":\"%s\","
              "\"audio_out_enabled\":%s,\"audio_out_muted\":%s,"
              "\"hardware_diag_mode\":%s,"
              "\"gong_relay_ms\":%lu,\"door_opener_ms\":%lu}",
@@ -849,6 +1167,8 @@ static esp_err_t api_features_get_handler(httpd_req_t *req) {
              sip_enabled ? "true" : "false",
              http_cam_enabled ? "true" : "false",
              rtsp_enabled ? "true" : "false",
+             rtsp_udp_enabled ? "true" : "false",
+             rtsp_user,
              audio_out_enabled ? "true" : "false",
              audio_out_muted ? "true" : "false",
              hardware_diag_mode ? "true" : "false",
@@ -896,6 +1216,36 @@ static esp_err_t save_features_handler(httpd_req_t *req) {
     }
     if (extract_json_bool(content, "rtsp_enabled", &bval)) {
         camera_set_rtsp_enabled(bval);
+    }
+    if (extract_json_bool(content, "rtsp_udp_enabled", &bval)) {
+        camera_set_rtsp_udp_enabled(bval);
+        rtsp_server_set_allow_udp(bval);
+    }
+    // RTSP credentials — save to NVS and apply live
+    {
+        char rtsp_user[32] = {0};
+        char rtsp_pass[64] = {0};
+        bool got_user = extract_json_string(content, "rtsp_user", rtsp_user, sizeof(rtsp_user));
+        bool got_pass = extract_json_string(content, "rtsp_pass", rtsp_pass, sizeof(rtsp_pass));
+        if (got_user || got_pass) {
+            nvs_handle_t rtsp_h;
+            if (nvs_manager_open(NVS_RTSP_NAMESPACE, NVS_READWRITE, &rtsp_h) == ESP_OK) {
+                if (got_user) nvs_set_str(rtsp_h, "user", rtsp_user);
+                if (got_pass) nvs_set_str(rtsp_h, "pass", rtsp_pass);
+                nvs_commit(rtsp_h);
+                nvs_close(rtsp_h);
+            }
+            // Apply live (read back full credentials for consistent state)
+            char user_full[32] = {0}, pass_full[64] = {0};
+            nvs_handle_t rh;
+            if (nvs_manager_open(NVS_RTSP_NAMESPACE, NVS_READONLY, &rh) == ESP_OK) {
+                size_t ul = sizeof(user_full), pl = sizeof(pass_full);
+                nvs_get_str(rh, "user", user_full, &ul);
+                nvs_get_str(rh, "pass", pass_full, &pl);
+                nvs_close(rh);
+            }
+            rtsp_server_set_credentials(user_full, pass_full);
+        }
     }
     if (extract_json_bool(content, "audio_out_enabled", &bval)) {
         camera_set_audio_out_enabled(bval);
@@ -971,7 +1321,7 @@ static esp_err_t save_features_handler(httpd_req_t *req) {
 
 // POST /api/sip - Save SIP configuration
 static esp_err_t api_sip_post_handler(httpd_req_t *req) {
-    char content[256];
+    char content[512];
     int ret;
     sip_config_t config;
 
@@ -996,6 +1346,27 @@ static esp_err_t api_sip_post_handler(httpd_req_t *req) {
     // Set defaults if not provided
     if (config.sip_displayname[0] == '\0') {
         strcpy(config.sip_displayname, "Doorbell");
+    }
+
+    // Relay pulse durations (optional, saved alongside SIP config)
+    int ival;
+    if (extract_json_int(content, "gong_relay_ms", &ival) && ival > 0) {
+        relay_controller_set_gong_ms((uint32_t)ival);
+        nvs_handle_t relay_h;
+        if (nvs_manager_open(NVS_RELAY_NAMESPACE, NVS_READWRITE, &relay_h) == ESP_OK) {
+            nvs_set_u32(relay_h, "gong_ms", (uint32_t)ival);
+            nvs_commit(relay_h);
+            nvs_close(relay_h);
+        }
+    }
+    if (extract_json_int(content, "door_opener_ms", &ival) && ival > 0) {
+        relay_controller_set_door_ms((uint32_t)ival);
+        nvs_handle_t relay_h;
+        if (nvs_manager_open(NVS_RELAY_NAMESPACE, NVS_READWRITE, &relay_h) == ESP_OK) {
+            nvs_set_u32(relay_h, "door_ms", (uint32_t)ival);
+            nvs_commit(relay_h);
+            nvs_close(relay_h);
+        }
     }
 
     if (sip_config_save(&config) == ESP_OK) {
@@ -1123,6 +1494,61 @@ static esp_err_t capture_handler(httpd_req_t *req) {
 }
 
 /**
+ * GET /api/metrics — Live counters: RTSP sessions, MJPEG clients, UDP stats + client IPs
+ */
+static esp_err_t api_metrics_handler(httpd_req_t *req) {
+    int rtsp_sessions = rtsp_server_active_session_count();
+    int mjpeg_clients = (int)mjpeg_server_client_count();
+    int udp_fails = rtsp_server_udp_fail_count();
+    uint32_t udp_backoff_ms = rtsp_server_udp_backoff_max_ms();
+
+    // Collect client IPs
+    char rtsp_ips[2][16] = {{0}};
+    int rtsp_ip_count = 0;
+    rtsp_server_get_client_ips(rtsp_ips, 2, &rtsp_ip_count);
+
+    char mjpeg_ips[2][16] = {{0}};
+    int mjpeg_ip_count = 0;
+    mjpeg_server_get_client_ips(mjpeg_ips, 2, &mjpeg_ip_count);
+
+    // Build IP JSON arrays
+    char rtsp_ips_json[64];
+    if (rtsp_ip_count == 0)      snprintf(rtsp_ips_json, sizeof(rtsp_ips_json), "[]");
+    else if (rtsp_ip_count == 1) snprintf(rtsp_ips_json, sizeof(rtsp_ips_json), "[\"%s\"]", rtsp_ips[0]);
+    else                         snprintf(rtsp_ips_json, sizeof(rtsp_ips_json), "[\"%s\",\"%s\"]", rtsp_ips[0], rtsp_ips[1]);
+
+    char mjpeg_ips_json[64];
+    if (mjpeg_ip_count == 0)      snprintf(mjpeg_ips_json, sizeof(mjpeg_ips_json), "[]");
+    else if (mjpeg_ip_count == 1) snprintf(mjpeg_ips_json, sizeof(mjpeg_ips_json), "[\"%s\"]", mjpeg_ips[0]);
+    else                          snprintf(mjpeg_ips_json, sizeof(mjpeg_ips_json), "[\"%s\",\"%s\"]", mjpeg_ips[0], mjpeg_ips[1]);
+
+    char response[512];
+    snprintf(response, sizeof(response),
+             "{\"rtsp_sessions\":%d,\"rtsp_client_ips\":%s,"
+             "\"http_mjpeg_clients\":%d,\"mjpeg_client_ips\":%s,"
+             "\"http_audio_clients\":0,"
+             "\"rtsp_udp_endpacket_fail\":%d,"
+             "\"rtsp_udp_backoff_ms\":%lu,"
+             "\"rtsp_udp_backoff_active\":%s}",
+             rtsp_sessions, rtsp_ips_json,
+             mjpeg_clients, mjpeg_ips_json,
+             udp_fails,
+             (unsigned long)udp_backoff_ms,
+             udp_backoff_ms > 0 ? "true" : "false");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, response, strlen(response));
+}
+
+/**
+ * POST /api/metrics/reset — Reset UDP fail counters
+ */
+static esp_err_t api_metrics_reset_handler(httpd_req_t *req) {
+    rtsp_server_udp_fail_reset();
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", 11);
+}
+
+/**
  * Handler for camera stream info
  * GET /cameraStreamInfo
  */
@@ -1133,8 +1559,9 @@ static esp_err_t camera_stream_info_handler(httpd_req_t *req) {
     uint8_t clients = mjpeg_server_client_count();
 
     snprintf(response, sizeof(response),
-             "{\"camera_ready\":%s,\"streaming\":%s,\"stream_port\":81,\"clients\":%d}",
+             "{\"camera_ready\":%s,\"streaming\":%s,\"running\":%s,\"stream_port\":81,\"clients\":%d}",
              cam_ready ? "true" : "false",
+             streaming ? "true" : "false",
              streaming ? "true" : "false",
              clients);
 
@@ -1411,113 +1838,15 @@ static esp_err_t restart_handler(httpd_req_t *req) {
  * POST /api/ota
  * Body: Binary firmware file
  */
-static esp_err_t api_ota_handler(httpd_req_t *req) {
-    esp_ota_handle_t ota_handle;
-    const esp_partition_t *update_partition = NULL;
-    esp_err_t err;
-
-    ESP_LOGI(TAG, "Starting OTA update...");
-
-    // Get next OTA partition
-    update_partition = esp_ota_get_next_update_partition(NULL);
-    if (update_partition == NULL) {
-        ESP_LOGE(TAG, "No OTA partition found");
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                           "No OTA partition available");
-        return ESP_FAIL;
-    }
-
-    ESP_LOGI(TAG, "Writing to partition: %s at 0x%lx",
-             update_partition->label, update_partition->address);
-
-    // Begin OTA
-    err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "OTA begin failed: %s", esp_err_to_name(err));
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                           "OTA begin failed");
-        return err;
-    }
-
-    // Receive and write firmware data
-    char buf[1024];
-    int remaining = req->content_len;
-    int received;
-    size_t total_written = 0;
-
-    while (remaining > 0) {
-        received = httpd_req_recv(req, buf, MIN(remaining, sizeof(buf)));
-        if (received <= 0) {
-            if (received == HTTPD_SOCK_ERR_TIMEOUT) {
-                continue;
-            }
-            esp_ota_abort(ota_handle);
-            ESP_LOGE(TAG, "OTA receive failed");
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                               "Firmware upload failed");
-            return ESP_FAIL;
-        }
-
-        err = esp_ota_write(ota_handle, buf, received);
-        if (err != ESP_OK) {
-            esp_ota_abort(ota_handle);
-            ESP_LOGE(TAG, "OTA write failed: %s", esp_err_to_name(err));
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                               "OTA write failed");
-            return err;
-        }
-
-        remaining -= received;
-        total_written += received;
-
-        // Log progress every 100KB
-        if (total_written % (100 * 1024) == 0) {
-            ESP_LOGI(TAG, "OTA progress: %zu bytes written", total_written);
-        }
-    }
-
-    ESP_LOGI(TAG, "OTA write complete: %zu bytes", total_written);
-
-    // End OTA and validate
-    err = esp_ota_end(ota_handle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "OTA end failed: %s", esp_err_to_name(err));
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                           "OTA validation failed");
-        return err;
-    }
-
-    // Set boot partition
-    err = esp_ota_set_boot_partition(update_partition);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Set boot partition failed: %s", esp_err_to_name(err));
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                           "Failed to set boot partition");
-        return err;
-    }
-
-    ESP_LOGI(TAG, "✓ OTA update successful! Rebooting...");
-
-    // Send success response
-    const char *resp = "{\"success\":true,\"message\":\"Update successful, rebooting...\"}";
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, resp, strlen(resp));
-
-    // Reboot after a short delay
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    esp_restart();
-
-    return ESP_OK;
-}
-
 httpd_handle_t web_server_start(void) {
     ESP_LOGI(TAG, "Starting HTTP server");
+    ota_load_credentials();
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.lru_purge_enable = true;
     config.stack_size = 8192;
-    config.max_uri_handlers = 40;  // Increased for all handlers including SIP API and verbose logging
+    config.max_uri_handlers = 44;  // Increased for all handlers including SIP API, verbose logging, and OTA
 
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) != ESP_OK) {
@@ -1582,13 +1911,14 @@ httpd_handle_t web_server_start(void) {
     };
     httpd_register_uri_handler(server, &api_mic_test);
 
-    httpd_uri_t api_ota = {
-        .uri = "/api/ota",
-        .method = HTTP_POST,
-        .handler = api_ota_handler,
-        .user_ctx = NULL
-    };
-    httpd_register_uri_handler(server, &api_ota);
+    httpd_uri_t ota_status_uri = { .uri = "/ota/status", .method = HTTP_GET,  .handler = ota_status_handler, .user_ctx = NULL };
+    httpd_register_uri_handler(server, &ota_status_uri);
+    httpd_uri_t ota_config_uri = { .uri = "/ota/config", .method = HTTP_POST, .handler = ota_config_handler, .user_ctx = NULL };
+    httpd_register_uri_handler(server, &ota_config_uri);
+    httpd_uri_t ota_enable_uri = { .uri = "/ota/enable", .method = HTTP_POST, .handler = ota_enable_handler, .user_ctx = NULL };
+    httpd_register_uri_handler(server, &ota_enable_uri);
+    httpd_uri_t ota_update_uri = { .uri = "/ota/update", .method = HTTP_POST, .handler = ota_update_handler, .user_ctx = NULL };
+    httpd_register_uri_handler(server, &ota_update_uri);
 
     httpd_uri_t api_logs = {
         .uri = "/api/logs",
@@ -1656,6 +1986,23 @@ httpd_handle_t web_server_start(void) {
         .user_ctx = NULL
     };
     httpd_register_uri_handler(server, &camera_info);
+
+    // Metrics endpoint
+    httpd_uri_t api_metrics = {
+        .uri = "/api/metrics",
+        .method = HTTP_GET,
+        .handler = api_metrics_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &api_metrics);
+
+    httpd_uri_t api_metrics_reset = {
+        .uri = "/api/metrics/reset",
+        .method = HTTP_POST,
+        .handler = api_metrics_reset_handler,
+        .user_ctx = NULL
+    };
+    httpd_register_uri_handler(server, &api_metrics_reset);
 
     httpd_uri_t stub_device = {
         .uri = "/deviceStatus",
@@ -1849,7 +2196,7 @@ httpd_handle_t web_server_start(void) {
 
     ESP_LOGI(TAG, "✓ HTTP server started on port %d with %zu embedded assets",
              config.server_port, embedded_files_count);
-    ESP_LOGI(TAG, "API endpoints: /api/wifi, /api/status, /api/ota");
+    ESP_LOGI(TAG, "API endpoints: /api/wifi, /api/status, /ota/status, /ota/config, /ota/enable, /ota/update");
     ESP_LOGI(TAG, "WiFi endpoints: /saveWiFi, /scanWifi, /wifiScanResults");
     ESP_LOGI(TAG, "Camera endpoints: /capture, /cameraStreamInfo, /control, /status");
     ESP_LOGI(TAG, "Other endpoints: /deviceStatus, /sipDebug, /status");
