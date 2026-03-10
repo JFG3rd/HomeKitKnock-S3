@@ -15,8 +15,8 @@
         <span>Dark Mode</span>
     </div>
     <div class="version-info">
-        <div>Version {{FW_VERSION}}</div>
-        <div>Build {{FW_BUILD_TIME}}</div>
+        <div>Version <span id="fwVersionBadge">--</span></div>
+        <div>Build <span id="fwBuildBadge">--</span></div>
     </div>
 
     <div class="header-container">
@@ -89,7 +89,7 @@
                     </label>
                 </div>
                 <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                    RTSP stream at rtsp://ESP32-IP:8554/mjpeg/1 (experimental, use HTTP for Scrypted).
+                    RTSP stream at rtsp://ESP32-IP:8554/mjpeg/1 with AAC audio track. Recommended for Scrypted + HomeKit.
                 </div>
 
                 <div class="info-item">
@@ -102,6 +102,60 @@
                 <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
                     Local gong playback via MAX98357A I2S DAC.
                 </div>
+            </div>
+
+        </div>
+
+        <div class="container card setup-card">
+            <h3 class="card-title">☎️ SIP Configuration</h3>
+            <div class="flash-stats" id="sipStatus">
+                <strong>Status:</strong> loading... &nbsp;|&nbsp; FRITZ!Box: <span id="gateway_ip">–</span>
+            </div>
+
+            <label class="card-group-title"><strong>📡 SIP Credentials</strong></label>
+            <label><strong>SIP Username</strong></label>
+            <input type="text" id="sip_user" placeholder="e.g., 620" autocomplete="off">
+            <label><strong>SIP Password</strong></label>
+            <input type="password" id="sip_password" placeholder="Leave empty to keep current" autocomplete="new-password">
+            <label><strong>Display Name</strong></label>
+            <input type="text" id="sip_displayname" placeholder="Doorbell">
+            <label><strong>Target Number</strong></label>
+            <input type="text" id="sip_target" placeholder="e.g., **11">
+
+            <label class="card-group-title" style="margin-top: 12px;"><strong>⏱️ Relay Timing</strong></label>
+            <label><strong>Gong Relay Pulse (GPIO3)</strong></label>
+            <div class="range-wrap">
+                <input type="range" id="gong_relay_ms" class="range-input" min="100" max="900" step="50" value="800" data-unit="ms">
+                <span class="range-value" id="gong_relay_ms_val">800ms</span>
+            </div>
+            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                Activates original 8VAC gong on button press (100–900ms).
+            </div>
+            <label><strong>Door Opener Pulse (GPIO1)</strong></label>
+            <div class="range-wrap">
+                <input type="range" id="door_opener_ms" class="range-input" min="500" max="2000" step="100" value="800" data-unit="ms">
+                <span class="range-value" id="door_opener_ms_val">800ms</span>
+            </div>
+            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                Opens door when Fritz!fon user presses 'Open' during call (500–2000ms).
+            </div>
+
+            <label class="card-group-title" style="margin-top: 12px;"><strong>🐛 Debug</strong></label>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span>Verbose Logging</span>
+                    <label class="switch">
+                        <input type="checkbox" id="verbose_logging">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                Show full SIP packet content in serial logs.
+            </div>
+
+            <div class="button-row button-grid" style="margin-top: 12px;">
+                <button class="button btn-test" onclick="testRingSip()">🔔 Test SIP Ring</button>
             </div>
         </div>
 
@@ -141,6 +195,7 @@
         <div class="container card setup-card">
             <h3 class="card-title">🔊 Audio and 🎤 Mic config <span id="audioSaveStatus" style="font-size:0.7em;font-weight:normal;color:#4caf50;opacity:0;transition:opacity 0.4s;"></span></h3>
 
+            <label class="card-group-title"><strong>🔊 Audio Output</strong></label>
             <div class="info-grid">
                 <div class="info-item">
                     <span><strong>🔇 Audio Out Mute</strong></span>
@@ -156,19 +211,9 @@
                         <span class="range-value" id="audioOutVolumeValue">{{AUDIO_OUT_VOLUME}}</span>
                     </div>
                 </div>
-                <div class="info-item">
-                    <span><strong>🧪 Hardware Diagnostic Mode</strong></span>
-                    <label class="switch">
-                        <input type="checkbox" id="hardware_diag_mode">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-            </div>
-            <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                When enabled, Test Gong runs a 1 kHz diagnostic tone and logs detailed audio TX telemetry.
             </div>
 
-            <label class="card-group-title" style="margin-top: 12px;"><strong>🎤 Microphone</strong></label>
+            <label class="card-group-title" style="margin-top: 12px;"><strong>🎤 Microphone Capture</strong></label>
             <div class="info-grid">
                 <div class="info-item">
                     <span>Mic enabled</span>
@@ -217,10 +262,26 @@
                 <button class="button btn-test" id="testMicBtn" title="Record 2s from mic and play back through speaker." onclick="testMic()">🎤 Record &amp; Play</button>
             </div>
             <div id="micTestResult" style="font-size:0.85em;padding:4px 8px;margin-top:4px;display:none;border-radius:4px;border:1px solid rgba(128,128,128,0.35);"></div>
+
+            <details style="margin-top: 14px;">
+                <summary style="cursor: pointer; font-size: 0.9em; color: #888; padding: 4px 0;">🧪 Advanced / Diagnostic</summary>
+                <div class="info-grid" style="margin-top: 8px;">
+                    <div class="info-item">
+                        <span><strong>🧪 Hardware Diagnostic Mode</strong></span>
+                        <label class="switch">
+                            <input type="checkbox" id="hardware_diag_mode">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
+                    When enabled, Test Gong runs a 1 kHz diagnostic tone and logs detailed audio TX telemetry.
+                </div>
+            </details>
         </div>
 
         <div class="container card setup-card">
-            <h3 class="card-title">📺 Scrypted Stream Options</h3>
+            <h3 class="card-title">📡 Streaming Integration</h3>
             <div class="flash-stats" id="scryptedStatus">
                 <strong>Status:</strong> loading...
             </div>
@@ -262,33 +323,14 @@
                 </div>
             </div>
 
-            <label class="card-group-title" style="margin-top: 12px;"><strong>Hardware Timing</strong></label>
-            <div class="info-grid">
-                <div class="info-item" style="flex-direction:column;align-items:flex-start;gap:4px;">
-                    <span style="font-size:0.9em;">Gong relay pulse (GPIO3): <strong id="gong_relay_ms_val">800</strong>ms</span>
-                    <input type="range" id="gong_relay_ms" min="100" max="900" step="50" value="800"
-                           style="width:100%;accent-color:var(--primary);"
-                           oninput="document.getElementById('gong_relay_ms_val').textContent=this.value">
-                    <span style="font-size:0.75em;color:#888;">Activates original 8VAC gong on button press (100–900ms)</span>
-                </div>
-                <div class="info-item" style="flex-direction:column;align-items:flex-start;gap:4px;">
-                    <span style="font-size:0.9em;">Door opener pulse (GPIO1): <strong id="door_opener_ms_val">800</strong>ms</span>
-                    <input type="range" id="door_opener_ms" min="500" max="2000" step="100" value="800"
-                           style="width:100%;accent-color:var(--primary);"
-                           oninput="document.getElementById('door_opener_ms_val').textContent=this.value">
-                    <span style="font-size:0.75em;color:#888;">Opens door when Fritz!fon user presses "1" during call (500–2000ms)</span>
-                </div>
-            </div>
-
-            <label class="card-group-title" style="margin-top: 12px;"><strong>Doorbell Webhook (HomeKit)</strong></label>
-            <input type="text" id="scrypted_webhook" value="{{SCRYPTED_WEBHOOK}}" placeholder="http://scrypted-ip:11080/endpoint/your-id/public/">
+            <label class="card-group-title" style="margin-top: 12px;"><strong>🔒 RTSP Authentication</strong></label>
+            <label><strong>Username</strong></label>
+            <input type="text" id="rtsp_user" placeholder="Leave empty for open access" autocomplete="off">
+            <label><strong>Password</strong></label>
+            <input type="password" id="rtsp_pass" placeholder="New password (leave empty to keep current)" autocomplete="new-password">
             <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                Get this from Scrypted doorbell device settings. Leave empty to disable HomeKit ring.
+                Protects the RTSP stream with Basic Auth. Clear both fields to disable auth.
             </div>
-            <div class="button-row button-grid" style="margin-top: 8px;">
-                <button class="button btn-test" title="Trigger the doorbell flow without SIP ringing." onclick="testHomekitGong()">🔔 HomeKit Test Gong</button>
-            </div>
-
             <div class="flash-stats" style="margin-top: 12px;">
                 <strong>Recommended Source URL:</strong>
                 <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;" id="scrypted_source_url"></p>
@@ -337,12 +379,20 @@
         <button class="button danger-btn" title="Reboot the ESP32 device." onclick="confirmRestart()">🔄 Restart</button>
         <a class="button btn-info" href="/logs.html?filter=core" target="_blank" title="Open filtered core logs.">🔧 Core Logs</a>
         <a class="button btn-info" href="/logs.html?filter=camera" target="_blank" title="Open filtered camera/streaming logs.">📹 Camera Logs</a>
-
+        <a class="button btn-info" href="/logs.html?filter=rtsp" target="_blank" title="Open filtered RTSP logs.">🎥 RTSP Logs</a>
         <a class="button btn-info" href="/logs.html?filter=doorbell" target="_blank" title="Open filtered doorbell/SIP logs.">☎️ Doorbell Logs</a>
         <a class="button btn-nav" href="/" title="Return to the main dashboard.">Back</a>
     </div>
 
     <script>
+        fetch('/api/status')
+            .then(r => r.json())
+            .then(data => {
+                if (data.fw_version) document.getElementById('fwVersionBadge').textContent = data.fw_version;
+                if (data.fw_build_time) document.getElementById('fwBuildBadge').textContent = data.fw_build_time;
+            })
+            .catch(() => {});
+
         const darkToggle = document.getElementById("darkModeToggle");
         function setDarkMode(enabled) {
             document.body.classList.toggle("dark-mode", enabled);
@@ -376,12 +426,11 @@
                 rtsp_enabled: document.getElementById("rtsp_enabled").checked,
                 http_cam_max_clients: parseInt(document.getElementById("http_cam_max_clients").value || "2", 10),
                 scrypted_source: document.querySelector("input[name='scrypted_source']:checked")?.value || "http",
-                scrypted_webhook: document.getElementById("scrypted_webhook").value.trim(),
                 scrypted_low_latency: document.getElementById("scrypted_low_latency").checked,
                 scrypted_low_buffer: document.getElementById("scrypted_low_buffer").checked,
                 scrypted_rtsp_udp: document.getElementById("scrypted_rtsp_udp").checked,
-                gong_relay_ms: parseInt(document.getElementById("gong_relay_ms").value, 10),
-                door_opener_ms: parseInt(document.getElementById("door_opener_ms").value, 10),
+                rtsp_user: document.getElementById("rtsp_user").value.trim(),
+                rtsp_pass: document.getElementById("rtsp_pass").value,
                 framesize: parseInt(document.getElementById("framesize").value, 10),
                 quality: parseInt(document.getElementById("quality").value, 10),
                 brightness: parseInt(document.getElementById("brightness").value, 10),
@@ -397,13 +446,27 @@
                 hardware_diag_mode: document.getElementById("hardware_diag_mode").checked,
                 audio_out_volume: parseInt(document.getElementById("audio_out_volume").value || "70", 10)
             };
-            fetch("/saveFeatures", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(features)
-            }).then(r => r.text())
-              .then(t => { alert(t); setTimeout(() => window.location.reload(), 1000); })
+            const sipPayload = {
+                sip_user:        document.getElementById("sip_user").value.trim(),
+                sip_password:    document.getElementById("sip_password").value,
+                sip_displayname: document.getElementById("sip_displayname").value.trim(),
+                sip_target:      document.getElementById("sip_target").value.trim(),
+                gong_relay_ms:   parseInt(document.getElementById("gong_relay_ms").value, 10),
+                door_opener_ms:  parseInt(document.getElementById("door_opener_ms").value, 10)
+            };
+            const jsonHdr = { "Content-Type": "application/json" };
+            Promise.all([
+                fetch("/saveFeatures", { method: "POST", headers: jsonHdr, body: JSON.stringify(features) }),
+                fetch("/api/sip",      { method: "POST", headers: jsonHdr, body: JSON.stringify(sipPayload) })
+            ]).then(() => { alert("Saved."); setTimeout(() => window.location.reload(), 800); })
               .catch(e => alert("Save failed: " + e));
+        }
+
+        function testRingSip() {
+            fetch("/ring/sip")
+                .then(r => r.text())
+                .then(t => alert(t))
+                .catch(e => alert("SIP Ring failed: " + e));
         }
 
         function testHomekitGong() {
@@ -504,10 +567,13 @@
             mic_enabled:"Mic Enabled", mic_muted:"Mic Muted",
             mic_source:"Mic Source", mic_sensitivity:"Mic Sensitivity",
             aac_sample_rate:"AAC Sample Rate", aac_bitrate:"AAC Bitrate",
-            scrypted_source:"Scrypted Source", scrypted_webhook:"HomeKit Webhook",
+            sip_user:"SIP Username", sip_password:"SIP Password",
+            sip_displayname:"SIP Display Name", sip_target:"SIP Target",
+            gong_relay_ms:"Gong Relay Pulse (ms)", door_opener_ms:"Door Opener Pulse (ms)",
+            scrypted_source:"Scrypted Source",
             scrypted_low_latency:"Low Latency", scrypted_low_buffer:"Reduce Buffering",
             scrypted_rtsp_udp:"RTSP UDP",
-            gong_relay_ms:"Gong Relay Pulse (ms)", door_opener_ms:"Door Opener Pulse (ms)"
+            rtsp_user:"RTSP Username", rtsp_pass:"RTSP Password"
         };
         function snapshotInitialValues() {
             Object.keys(_fieldLabels).forEach(function(id) {
@@ -734,9 +800,16 @@
                 method: "POST",
                 headers,
                 body: JSON.stringify({ username, password })
-            }).then(r => r.text())
-              .then(t => { alert(t); otaCurrentPassEl.value = ""; fetchOtaStatus(); })
-              .catch(e => alert("OTA save failed: " + e));
+            }).then(r => {
+                if (r.status === 401) { alert("❌ Current password is incorrect."); return null; }
+                if (!r.ok) { r.text().then(t => alert("❌ Save failed: " + t)); return null; }
+                return r.json();
+            }).then(data => {
+                if (!data) return;
+                alert("✅ OTA credentials saved.");
+                otaCurrentPassEl.value = "";
+                fetchOtaStatus();
+            }).catch(e => alert("OTA save failed: " + e));
         }
 
         function enableOta() {
@@ -745,19 +818,22 @@
             if (authHeader) {
                 headers["Authorization"] = authHeader;
             } else {
-                alert("Enter current OTA password to enable OTA.");
+                alert("Enter the current OTA password to enable OTA.");
                 return;
             }
 
             fetch("/ota/enable", {
                 method: "POST",
                 headers
-            }).then(r => r.text())
-              .then(t => {
-                  alert(t);
-                  fetchOtaStatus();
-              })
-              .catch(e => alert("OTA enable failed: " + e));
+            }).then(r => {
+                if (r.status === 401) { alert("❌ OTA password is incorrect."); return null; }
+                if (!r.ok) { r.text().then(t => alert("❌ Enable failed: " + t)); return null; }
+                return r.json();
+            }).then(data => {
+                if (!data) return;
+                alert("✅ OTA enabled for 5 minutes. Go to the OTA page to upload firmware.");
+                fetchOtaStatus();
+            }).catch(e => alert("OTA enable failed: " + e));
         }
 
         function fetchCameraSetupStatus() {
@@ -819,12 +895,15 @@
                 });
         }
 
+        bindRange("gong_relay_ms", "gong_relay_ms_val");
+        bindRange("door_opener_ms", "door_opener_ms_val");
         bindRange("quality", "qualityValue");
         bindRange("brightness", "brightnessValue");
         bindRange("contrast", "contrastValue");
         bindRange("mic_sensitivity", "micSensitivityValue");
         bindRange("aac_bitrate", "aacBitrateValue");
         bindRange("audio_out_volume", "audioOutVolumeValue");
+
 
         if (aacRateEl) {
             aacRateEl.addEventListener("change", function() {
@@ -887,8 +966,9 @@
 
             const source = getScryptedSource();
             const ip = "{{LOCAL_IP}}";
+            const rtspUserVal = (document.getElementById("rtsp_user") || {value:""}).value.trim();
             const sourceUrl = source === "rtsp"
-                ? `rtsp://${ip}:8554/mjpeg/1`
+                ? (rtspUserVal ? `rtsp://${rtspUserVal}:***@${ip}:8554/mjpeg/1` : `rtsp://${ip}:8554/mjpeg/1`)
                 : `http://${ip}:81/stream`;
             scryptedSourceUrlEl.textContent = sourceUrl;
             scryptedInputArgsEl.textContent = buildScryptedInputArgs();
@@ -931,6 +1011,15 @@
         document.getElementById("scrypted_rtsp_udp").addEventListener("change", updateScryptedUi);
         document.getElementById("rtsp_enabled").addEventListener("change", updateScryptedUi);
         document.getElementById("http_cam_enabled").addEventListener("change", updateScryptedUi);
+        document.getElementById("rtsp_user").addEventListener("input", updateScryptedUi);
+        document.getElementById("verbose_logging").addEventListener("change", function() {
+            const enabled = this.checked;
+            fetch("/api/sip/verbose", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ verbose: enabled })
+            }).catch(() => { this.checked = !enabled; });
+        });
         document.getElementById("mic_enabled").addEventListener("change", updateAudioUi);
         document.getElementById("audio_out_enabled").addEventListener("change", updateAudioUi);
         // Set selected timezone (legacy template fallback)
@@ -964,20 +1053,57 @@
                     if (data.hardware_diag_mode !== undefined) {
                         document.getElementById("hardware_diag_mode").checked = data.hardware_diag_mode;
                     }
-                    if (data.gong_relay_ms) {
-                        var el = document.getElementById("gong_relay_ms");
-                        el.value = data.gong_relay_ms;
-                        document.getElementById("gong_relay_ms_val").textContent = data.gong_relay_ms;
-                    }
-                    if (data.door_opener_ms) {
-                        var el = document.getElementById("door_opener_ms");
-                        el.value = data.door_opener_ms;
-                        document.getElementById("door_opener_ms_val").textContent = data.door_opener_ms;
+                    if (data.rtsp_user !== undefined) {
+                        document.getElementById("rtsp_user").value = data.rtsp_user;
+                        updateScryptedUi();
                     }
                     updateScryptedUi();
                     updateAudioUi();
                 })
                 .catch(e => console.error("Failed to load features:", e));
+
+            // Load SIP config and relay timing from /api/sip
+            fetch("/api/sip", { cache: "no-store" })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.user)        document.getElementById("sip_user").value = data.user;
+                    if (data.displayname) document.getElementById("sip_displayname").value = data.displayname;
+                    if (data.target)      document.getElementById("sip_target").value = data.target;
+                    if (data.gong_relay_ms) {
+                        const el = document.getElementById("gong_relay_ms");
+                        el.value = data.gong_relay_ms;
+                        updateRangeDisplay(el, document.getElementById("gong_relay_ms_val"));
+                    }
+                    if (data.door_opener_ms) {
+                        const el = document.getElementById("door_opener_ms");
+                        el.value = data.door_opener_ms;
+                        updateRangeDisplay(el, document.getElementById("door_opener_ms_val"));
+                    }
+                    const reg = data.registered ? "Registered ✓" : "Not registered";
+                    document.getElementById("sipStatus").innerHTML =
+                        `<strong>Status:</strong> ${reg}`;
+                })
+                .catch(() => {
+                    document.getElementById("sipStatus").innerHTML =
+                        "<strong>Status:</strong> unavailable";
+                });
+
+            // Load gateway IP
+            fetch("/api/status", { cache: "no-store" })
+                .then(r => r.json())
+                .then(data => {
+                    const el = document.getElementById("gateway_ip");
+                    if (el) el.textContent = data.gateway || "unknown";
+                })
+                .catch(() => {});
+
+            // Load verbose logging state
+            fetch("/api/sip/verbose", { cache: "no-store" })
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById("verbose_logging").checked = data.verbose === true;
+                })
+                .catch(() => {});
         }
 
         // Auto-save listeners for Audio/Mic card — changes apply immediately, no Save button needed

@@ -150,7 +150,6 @@ static bool ota_check_basic_auth(httpd_req_t *req) {
 static esp_err_t ota_status_handler(httpd_req_t *req) {
     bool configured = (s_ota_user[0] != '\0' && s_ota_hash[0] != '\0');
     if (configured && !ota_check_basic_auth(req)) {
-        httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"OTA\"");
         httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Authentication required");
         return ESP_OK;
     }
@@ -178,7 +177,6 @@ static esp_err_t ota_status_handler(httpd_req_t *req) {
 static esp_err_t ota_config_handler(httpd_req_t *req) {
     bool configured = (s_ota_user[0] != '\0' && s_ota_hash[0] != '\0');
     if (configured && !ota_check_basic_auth(req)) {
-        httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"OTA\"");
         httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Authentication required");
         return ESP_OK;
     }
@@ -251,7 +249,6 @@ static esp_err_t ota_enable_handler(httpd_req_t *req) {
         return ESP_OK;
     }
     if (!ota_check_basic_auth(req)) {
-        httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"OTA\"");
         httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Authentication required");
         return ESP_OK;
     }
