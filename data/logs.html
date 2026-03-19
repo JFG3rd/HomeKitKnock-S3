@@ -42,6 +42,7 @@
             <button class="filter-tab" data-filter="core" onclick="setFilter('core')">Core</button>
             <button class="filter-tab" data-filter="camera" onclick="setFilter('camera')">Camera</button>
             <button class="filter-tab" data-filter="doorbell" onclick="setFilter('doorbell')">Doorbell</button>
+            <button class="filter-tab" data-filter="rtsp" onclick="setFilter('rtsp')">RTSP</button>
         </div>
 
         <div class="controls-row">
@@ -320,7 +321,7 @@
             // Check URL params for initial filter
             const params = new URLSearchParams(window.location.search);
             const filter = params.get('filter');
-            if (filter && ['all', 'core', 'camera', 'doorbell'].includes(filter)) {
+            if (filter && ['all', 'core', 'camera', 'doorbell', 'rtsp'].includes(filter)) {
                 setFilter(filter);
             } else {
                 fetchLogs();

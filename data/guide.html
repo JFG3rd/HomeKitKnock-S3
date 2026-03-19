@@ -5,6 +5,93 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="/style.css">
+    <style>
+        .tab-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin: 0 0 18px 0;
+        }
+        .tab-btn {
+            padding: 7px 14px;
+            border: 1px solid var(--button-border, #ccc);
+            border-radius: 6px;
+            background: var(--info-item-bg, #f8f9fa);
+            color: var(--card-text, #1f2a3a);
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background 0.15s, color 0.15s;
+        }
+        .tab-btn.active {
+            background: var(--button-primary-bg, #2563eb);
+            color: #fff;
+            border-color: transparent;
+        }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+
+        .guide-section {
+            margin-bottom: 16px;
+            padding: 12px 14px;
+            background: var(--info-item-bg, #f8f9fa);
+            border-radius: 8px;
+        }
+        .guide-section h4 {
+            margin: 0 0 8px 0;
+            font-size: 1em;
+        }
+        .code-block {
+            position: relative;
+            background: var(--card-bg, #fff);
+            border: 1px solid var(--button-border, #ddd);
+            border-radius: 6px;
+            padding: 8px 40px 8px 10px;
+            font-family: monospace;
+            font-size: 0.85em;
+            word-break: break-all;
+            margin: 6px 0;
+            color: var(--card-text, #1f2a3a);
+        }
+        .copy-btn {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1em;
+            padding: 2px 4px;
+            border-radius: 4px;
+            opacity: 0.6;
+            transition: opacity 0.15s;
+        }
+        .copy-btn:hover { opacity: 1; }
+        .guide-note {
+            font-size: 0.82em;
+            opacity: 0.75;
+            margin: 4px 0 0 0;
+        }
+        ol.guide-steps {
+            margin: 6px 0 0 18px;
+            padding: 0;
+            font-size: 0.9em;
+            line-height: 1.7;
+        }
+        .step-badge {
+            display: inline-block;
+            background: var(--button-primary-bg, #2563eb);
+            color: #fff;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            text-align: center;
+            line-height: 20px;
+            font-size: 0.75em;
+            font-weight: bold;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+    </style>
 </head>
 <body>
     <div class="dark-mode-toggle">
@@ -15,103 +102,174 @@
         <span>Dark Mode</span>
     </div>
     <div class="version-info">
-        <div>Version {{FW_VERSION}}</div>
-        <div>Build {{FW_BUILD_TIME}}</div>
+        <div>Version <span id="fwVersion">--</span></div>
+        <div>Build <span id="fwBuild">--</span></div>
     </div>
 
     <div class="header-container">
-        <h1 class="main-title">Setup Guide</h1>
-        <p>Quick reference for stream URLs and feature setup.</p>
+        <h1 class="main-title">📘 Setup Guide</h1>
+        <p>Device IP: <strong id="deviceIpDisplay">loading...</strong></p>
     </div>
 
-    <div class="dashboard">
-        <div class="container card setup-card">
-            <h3 class="card-title">📷 Camera & Streams</h3>
-            <div class="flash-stats">
-                <strong>HTTP MJPEG:</strong>
-                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;">
-                    http://{{LOCAL_IP}}:81/stream
-                </p>
-                <p style="font-size: 0.85em;">
-                    Use this for browser preview, FRITZ!Box Live-Bild, or Scrypted HTTP Camera.
-                </p>
+    <div style="max-width: 860px; margin: 0 auto; padding: 0 20px 40px;">
+
+        <!-- Tab bar -->
+        <div class="tab-bar">
+            <button class="tab-btn active" onclick="showTab('quick')">⚡ Quick Start</button>
+            <button class="tab-btn" onclick="showTab('scrypted')">📺 Scrypted / HomeKit</button>
+            <button class="tab-btn" onclick="showTab('fritzbox')">☎️ Fritz!Box SIP</button>
+            <button class="tab-btn" onclick="showTab('advanced')">🔧 Advanced</button>
+        </div>
+
+        <!-- Quick Start -->
+        <div id="tab-quick" class="tab-panel active">
+            <div class="guide-section">
+                <h4><span class="step-badge">1</span> Connect to WiFi</h4>
+                <p class="guide-note">On first boot the device creates an AP named <strong>ESP32-Doorbell</strong>. Connect to it and open <code>http://192.168.4.1</code> to enter your home WiFi credentials.</p>
             </div>
-            <div class="flash-stats">
-                <strong>HTTP Audio (AAC):</strong>
-                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;">
-                    http://{{LOCAL_IP}}:81/audio.aac
-                </p>
-                <p style="font-size: 0.85em;">
-                    Companion audio stream for MJPEG. For combined A/V, open <code>/live</code>.
-                </p>
+            <div class="guide-section">
+                <h4><span class="step-badge">2</span> Enable Camera &amp; Streaming</h4>
+                <p class="guide-note">Go to <a href="/setup">⚙️ Feature Setup</a> and enable <strong>HTTP Camera Streaming</strong> and/or <strong>RTSP Camera Streaming</strong>. Save and reboot if prompted.</p>
+                <p class="guide-note">Then verify the camera is live by clicking <strong>📸 Snapshot</strong> or <strong>🎥 Live Stream</strong> on the main page.</p>
             </div>
-            <div class="flash-stats">
-                <strong>Live Preview (MJPEG + Audio):</strong>
-                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;">
-                    http://{{LOCAL_IP}}/live
-                </p>
+            <div class="guide-section">
+                <h4><span class="step-badge">3</span> Configure SIP (Fritz!Box)</h4>
+                <p class="guide-note">Go to <a href="/sip">⚙️ SIP Setup</a> and fill in your Fritz!Box credentials. See the <button class="tab-btn" style="padding:2px 8px; font-size:0.85em;" onclick="showTab('fritzbox')">Fritz!Box SIP</button> tab for detailed registration steps.</p>
             </div>
-            <div class="flash-stats">
-                <strong>RTSP Stream (for Scrypted):</strong>
-                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;">
-                    rtsp://{{LOCAL_IP}}:8554/mjpeg/1
-                </p>
-                <p style="font-size: 0.85em;">
-                    Use the RTSP Camera plugin or prefix with <code>-i</code> for FFmpeg Camera.
-                </p>
+            <div class="guide-section">
+                <h4><span class="step-badge">4</span> Add to Scrypted / HomeKit</h4>
+                <p class="guide-note">See the <button class="tab-btn" style="padding:2px 8px; font-size:0.85em;" onclick="showTab('scrypted')">Scrypted / HomeKit</button> tab for the RTSP URL and required FFmpeg settings.</p>
             </div>
         </div>
 
-        <div class="container card setup-card">
-            <h3 class="card-title">📺 Scrypted (Quick Steps)</h3>
-            <div class="flash-stats">
-                <ol style="margin: 8px 0 0 16px; padding: 0; font-size: 0.9em;">
-                    <li>Add a camera in Scrypted.</li>
-                    <li>Use <strong>HTTP Camera</strong> with <code>http://ESP32-IP:81/stream</code> and optional audio <code>http://ESP32-IP:81/audio.aac</code>, or <strong>RTSP Camera</strong> with <code>rtsp://ESP32-IP:8554/mjpeg/1</code>.</li>
-                    <li>If using FFmpeg Camera for HomeKit, set Output Prefix to:</li>
+        <!-- Scrypted / HomeKit -->
+        <div id="tab-scrypted" class="tab-panel">
+            <div class="guide-section">
+                <h4>RTSP Stream URL</h4>
+                <div class="code-block" id="rtspUrl">rtsp://DEVICE_IP:8554/mjpeg/1<button class="copy-btn" onclick="copyCode(this)" title="Copy">📋</button></div>
+                <p class="guide-note">Use this URL in the Scrypted <strong>FFmpeg Camera</strong> plugin (recommended) or <strong>RTSP Camera</strong> plugin.</p>
+            </div>
+            <div class="guide-section">
+                <h4>FFmpeg Camera Plugin — Recommended Setup</h4>
+                <ol class="guide-steps">
+                    <li>In Scrypted, add a new device → <strong>FFmpeg Camera</strong>.</li>
+                    <li>Set the stream URL to the RTSP URL above.</li>
+                    <li>Under <strong>Output Prefix</strong>, paste the following (required for HomeKit Secure Video compatibility):</li>
                 </ol>
-                <p style="font-family: monospace; font-size: 0.85em; word-break: break-word; margin-top: 8px;">
-                    -c:v libx264 -pix_fmt yuvj420p -preset ultrafast -bf 0 -g 60 -r 15 -b:v 500000 -bufsize 1000000 -maxrate 500000
-                </p>
+                <div class="code-block" style="margin-top:8px;">-c:v libx264 -pix_fmt yuvj420p -preset ultrafast -bf 0 -g 60 -r 15 -b:v 500000 -bufsize 1000000 -maxrate 500000<button class="copy-btn" onclick="copyCode(this)" title="Copy">📋</button></div>
+                <p class="guide-note">Without this prefix, Scrypted defaults to <code>mpeg4</code> which is incompatible with HomeKit's WebRTC pipeline.</p>
+                <ol class="guide-steps" start="4">
+                    <li>Assign the <strong>Doorbell</strong> role to the device in Scrypted.</li>
+                    <li>Pair with HomeKit — the doorbell will appear with live view, two-way audio, and rich notifications.</li>
+                </ol>
             </div>
-            <div class="flash-stats">
-                <strong>HomeKit Doorbell:</strong>
-                <p style="font-size: 0.85em;">
-                    Paste the Scrypted webhook into <code>/setup</code> to trigger HomeKit ring events.
-                </p>
+            <div class="guide-section">
+                <h4>HomeKit Doorbell Ring Webhook</h4>
+                <p class="guide-note">Copy the Scrypted webhook URL for this device, then paste it into <a href="/setup">⚙️ Feature Setup</a> under <strong>Webhook URL</strong>. The ESP32 will POST to it on each button press, triggering a HomeKit ring event.</p>
             </div>
-        </div>
-
-        <div class="container card setup-card">
-            <h3 class="card-title">☎️ SIP</h3>
-            <div class="flash-stats">
-                <strong>SIP Ring Target:</strong>
-                <p style="font-size: 0.85em;">
-                    Use internal numbers like <code>**11</code> (group), <code>**610</code>, <code>**611</code>.
-                </p>
+            <div class="guide-section">
+                <h4>MJPEG Stream (alternative / HTTP Camera plugin)</h4>
+                <div class="code-block" id="mjpegUrl">http://DEVICE_IP:81/stream<button class="copy-btn" onclick="copyCode(this)" title="Copy">📋</button></div>
+                <p class="guide-note">Lower latency than RTSP for single-viewer use. Not recommended for HomeKit (no audio, no H.264).</p>
             </div>
-            <div class="flash-stats">
-                <strong>FRITZ!Box Live-Bild:</strong>
-                <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;">
-                    http://{{LOCAL_IP}}/capture
-                </p>
+            <div class="guide-section">
+                <h4>Snapshot URL (Fritz!fon / NVR thumbnail)</h4>
+                <div class="code-block" id="captureUrl">http://DEVICE_IP/capture<button class="copy-btn" onclick="copyCode(this)" title="Copy">📋</button></div>
+                <p class="guide-note">Returns a single JPEG. Useful for Fritz!fon live image, NVR event snapshots, or monitoring scripts.</p>
             </div>
         </div>
 
-        <div class="container card setup-card">
-            <h3 class="card-title">⬆️ OTA Updates</h3>
-            <div class="flash-stats">
-                <p style="font-size: 0.85em;">
-                    Enable OTA in <code>/setup</code>, then upload firmware or LittleFS via <code>/ota</code>.
-                </p>
+        <!-- Fritz!Box SIP -->
+        <div id="tab-fritzbox" class="tab-panel">
+            <div class="guide-section">
+                <h4>Register as IP Door Intercom (Türsprechanlage)</h4>
+                <p class="guide-note"><strong>Important:</strong> The device must be registered as a <em>Türsprechanlage</em> (IP Door Intercom), not a plain SIP telephone. This unlocks the "Talk" and "Open" buttons on Fritz!fon and enables the live image.</p>
+                <ol class="guide-steps">
+                    <li>Open Fritz!Box UI → <strong>Telefonie → Telefoniegeräte → Gerät hinzufügen</strong>.</li>
+                    <li>Select <strong>Türsprechanlage</strong>.</li>
+                    <li>Fill in a name (e.g. <em>ESP32-Doorbell</em>), username, and password. Note these — they go into <a href="/sip">⚙️ SIP Setup</a>.</li>
+                    <li>Under <strong>Klingeltaste 1</strong>, set the ring target to your phone group number (e.g. <code>**11</code> for Erdgeschoss).</li>
+                    <li>Under <strong>Live-Bild</strong>, enter the snapshot URL:</li>
+                </ol>
+                <div class="code-block" id="fritzCaptureUrl">http://DEVICE_IP/capture<button class="copy-btn" onclick="copyCode(this)" title="Copy">📋</button></div>
+                <ol class="guide-steps" start="6">
+                    <li>Save. The device will appear under <strong>Telefoniegeräte</strong> as an IP door intercom.</li>
+                </ol>
             </div>
-            <div class="button-row button-grid">
-                <a class="button btn-nav" href="/">Back</a>
+            <div class="guide-section">
+                <h4>SIP Credentials</h4>
+                <p class="guide-note">In <a href="/sip">⚙️ SIP Setup</a>, configure:</p>
+                <ul style="font-size:0.9em; margin: 6px 0 0 18px; line-height:1.7;">
+                    <li><strong>SIP Server:</strong> your Fritz!Box LAN IP (usually <code>192.168.178.1</code>)</li>
+                    <li><strong>Username:</strong> the username set in Fritz!Box (e.g. <code>doorbell</code>)</li>
+                    <li><strong>Password:</strong> the password set in Fritz!Box</li>
+                    <li><strong>Ring Target:</strong> the phone group number (e.g. <code>**11</code>)</li>
+                </ul>
             </div>
+            <div class="guide-section">
+                <h4>Door Opener (Fritz!fon "Open" button)</h4>
+                <p class="guide-note">When a Fritz!fon user presses <strong>Open</strong> during a call, Fritz!Box sends DTMF tones <strong>1 → 2 → 3</strong> via SIP INFO. The ESP32 detects this sequence and pulses the door opener relay (GPIO1) for the configured duration.</p>
+                <p class="guide-note">Adjust the pulse duration in <a href="/setup">⚙️ Feature Setup</a> → <strong>Door Opener Pulse</strong>.</p>
+            </div>
+            <div class="guide-section">
+                <h4>Ring Target Format</h4>
+                <ul style="font-size:0.9em; margin: 6px 0 0 18px; line-height:1.7;">
+                    <li><code>**11</code> — Ring the Erdgeschoss phone group</li>
+                    <li><code>**610</code>, <code>**611</code> — Ring individual Fritz!fon handsets</li>
+                    <li><code>**9</code> — Ring all phones</li>
+                </ul>
+                <p class="guide-note">Check your Fritz!Box internal numbers under <strong>Telefonie → Eigene Rufnummern → Interne Rufnummern</strong>.</p>
+            </div>
+            <div class="guide-section">
+                <h4>Gong Relay (original chime)</h4>
+                <p class="guide-note">GPIO3 controls a relay that bridges the original 8 VAC doorbell chime circuit. When a call is triggered, the gong relay fires for the configured duration (default 800 ms) before the SIP call connects. Adjust in <a href="/setup">⚙️ Feature Setup</a> → <strong>Gong Relay Pulse</strong>.</p>
+            </div>
+        </div>
+
+        <!-- Advanced -->
+        <div id="tab-advanced" class="tab-panel">
+            <div class="guide-section">
+                <h4>OTA Firmware Update</h4>
+                <ol class="guide-steps">
+                    <li>Enable OTA in <a href="/setup">⚙️ Feature Setup</a>.</li>
+                    <li>Navigate to <a href="/ota">/ota</a> and upload a <code>.bin</code> firmware file.</li>
+                    <li>To update web assets only, upload the <code>littlefs.bin</code> partition image instead.</li>
+                </ol>
+            </div>
+            <div class="guide-section">
+                <h4>Log Viewer</h4>
+                <p class="guide-note">View real-time logs at <a href="/logs.html">/logs.html</a>. Filter by:</p>
+                <ul style="font-size:0.9em; margin:6px 0 0 18px; line-height:1.7;">
+                    <li><a href="/logs.html?filter=core">Core</a> — WiFi, NVS, web server</li>
+                    <li><a href="/logs.html?filter=camera">Camera</a> — MJPEG, RTSP, frame stats</li>
+                    <li><a href="/logs.html?filter=doorbell">Doorbell</a> — button, relay, SIP events</li>
+                    <li><a href="/logs.html?filter=rtsp">RTSP</a> — RTSP session and RTP detail</li>
+                </ul>
+            </div>
+            <div class="guide-section">
+                <h4>All Stream URLs</h4>
+                <p class="guide-note">RTSP (Scrypted / ffplay / VLC):</p>
+                <div class="code-block" id="advRtspUrl">rtsp://DEVICE_IP:8554/mjpeg/1<button class="copy-btn" onclick="copyCode(this)" title="Copy">📋</button></div>
+                <p class="guide-note">HTTP MJPEG (browser / single viewer):</p>
+                <div class="code-block" id="advMjpegUrl">http://DEVICE_IP:81/stream<button class="copy-btn" onclick="copyCode(this)" title="Copy">📋</button></div>
+                <p class="guide-note">Live view page (video + audio in browser):</p>
+                <div class="code-block" id="advLiveUrl">http://DEVICE_IP/live<button class="copy-btn" onclick="copyCode(this)" title="Copy">📋</button></div>
+                <p class="guide-note">Single JPEG snapshot:</p>
+                <div class="code-block" id="advCaptureUrl">http://DEVICE_IP/capture<button class="copy-btn" onclick="copyCode(this)" title="Copy">📋</button></div>
+            </div>
+            <div class="guide-section">
+                <h4>Reset NVS / Factory Reset</h4>
+                <p class="guide-note">Clearing WiFi credentials via <strong>Forget WiFi</strong> on the main page reboots the device into AP mode. NVS settings (SIP config, relay durations, camera settings) are preserved. To fully erase NVS, re-flash with <code>idf.py erase-flash</code> before uploading firmware.</p>
+            </div>
+        </div>
+
+        <div style="margin-top: 20px;">
+            <a class="button btn-nav" href="/">← Back to Dashboard</a>
         </div>
     </div>
 
     <script>
+        // Dark mode
         const darkToggle = document.getElementById("darkModeToggle");
         function setDarkMode(enabled) {
             document.body.classList.toggle("dark-mode", enabled);
@@ -122,6 +280,50 @@
         darkToggle.checked = darkModeEnabled;
         setDarkMode(darkModeEnabled);
         darkToggle.addEventListener("change", () => setDarkMode(darkToggle.checked));
+
+        // Tab switching
+        function showTab(id) {
+            document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+            document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+            const panel = document.getElementById("tab-" + id);
+            if (panel) panel.classList.add("active");
+            event.target.classList.add("active");
+        }
+
+        // Copy button
+        function copyCode(btn) {
+            const block = btn.parentElement;
+            const text = block.childNodes[0].textContent.trim();
+            navigator.clipboard.writeText(text).then(() => {
+                btn.textContent = "✅";
+                setTimeout(() => { btn.textContent = "📋"; }, 1500);
+            }).catch(() => {
+                btn.textContent = "❌";
+                setTimeout(() => { btn.textContent = "📋"; }, 1500);
+            });
+        }
+
+        // Fill in device IP from /api/status
+        fetch("/api/status")
+            .then(r => r.json())
+            .then(data => {
+                const ip = data.ip || "DEVICE_IP";
+                document.getElementById("deviceIpDisplay").textContent = ip;
+                if (data.fw_version) document.getElementById("fwVersion").textContent = data.fw_version;
+                if (data.fw_build_time) document.getElementById("fwBuild").textContent = data.fw_build_time;
+
+                // Replace DEVICE_IP placeholder in all code-block text nodes
+                document.querySelectorAll(".code-block").forEach(block => {
+                    block.childNodes.forEach(node => {
+                        if (node.nodeType === Node.TEXT_NODE) {
+                            node.textContent = node.textContent.replace(/DEVICE_IP/g, ip);
+                        }
+                    });
+                });
+            })
+            .catch(() => {
+                document.getElementById("deviceIpDisplay").textContent = "unavailable";
+            });
     </script>
 </body>
 </html>

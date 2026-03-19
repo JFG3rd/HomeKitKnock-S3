@@ -183,7 +183,7 @@ void audio_output_set_hardware_diagnostic_mode(bool enabled) {
     esp_log_level_set("aac_encoder_pipe", lvl);
     esp_log_level_set("i2s_shared_bus",   lvl);
     esp_log_level_set("sip",  enabled ? ESP_LOG_DEBUG : ESP_LOG_WARN);
-    esp_log_level_set("rtsp", enabled ? ESP_LOG_DEBUG : ESP_LOG_WARN);
+    esp_log_level_set("rtsp", enabled ? ESP_LOG_DEBUG : ESP_LOG_INFO);
     ESP_LOGI(TAG, "Hardware diagnostic mode %s — audio log level → %s",
              enabled ? "enabled" : "disabled",
              enabled ? "DEBUG" : "INFO");

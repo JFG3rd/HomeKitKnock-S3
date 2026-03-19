@@ -16,6 +16,7 @@
     </div>
     <div class="version-info">
         <div>Version <span id="fwVersion">loading...</span></div>
+        <div><a href="#" id="signOutLink" onclick="signOut(); return false;" style="font-size:0.8em; color:#888; text-decoration:underline; display:none;">Sign Out</a></div>
     </div>
 
     <div class="header-container">
@@ -23,6 +24,7 @@
         <p>Enable OTA from the setup page before uploading firmware.</p>
     </div>
 
+    <div id="pageContent" style="display:none">
     <div class="dashboard">
         <div class="container card setup-card">
             <h3 class="card-title">OTA Status</h3>
@@ -61,6 +63,19 @@
         <a class="button btn-info" href="/logs.html?filter=camera" target="_blank">📹 Camera Logs</a>
         <a class="button btn-info" href="/logs.html?filter=doorbell" target="_blank">☎️ Doorbell Logs</a>
     </div>
+    </div><!-- end pageContent -->
+
+    <!-- Login overlay -->
+    <div id="authOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:9999; align-items:center; justify-content:center;">
+        <div class="container card setup-card" style="max-width:360px; width:90%; margin:0;">
+            <h3 class="card-title">🔒 Device Login</h3>
+            <p style="margin-bottom:12px;">Enter your device credentials to continue.</p>
+            <input type="text" id="overlayUser" placeholder="Username" autocomplete="username" style="margin-bottom:8px;">
+            <input type="password" id="overlayPass" placeholder="Password" autocomplete="current-password" style="margin-bottom:8px;">
+            <div id="overlayError" style="color:#e55; font-size:0.9em; margin-bottom:8px; display:none;"></div>
+            <button class="button btn-save" onclick="submitAuthOverlay()">Unlock</button>
+        </div>
+    </div>
 
     <script>
         const darkToggle = document.getElementById("darkModeToggle");
@@ -74,6 +89,75 @@
         const progressText = document.getElementById("progressText");
         const uploadResult = document.getElementById("uploadResult");
         let otaEnabled = false;
+
+        // Auth state
+        const _PASS_KEY = "device_pass";
+        const _USER_KEY = "device_user";
+        let _pass = sessionStorage.getItem(_PASS_KEY);
+        let _user = sessionStorage.getItem(_USER_KEY) || "";
+        let _overlayResolve = null;
+
+        function authHeader() { return _pass ? ("Basic " + btoa(_user + ":" + _pass)) : ""; }
+
+        function showPasswordOverlay(onUnlocked) {
+            _overlayResolve = onUnlocked;
+            document.getElementById("pageContent").style.display = "none";
+            document.getElementById("signOutLink").style.display = "none";
+            const overlay = document.getElementById("authOverlay");
+            overlay.style.display = "flex";
+            document.getElementById("overlayUser").value = _user || "";
+            document.getElementById("overlayPass").value = "";
+            document.getElementById("overlayError").style.display = "none";
+            setTimeout(() => (_user ? document.getElementById("overlayPass") : document.getElementById("overlayUser")).focus(), 50);
+        }
+        function hidePasswordOverlay() {
+            document.getElementById("authOverlay").style.display = "none";
+            document.getElementById("pageContent").style.display = "";
+            document.getElementById("signOutLink").style.display = "";
+        }
+        function signOut() {
+            sessionStorage.removeItem(_PASS_KEY);
+            sessionStorage.removeItem(_USER_KEY);
+            _pass = null; _user = "";
+            showPasswordOverlay(function() { initPage(); });
+        }
+
+        function submitAuthOverlay() {
+            const user = document.getElementById("overlayUser").value.trim();
+            const pass = document.getElementById("overlayPass").value;
+            if (!user || !pass) return;
+            fetch("/ota/status", { headers: { "Authorization": "Basic " + btoa(user + ":" + pass) } })
+                .then(r => {
+                    if (r.status === 401) {
+                        const errEl = document.getElementById("overlayError");
+                        errEl.textContent = "Wrong username or password.";
+                        errEl.style.display = "block";
+                        return;
+                    }
+                    _user = user; _pass = pass;
+                    sessionStorage.setItem(_USER_KEY, user);
+                    sessionStorage.setItem(_PASS_KEY, pass);
+                    hidePasswordOverlay();
+                    if (_overlayResolve) { const cb = _overlayResolve; _overlayResolve = null; cb(); }
+                });
+        }
+
+        document.addEventListener("keydown", e => {
+            if (e.key === "Enter" && document.getElementById("authOverlay").style.display === "flex") submitAuthOverlay();
+        });
+
+        function authedFetch(url, opts = {}) {
+            opts.headers = Object.assign({}, opts.headers);
+            if (_pass) opts.headers["Authorization"] = authHeader();
+            return fetch(url, opts).then(r => {
+                if (r.status === 401) {
+                    sessionStorage.removeItem(_PASS_KEY); sessionStorage.removeItem(_USER_KEY);
+                    _pass = null; _user = "";
+                    return new Promise(resolve => showPasswordOverlay(() => resolve(authedFetch(url, opts))));
+                }
+                return r;
+            });
+        }
 
         function setDarkMode(enabled) {
             document.body.classList.toggle("dark-mode", enabled);
@@ -101,14 +185,8 @@
         }
 
         function fetchOtaStatus() {
-            fetch("/ota/status", { credentials: "include" })
+            authedFetch("/ota/status")
                 .then(r => {
-                    if (r.status === 401) {
-                        otaStatusEl.innerHTML = "<strong>Status:</strong> authentication required";
-                        otaEnabled = false; updateUploadBtn();
-                        if (otaBanner) otaBanner.hidden = false;
-                        return null;
-                    }
                     if (!r.ok) {
                         otaStatusEl.innerHTML = "<strong>Status:</strong> unavailable";
                         otaEnabled = false; updateUploadBtn();
@@ -118,11 +196,10 @@
                 })
                 .then(data => {
                     if (!data) return;
-                    const configured = data.configured ? "configured" : "not configured";
                     const enabledStr = data.enabled
                         ? `enabled (${formatMs(data.remaining_ms)})`
                         : "disabled";
-                    otaStatusEl.innerHTML = `<strong>Status:</strong> ${configured} | ${enabledStr}`;
+                    otaStatusEl.innerHTML = `<strong>Status:</strong> ${enabledStr}`;
                     otaEnabled = data.enabled;
                     if (otaBanner) otaBanner.hidden = data.enabled;
                     updateUploadBtn();
@@ -133,6 +210,26 @@
                     otaEnabled = false; updateUploadBtn();
                 });
         }
+
+        function initPage() {
+            fetchOtaStatus();
+            setInterval(fetchOtaStatus, 10000);
+            fetch("/api/status")
+                .then(r => r.json())
+                .then(d => {
+                    const v = d.fw_version || d.version || d.firmware_version;
+                    if (v) document.getElementById("fwVersion").textContent = v;
+                    else document.getElementById("fwVersion").textContent = "unknown";
+                })
+                .catch(() => { document.getElementById("fwVersion").textContent = "unknown"; });
+        }
+
+        // Auth gate on load
+        fetch("/api/auth/status").then(r => r.json()).then(d => {
+            if (!d.configured) { window.location.href = "/first-setup"; return; }
+            if (_pass) { hidePasswordOverlay(); initPage(); return; }
+            showPasswordOverlay(initPage);
+        }).catch(() => { hidePasswordOverlay(); initPage(); });
 
         fwFile.addEventListener("change", () => {
             fwFileName.textContent = fwFile.files.length > 0 ? fwFile.files[0].name : "No file selected";
@@ -145,6 +242,7 @@
             const xhr = new XMLHttpRequest();
             xhr.open("POST", "/ota/update", true);
             xhr.setRequestHeader("Content-Type", "application/octet-stream");
+            if (_pass) xhr.setRequestHeader("Authorization", authHeader());
             progressBar.style.display = "block";
             progressFill.style.width = "0%";
             progressText.textContent = "Starting upload...";
@@ -184,18 +282,6 @@
             xhr.send(file);
         });
 
-        // Fetch firmware version from /api/status
-        fetch("/api/status")
-            .then(r => r.json())
-            .then(d => {
-                const v = d.fw_version || d.version || d.firmware_version;
-                if (v) document.getElementById("fwVersion").textContent = v;
-                else document.getElementById("fwVersion").textContent = "unknown";
-            })
-            .catch(() => { document.getElementById("fwVersion").textContent = "unknown"; });
-
-        fetchOtaStatus();
-        setInterval(fetchOtaStatus, 10000);
     </script>
 </body>
 </html>

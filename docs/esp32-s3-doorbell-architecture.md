@@ -46,8 +46,8 @@ HomeKit Doorbell                Exposed via Scrypted HomeKit plugin
 Doorbell event flow:
 	1.	Physical button press
 	2.	ESP32 detects GPIO edge
-	3.  ESP32 Triggers **GPIO3** -> Original gong relay IN (.8s high then back to low)
 	3.  ESP32 plays gong.pcm over MAX98357A DAC/Amp to speaker
+	3.  ESP32 triggers **GPIO3** → original gong relay (150ms startup delay, 800ms pulse)
 	4.	ESP32 performs HTTP GET to Scrypted doorbell endpoint
 	5.	ESP32 triggers FRITZ!Box SIP internal ring (DECT group)
 	6.	Scrypted fires HomeKit doorbell event
@@ -142,9 +142,9 @@ The project is migrating from Arduino to pure ESP-IDF for better reliability and
 | Phase 2 | ✅ Complete | Captive portal, log viewer, config |
 | Phase 3 | ✅ Complete | SIP client, button, LED, SNTP |
 | Phase 4 | ✅ Complete | Video path — camera, MJPEG, RTSP |
-| Phase 5 | ✅ Complete | Audio path — speaker + INMP441 mic fully working (Record & Play verified) |
-| Phase 6 | ❌ Pending | HomeKit doorbell integration |
-| Phase 7 | ❌ Pending | OTA update system (credentials, time-limited window) |
+| Phase 5 | ✅ Complete | Audio path — speaker + INMP441 mic; SIP bidirectional audio ✅ |
+| Phase 6 | 🔧 In Progress | HomeKit doorbell via Scrypted + HSV (RTSP AAC audio first) |
+| Phase 7 | ✅ Complete | OTA update system + unified device auth (username + password) |
 | Phase 8 | ❌ Pending | Cleanup & resilience |
 
 **ESP-IDF Components (src_idf/components/):**
@@ -198,7 +198,10 @@ Notes:
 	•	MAX98357A SC/SD: tie to 3V3 (always on)
 	•	Feature setup exposes mic enable/mute + sensitivity, AAC sample-rate/bitrate, and audio out enable/mute + volume
 	•	Browser A/V page: http://ESP32-IP/live
-	•	SIP intercom audio: RTP on UDP port 40000 (PCMU/PCMA + DTMF)
+	•	SIP intercom audio: bidirectional G.711 PCMU/PCMA RTP on UDP port 40000 ✅ verified
+	•	Fritz!Box registered as **IP Door Intercom System** (not plain IP phone)
+	•	Door opener sequence "123" delivered via SIP INFO `application/dtmf-relay` → GPIO1 relay
+	•	BYE Call-ID validation — stale Fritz!Box retransmissions from old sessions are ignored
 	•	Local gong playback: embedded PCM data in flash (gong_data.c, generated from data/gong.pcm)
 
 ⸻
@@ -208,8 +211,8 @@ Notes:
 Pin assignments (current):
 	•	Doorbell button: GPIO4 (active-low, internal pull-up)
 	•	Status LED (online/ready): GPIO2 (active-high) + 330 ohm resistor
-	•	Door opener relay: GPIO1 (active-high, relay module or transistor driver)
-	•	Original 8VAC gong relay: GPIO3 (active-high, relay module rated for AC)
+	•	Door opener relay: GPIO1 (active-high — triggered by DTMF sequence "123" from Fritz!fon)
+	•	Original 8VAC gong relay: GPIO3 (active-high — 150ms startup delay, 800ms pulse on button press)
 	•	I2C (reserved for sensors): GPIO5 = SDA, GPIO6 = SCL
 	•	MAX98357A I2S: GPIO7 = BCLK, GPIO8 = LRC/WS, GPIO9 = DIN
 	•	PDM mic: GPIO42 = CLK, GPIO41 = DATA (onboard Seeedstudio hardware; INMP441 is the active mic source in this project)
@@ -322,8 +325,8 @@ Current audio plan:
 **Current Implementation (ESP-IDF):**
 - GPIO4, active-low with internal pull-up
 - 50ms debounce in software (polling-based)
-- Callback triggers SIP ring + LED animation + plays gong sound or two tone sound over MAX98357A DAC/Amp and connected speaker.
-
+- Short press: triggers SIP ring + LED animation + plays gong sound over MAX98357A DAC/Amp
+- **Double long-press factory reset**: hold 5 s → release (within 3 s) → hold 5 s again → 5 LED blinks → full NVS erase → reboot
 - Component: `src_idf/components/button/`
 
 Two supported wiring strategies:
@@ -363,30 +366,64 @@ Frigate / Hailo is not part of this project phase.
 
 ⸻
 
-🧭 Next Implementation Steps (Phase 6 — HomeKit)
+🔒 Security & Authentication ✅ Phase 7 Complete
 
-Phase 5 is complete. All audio I/O working end-to-end (Record & Play verified Feb 2026).
+**Device credentials** (username + password) protect the Setup page, all config APIs, and OTA uploads.
 
-Phase 6 (HomeKit):
-	1.	Integrate Espressif HAP SDK or Scrypted bridge for HomeKit doorbell event
+- **First boot**: Browser redirected to `/first-setup` → create username + password (hashed with SHA-256, stored in NVS namespace `"auth"`)
+- **Protected pages** (`/setup`, `/ota`): password overlay on load; credentials cached in `sessionStorage` for the tab lifetime
+- **HTTP Basic Auth**: every protected API call sends `Authorization: Basic base64(username:password)`
+- **Factory reset**: double long-press (hold 5 s → release → hold 5 s) → full NVS erase → reboot → first-setup flow
+- **Change credentials**: Security card in Setup page → new username + password (requires current credentials)
+- **Open endpoints** (no auth): `/api/status`, `/api/logs`, `/capture`, `/live`, `/logs`, asset files
 
-Phase 5 remaining audio stretch goals:
-	2.	SIP bidirectional audio (G.711 RTP TX/RX) — mic capture now unblocked
-	3.	RTSP audio (AAC-LC via `aac_encoder_pipe` + ESP-ADF) — mic capture now unblocked
+Implementation: `src_idf/components/web_server/web_server.c` — `auth_check()`, `auth_save()`, `AUTH_GUARD` macro, `/api/auth/status|setup|change` handlers.
+
+⸻
+
+🔄 OTA Updates ✅ Phase 7 Complete
+
+Web assets are gzip-embedded C arrays in firmware — no separate filesystem partition.
+Only `firmware.bin` is needed for OTA.
+
+**Upload flow:**
+1. `/setup` → Enter credentials → **Enable OTA (5 min)**
+2. Click **Open OTA Page** → `/ota`
+3. Choose `firmware.bin` → **Upload Firmware** → device reboots
+
+**Build:**
+```bash
+# If web assets changed:
+python3 tools/embed_web_assets.py data/ include/
+python3 tools/embed_web_assets.py data/ src_idf/components/embedded_web_assets/
+python3 tools/embed_web_assets.py data/ src_idf/main/generated/
+pio run
+# Output: .pio/build/seeed_xiao_esp32s3_idf/firmware.bin
+```
+
+Full step-by-step: `docs/OTA_UPDATE_FILE.md`
+
+⸻
+
+🧭 Next Implementation Steps (Phase 8 — Cleanup & Resilience)
+
+Phase 7 is complete (OTA + unified auth, verified March 2026).
+
+Phase 8 steps:
+	1.	**RTSP AAC audio** — enable RTSP in web UI, test with VLC (`rtsp://<ip>:8554/mjpeg/1`)
+	2.	**Scrypted integration** — add ESP32 as RTSP Camera, configure Doorbell Group
+	3.	**HomeKit Secure Video** — enable HSV in Scrypted, pair with Home.app
+	4.	**Watchdog / reconnect hardening** — auto-reconnect SIP on network loss
+	5.	Test full pipeline: button → doorbell notification → live stream with audio → HSV recording
 
 ⸻
 
 📝 Open Questions / To-Do
-	•	Select final doorbell button sensing scheme:
-	•	AC detector vs dry contact + relay
 	•	Confirm I2C sensor selection + pull-up values (GPIO6=SCL available; GPIO5 now INMP441 SD)
-	•	Confirm DECT group number and FRITZ!Box SIP account settings
 	•	Tune AAC sample-rate/bitrate defaults for best quality vs bandwidth
-	•	SIP bidirectional audio (mic now working — RTP TX path to implement)
-	•	RTSP AAC audio stream (wire `aac_encoder_pipe` → RTSP server)
 	•	Confirm speaker power + enclosure placement
-	•	Evaluate latency + HomeKit experience
-	•	Phase 6: HomeKit doorbell integration via HAP SDK or Scrypted bridge
+	•	**RTSP AAC audio**: enable RTSP in setup UI → test with VLC → confirm audio track
+	•	**Phase 6**: Scrypted + HomeKit Secure Video — RTSP camera + doorbell webhook + HSV
 
 ⸻
 

@@ -2,23 +2,24 @@
  Project: HomeKitKnock-S3
  File: docs/CURRENT_STATUS.md
  Author: Jesse Greene
- Last Updated: February 26, 2026
+ Last Updated: March 1, 2026
  Purpose: Current project status and next steps
  -->
 
 # Current Project Status
 
-**Last Updated:** February 26, 2026
+**Last Updated:** March 1, 2026
 **Device:** Seeed XIAO ESP32-S3 Sense
 **Framework:** Pure ESP-IDF 5.5.0 (Arduino completely removed)
 **Branch:** `aac-esp-adf`
-**Status:** ✅ **Phase 5 Complete** — Full audio I/O working
+**Status:** ✅ **Phase 5 + SIP Audio Complete** — Full doorbell workflow verified end-to-end
 
 ---
 
 ## Executive Summary
 
-ESP-IDF migration phases 0–5 are complete and verified on hardware:
+ESP-IDF migration phases 0–5 are complete and verified on hardware. Full doorbell workflow
+confirmed end-to-end including bidirectional SIP audio and door opener relay.
 
 | Feature | Status | Notes |
 |---------|--------|-------|
@@ -33,10 +34,12 @@ ESP-IDF migration phases 0–5 are complete and verified on hardware:
 | Speaker gong (MAX98357A) | ✅ Working | PCM from flash, volume 0–100% |
 | INMP441 mic capture | ✅ Working | GPIO5 SD, shared I2S bus |
 | Record & Play test | ✅ Working | Verified end-to-end on hardware |
-| SIP bidirectional audio | 🔧 Planned | Unblocked — RTP TX next |
-| RTSP AAC audio | 🔧 Planned | Unblocked — wire aac_encoder_pipe |
-| HomeKit integration | ❌ Pending | Phase 6 |
-| Full OTA system | ❌ Pending | Phase 7 |
+| GPIO3 gong relay | ✅ Working | 150ms delay, 800ms pulse, original bell |
+| GPIO1 door opener relay | ✅ Working | Triggered by DTMF "123" from Fritz!fon |
+| SIP bidirectional audio | ✅ Working | G.711 PCMU/PCMA RTP, port 40000 |
+| RTSP AAC audio | 🔧 Ready | Components built — enable RTSP in setup UI to test |
+| Scrypted + HomeKit | ❌ Pending | RTSP audio → Scrypted → HSV |
+| Full OTA system | ❌ Pending | Bare /api/ota works; hardening deferred |
 
 ---
 
@@ -74,29 +77,42 @@ and extracts only the L channel: `buffer[i] = chunk[2*i]`.
 
 ---
 
-## Next: Phase 6 — HomeKit Doorbell
+## Bugs Fixed (March 2026 Session)
 
-The device already:
-- Streams video via RTSP to Scrypted
-- Triggers doorbell events via HTTP webhook to Scrypted
-- Rings Fritz!Box DECT phones via SIP
+All fixes committed and pushed to `aac-esp-adf` branch.
 
-Phase 6 adds native HomeKit doorbell integration (HAP SDK or Scrypted bridge).
-
-### Audio Stretch Goals (Phase 5 follow-on)
-- **SIP two-way audio**: G.711 PCMU/PCMA RTP TX path (mic → caller)
-- **RTSP AAC audio**: Wire `aac_encoder_pipe` (ESP-ADF) into RTSP server
+| # | Component | Fix |
+|---|-----------|-----|
+| 1 | `main.c` | Main loop 50ms→10ms — restored G.711 RTP 20ms cadence |
+| 2 | `sip_client.c` | SIP INFO handler for `application/dtmf-relay` door opener |
+| 3 | `sip_client.c` | Static buffers in RTP functions — fixed main task stack overflow |
+| 4 | `sip_client.c` | BYE/CANCEL Call-ID validation — stale retransmits no longer kill active calls |
+| 5 | `sip_client.c` → `audio_output.c` | `audio_output_flush_and_stop()` in `reset_sip_call()` — eliminates post-call DMA replay knock |
+| 6 | `main.c` | `on_dtmf()` rolling 3-digit buffer matching "123" (Fritz!Box door station protocol) |
+| 7 | `docs/SIP Stack Spec.md` | Corrected rtp_port (7078→40000), direction (sendonly→sendrecv), dtmf sequence ("#9"→"123") |
 
 ---
 
-## Memory Budget (Phase 5)
+## Next Steps
+
+1. **RTSP AAC audio** — Enable RTSP in Setup UI → test with VLC (`rtsp://<ip>:8554/mjpeg/1`)
+2. **UI cleanup** — Reorganize setup.html cards (relay timing, audio/mic separation, etc.)
+3. **Scrypted + HomeKit Secure Video** — After RTSP audio confirmed:
+   - Add ESP32 as RTSP Camera in Scrypted
+   - Configure Doorbell Group + webhook
+   - Enable HomeKit Secure Video (HSV) in Scrypted
+4. **OTA hardening** — SHA-256 credentials + time-limited upload window (low priority)
+
+---
+
+## Memory Budget (Phase 5 + SIP Audio)
 
 | Resource | Used | Available | % |
 |----------|------|-----------|---|
-| RAM | 93,304 bytes | 327,680 bytes | 28.5% |
+| RAM | ~96,000 bytes | 327,680 bytes | ~29.3% |
 | Flash | 1,231,045 bytes | 3,932,160 bytes | 31.3% |
 
-Significant headroom remains for Phase 6 (HomeKit HAP SDK typically ~100KB flash).
+RAM increased slightly from 28.5% → 29.3% as large local RTP buffers were moved to BSS (static).
 
 ---
 

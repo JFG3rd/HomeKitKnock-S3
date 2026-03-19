@@ -18,7 +18,7 @@
 #include <sys/time.h>
 
 // Ring buffer configuration
-#define LOG_BUFFER_SIZE 100  // Number of log entries to store
+#define LOG_BUFFER_SIZE 300  // Number of log entries to store
 
 // Ring buffer
 static log_entry_t log_entries[LOG_BUFFER_SIZE];
@@ -37,18 +37,23 @@ static vprintf_like_t original_vprintf = NULL;
 static const char *core_tags[] = {
     "main", "wifi", "wifi_mgr", "nvs", "nvs_mgr", "web_server", "httpd",
     "dns", "dns_server", "esp_netif", "system_api", "heap_init", "cpu_start",
-    "esp_image", "boot", "spi_flash", NULL
+    "esp_image", "boot", "spi_flash",
+    "status_led", "config_mgr", "log_buffer", NULL
 };
 
 static const char *camera_tags[] = {
-    "camera", "cam", "rtsp", "mjpeg", "stream", "ov2640", "s3_eye",
+    "camera", "cam", "ov2640", "s3_eye",
     "jpeg", "fb_alloc", "video", NULL
 };
 
 static const char *doorbell_tags[] = {
     "doorbell", "sip", "sip_client", "button", "ring",
-    "gpio", "relay", "audio", "i2s", "mic",
-    "audio_output", "audio_capture", "i2s_shared_bus", "aac_encoder_pipe", NULL
+    "gpio", "relay", "relay_controller", "audio", "i2s", "mic",
+    "audio_output", "audio_capture", "i2s_shared_bus", NULL
+};
+
+static const char *rtsp_tags[] = {
+    "rtsp", "mjpeg", "aac_pipe", "stream", NULL
 };
 
 /**
@@ -75,6 +80,8 @@ bool log_buffer_tag_matches_filter(const char *tag, log_filter_t filter) {
             return tag_in_list(tag, camera_tags);
         case LOG_FILTER_DOORBELL:
             return tag_in_list(tag, doorbell_tags);
+        case LOG_FILTER_RTSP:
+            return tag_in_list(tag, rtsp_tags);
         default:
             return true;
     }

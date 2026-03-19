@@ -2,14 +2,16 @@
  Project: HomeKitKnock-S3
  File: docs/IMPLEMENTATION_SUMMARY.md
  Author: Jesse Greene
- Last Updated: February 22, 2026
+ Last Updated: March 1, 2026
  -->
 
 # ESP32-S3 Doorbell - Implementation Summary
 
-## Project Status: ESP-IDF Migration Phase 5 Complete ✅
+## Project Status: Full Doorbell Workflow Complete ✅
 
-Phases 0–5 complete. Phase 5 (Audio Path) is fully working: MAX98357A speaker (gong, volume control) + INMP441 mic capture via shared I2S bus — Record & Play verified end-to-end. Next: Phase 6 (HomeKit) and audio stretch goals (SIP bidirectional audio, RTSP AAC).
+Phases 0–5 complete. Full doorbell workflow verified end-to-end on hardware (March 2026):
+button → gong + relay → Fritz!fon rings → bidirectional SIP audio → door opener relay on "Open".
+Next: RTSP AAC audio test, then Scrypted + HomeKit Secure Video integration.
 
 ---
 
@@ -48,14 +50,24 @@ Phases 0–5 complete. Phase 5 (Audio Path) is fully working: MAX98357A speaker 
 - **Setup Page**: Camera Config card with sliders, Apply button, settings load on page open
 - **Deferred Init**: Camera initializes after WiFi connects (if feature enabled)
 
-### SIP Intercom ✅ (Phase 3)
-- **SIP Registration**: Automatic registration with Fritz!Box
+### SIP Intercom ✅ (Phase 3 + March 2026)
+- **SIP Registration**: Automatic registration with Fritz!Box as **IP Door Intercom System**
 - **SIP INVITE**: Ring phones via `**11`, `**12`, etc. (Fritz!Box door intercom numbers)
 - **Digest Authentication**: 401 challenge/response flow
-- **Call Management**: CANCEL, ACK, BYE handling
+- **Call Management**: CANCEL, ACK, BYE handling; BYE validated by Call-ID (stale retransmissions ignored)
+- **Bidirectional Audio**: G.711 PCMU/PCMA RTP on port 40000 — INMP441 → Fritz!fon TX, Fritz!fon → MAX98357A RX ✅
+- **SIP INFO DTMF**: Door opener "123" sequence received via `application/dtmf-relay` → GPIO1 relay
+- **Clean Hangup**: `audio_output_flush_and_stop()` in `reset_sip_call()` prevents DMA replay noise
 - **Verbose Logging**: Single-line SIP packet display for debugging
 - **NVS Persistence**: SIP credentials stored securely
 - **Web Configuration**: SIP settings via `/sip.html`
+
+### Relay Control ✅ (March 2026)
+- **GPIO3 Gong Relay**: Active-high; 150ms startup delay (lets I2S settle), 800ms pulse.
+  Triggered on button press (after `audio_output_play_gong()` is called). Also triggered by
+  web UI "Test Gong" button. Component: `relay_controller`.
+- **GPIO1 Door Opener Relay**: Active-high; triggered when DTMF sequence "123" is accumulated
+  from SIP INFO messages from Fritz!fon "Open" button. Pulse duration NVS-configurable.
 
 ### Physical I/O ✅ (Phase 3)
 - **Doorbell Button**: GPIO4, active-low with internal pull-up, 50ms debounce
@@ -204,8 +216,8 @@ src_idf/
 |------|----------|-------|
 | GPIO4 | Doorbell Button | Active-low, internal pull-up, 50ms debounce |
 | GPIO2 | Status LED | PWM, 330Ω resistor to LED |
-| GPIO1 | Door Opener Relay | Active-high (future) |
-| GPIO3 | Gong Relay | Active-high (future) |
+| GPIO1 | Door Opener Relay | Active-high — triggered by DTMF "123" from Fritz!fon |
+| GPIO3 | Gong Relay | Active-high — 150ms startup delay, 800ms pulse on button press |
 | GPIO5/6 | I2C | Reserved for sensors |
 | GPIO7 | Shared I2S BCLK | MAX98357A BCLK + INMP441 SCK (shared clock line) |
 | GPIO8 | Shared I2S WS | MAX98357A LRC + INMP441 WS (shared word select) |
@@ -259,8 +271,8 @@ src_idf/
 | Phase 2 | ✅ Complete | Config services, captive portal, logs |
 | Phase 3 | ✅ Complete | SIP intercom, button, LED, SNTP |
 | Phase 4 | ✅ Complete | Video path — camera, MJPEG, RTSP |
-| Phase 5 | ✅ Complete | Audio path — speaker + INMP441 mic working; Record & Play verified |
-| Phase 6 | ❌ Pending | HomeKit doorbell |
+| Phase 5 | ✅ Complete | Audio path — speaker + INMP441 mic; SIP bidirectional audio verified |
+| Phase 6 | 🔧 In Progress | HomeKit via Scrypted + HSV (RTSP AAC audio first) |
 | Phase 7 | ❌ Pending | OTA update system (credentials, time-limited window) |
 | Phase 8 | ❌ Pending | Cleanup & resilience |
 
@@ -342,23 +354,22 @@ python3 tools/embed_web_assets.py data/ include/
 **PSRAM:** 8 MB (OPI)
 **Camera:** OV2640
 
-**Memory Usage (ESP-IDF build, Phase 5 complete):**
-- RAM: 93,304 bytes used (28.5%)
+**Memory Usage (Phase 5 + SIP audio, March 2026):**
+- RAM: ~96,000 bytes used (~29.3%) — increased slightly as large RTP stack buffers → static BSS
 - Flash: 1,231,045 bytes (31.3%)
 
 ---
 
 ## Next Steps
 
-### Audio Stretch Goals (Phase 5 follow-on)
-1. SIP bidirectional audio — RTP TX path for mic-to-caller (G.711 PCMU/PCMA)
-2. RTSP AAC audio — wire `aac_encoder_pipe` (ESP-ADF) into RTSP server pipeline
-
-### Phase 6: HomeKit Doorbell
-3. Integrate Espressif HAP SDK or Scrypted bridge; expose doorbell + camera to Home app
+### Phase 6: Scrypted + HomeKit Secure Video
+1. **RTSP AAC audio** — enable RTSP in setup UI → test with VLC (`rtsp://<ip>:8554/mjpeg/1`)
+2. **UI cleanup** — reorganize setup.html (relay timing to Core Features, audio/mic separation)
+3. **Scrypted integration** — add ESP32 as RTSP Camera, configure Doorbell Group + webhook
+4. **HomeKit Secure Video** — enable HSV in Scrypted HomeKit plugin, pair with Home.app
 
 ### Phase 7: OTA Update System
-4. Credential management (username + SHA-256 hash in NVS)
-5. Time-limited upload window with Basic auth
+5. Credential management (username + SHA-256 hash in NVS)
+6. Time-limited upload window with Basic auth
 
 See [IDF_ADF_MIGRATION_PLAN.md](IDF_ADF_MIGRATION_PLAN.md) for full roadmap.

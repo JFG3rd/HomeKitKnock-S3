@@ -280,7 +280,10 @@
 
         function resetUdpCounters() {
             const msg = document.getElementById("metricsMsg");
-            fetch("/api/metrics/reset", { method: "POST" })
+            const _u = sessionStorage.getItem("device_user") || "";
+            const _p = sessionStorage.getItem("device_pass") || "";
+            const authHdr = _p ? { "Authorization": "Basic " + btoa(_u + ":" + _p) } : {};
+            fetch("/api/metrics/reset", { method: "POST", headers: authHdr })
                 .then(r => r.json())
                 .then(() => {
                     msg.textContent = "✅ UDP counters reset.";

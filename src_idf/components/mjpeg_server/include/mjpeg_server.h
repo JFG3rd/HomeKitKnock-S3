@@ -44,6 +44,24 @@ uint8_t mjpeg_server_client_count(void);
  */
 bool mjpeg_server_is_running(void);
 
+/**
+ * Get client IP strings for all active MJPEG streaming clients.
+ *
+ * @param out   Array of char[16] buffers to fill with dotted-decimal IPs.
+ * @param max   Maximum number of entries to fill (should match array size).
+ * @param count Set to the number of entries filled on return.
+ */
+void mjpeg_server_get_client_ips(char out[][16], int max, int *count);
+
+/** Set max concurrent MJPEG clients (1-4). Persists to NVS. */
+void mjpeg_server_set_max_clients(int val);
+
+/** Get current max concurrent MJPEG clients. */
+int mjpeg_server_get_max_clients(void);
+
+/** Load max clients setting from NVS (call at init before start). */
+void mjpeg_server_load_max_clients(void);
+
 #ifdef __cplusplus
 }
 #endif

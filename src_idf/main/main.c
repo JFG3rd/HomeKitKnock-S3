@@ -24,6 +24,8 @@
 #include <time.h>
 #include <sys/time.h>
 #include "nvs.h"
+#include "nvs_flash.h"
+#include "driver/gpio.h"
 
 // Component headers
 #include "nvs_manager.h"
@@ -122,6 +124,22 @@ static void initialize_sntp(void) {
 
     sntp_initialized = true;
     ESP_LOGI(TAG, "SNTP initialized, waiting for time sync...");
+}
+
+/**
+ * Double long-press callback — factory reset (hold 5 s, release, hold 5 s again)
+ */
+static void on_button_long_press(void) {
+    ESP_LOGW(TAG, "Factory reset triggered by double long press — erasing NVS");
+    // Rapid LED blink × 5 as visual confirmation
+    for (int i = 0; i < 5; i++) {
+        gpio_set_level(GPIO_NUM_2, 1);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        gpio_set_level(GPIO_NUM_2, 0);
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    nvs_flash_erase();
+    esp_restart();
 }
 
 /**
@@ -279,6 +297,7 @@ void app_main(void) {
         ESP_LOGW(TAG, "Button init failed (non-fatal)");
     } else {
         button_set_callback(on_button_press);
+        button_set_double_long_press_callback(on_button_long_press, 5000, 3000);  // hold 5s, release, hold 5s = factory reset
     }
 
     // Initialize relay outputs (GPIO3 gong, GPIO1 door opener), default LOW
@@ -452,6 +471,7 @@ void app_main(void) {
                 if (cam_err == ESP_OK) {
                     camera_initialized = true;
                     ESP_LOGI(TAG, "Camera initialized, starting MJPEG server...");
+                    mjpeg_server_load_max_clients();
                     cam_err = mjpeg_server_start();
                     if (cam_err == ESP_OK) {
                         ESP_LOGI(TAG, "MJPEG server started on port 81");
@@ -460,14 +480,27 @@ void app_main(void) {
                     }
                     // Start RTSP server if enabled
                     if (camera_is_rtsp_enabled()) {
+                        rtsp_server_set_allow_udp(camera_is_rtsp_udp_enabled());
+                        // Load saved RTSP credentials (empty = open access)
+                        {
+                            char rtsp_user[32] = {0}, rtsp_pass[64] = {0};
+                            nvs_handle_t rh;
+                            if (nvs_manager_open("rtsp", NVS_READONLY, &rh) == ESP_OK) {
+                                size_t ul = sizeof(rtsp_user), pl = sizeof(rtsp_pass);
+                                nvs_get_str(rh, "user", rtsp_user, &ul);
+                                nvs_get_str(rh, "pass", rtsp_pass, &pl);
+                                nvs_close(rh);
+                            }
+                            rtsp_server_set_credentials(rtsp_user, rtsp_pass);
+                        }
                         cam_err = rtsp_server_start();
                         if (cam_err == ESP_OK) {
-                            ESP_LOGI(TAG, "RTSP server started on port 8554");
+                            ESP_LOGI("rtsp", "RTSP server started on port 8554");
                         } else {
-                            ESP_LOGW(TAG, "RTSP server start failed: %s", esp_err_to_name(cam_err));
+                            ESP_LOGW("rtsp", "RTSP server start failed: %s", esp_err_to_name(cam_err));
                         }
                     } else {
-                        ESP_LOGI(TAG, "RTSP streaming disabled - skipping RTSP server");
+                        ESP_LOGI("rtsp", "RTSP streaming disabled - skipping RTSP server");
                     }
 
                     // Start AAC encoder pipeline for RTSP audio.

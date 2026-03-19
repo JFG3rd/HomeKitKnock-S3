@@ -8,7 +8,7 @@
 # ESP32-S3 Doorbell Documentation
 
 DIY HomeKit doorbell using Seeed XIAO ESP32-S3 Sense → Scrypted → Apple HomeKit.
-Pure ESP-IDF 5.5.0 firmware (no Arduino), Phases 0–5 complete.
+Pure ESP-IDF 5.5.0 firmware (no Arduino), Phases 0–7 complete.
 
 ## 🚀 Start Here
 
@@ -26,8 +26,8 @@ Pure ESP-IDF 5.5.0 firmware (no Arduino), Phases 0–5 complete.
 | Phase 3 | ✅ Complete | SIP intercom, button, LED, SNTP |
 | Phase 4 | ✅ Complete | Video — camera, MJPEG, RTSP |
 | Phase 5 | ✅ Complete | Audio — speaker + INMP441 mic, Record & Play |
-| Phase 6 | ❌ Pending | HomeKit doorbell integration |
-| Phase 7 | ❌ Pending | Full OTA update system |
+| Phase 6 | 🔧 In Progress | HomeKit doorbell via Scrypted + HSV |
+| Phase 7 | ✅ Complete | OTA update system + unified device auth |
 | Phase 8 | ❌ Pending | Cleanup & resilience |
 
 ## 📚 Documentation by Topic
@@ -70,8 +70,18 @@ Pure ESP-IDF 5.5.0 firmware (no Arduino), Phases 0–5 complete.
 ## 🛠️ Quick Build & Flash
 
 ```bash
-pio run -e seeed_xiao_esp32s3_idf -t upload
-pio device monitor -e seeed_xiao_esp32s3_idf
+# (If web assets changed) Regenerate embedded headers first:
+python3 tools/embed_web_assets.py data/ include/
+python3 tools/embed_web_assets.py data/ src_idf/components/embedded_web_assets/
+python3 tools/embed_web_assets.py data/ src_idf/main/generated/
+
+# Build + flash via USB:
+pio run
+pio run -t upload
+pio device monitor
+
+# OTA update (after enabling in Setup page):
+# See docs/OTA_UPDATE_FILE.md for step-by-step instructions
 ```
 
 ## 🔗 External Resources
@@ -85,5 +95,5 @@ pio device monitor -e seeed_xiao_esp32s3_idf
 **Project:** HomeKitKnock-S3
 **Device:** Seeed XIAO ESP32-S3 Sense
 **Framework:** Pure ESP-IDF 5.5.0 (PlatformIO)
-**Status:** Phase 5 complete — audio I/O fully working
-**Last Updated:** February 26, 2026
+**Status:** Phase 7 complete — OTA + unified auth working; Phase 6 (HomeKit) in progress
+**Last Updated:** 2026-03-10

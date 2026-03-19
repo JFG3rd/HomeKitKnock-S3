@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>First-Time Setup</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="dark-mode-toggle">
+        <label class="switch">
+            <input type="checkbox" id="darkModeToggle">
+            <span class="slider"></span>
+        </label>
+        <span>Dark Mode</span>
+    </div>
+
+    <div class="header-container">
+        <h1 class="main-title">Welcome</h1>
+        <p>Create a username and password to protect your doorbell settings and firmware updates.</p>
+    </div>
+
+    <div class="dashboard">
+        <div class="container card setup-card">
+            <h3 class="card-title">🔒 Create Device Credentials</h3>
+
+            <div class="ota-note" style="margin-bottom:16px;">
+                These credentials protect the Setup page and all configuration. You will be asked for them
+                each time you open a new browser tab. To reset them, hold the doorbell button for 5 seconds,
+                release it, then hold for 5 seconds again — this performs a full factory reset.
+            </div>
+
+            <label><strong>Username</strong></label>
+            <input type="text" id="newUser" placeholder="3–32 characters (a-z, 0-9, _.-)" autocomplete="username">
+
+            <label style="margin-top:10px;"><strong>Password</strong></label>
+            <input type="password" id="newPass" placeholder="At least 12 characters" autocomplete="new-password">
+
+            <div id="strengthBar" style="margin-top:8px; height:6px; border-radius:3px; background:var(--info-item-bg); overflow:hidden;">
+                <div id="strengthFill" style="height:100%; width:0%; transition:width 0.3s, background 0.3s;"></div>
+            </div>
+            <div id="strengthLabel" style="font-size:0.8em; margin-top:4px; color:var(--muted-text);"></div>
+
+            <label style="margin-top:10px;"><strong>Confirm Password</strong></label>
+            <input type="password" id="confirmPass" placeholder="Re-enter password" autocomplete="new-password">
+
+            <div id="errorMsg" style="color:#e55; margin-top:8px; display:none;"></div>
+
+            <button id="saveBtn" class="button btn-save" style="margin-top:16px;" onclick="doSetup()">Save &amp; Continue</button>
+        </div>
+    </div>
+
+    <script>
+        const darkToggle = document.getElementById("darkModeToggle");
+        function setDarkMode(enabled) {
+            document.body.classList.toggle("dark-mode", enabled);
+            localStorage.setItem("darkMode", enabled ? "enabled" : "disabled");
+        }
+        const savedDark = localStorage.getItem("darkMode");
+        const darkOn = savedDark === null ? true : savedDark === "enabled";
+        darkToggle.checked = darkOn;
+        setDarkMode(darkOn);
+        darkToggle.addEventListener("change", () => setDarkMode(darkToggle.checked));
+
+        // If already configured, skip to setup
+        fetch("/api/auth/status").then(r => r.json()).then(d => {
+            if (d.configured) window.location.href = "/setup";
+        }).catch(() => {});
+
+        function checkStrength(pass) {
+            let score = 0;
+            if (pass.length >= 8)  score++;
+            if (pass.length >= 12) score++;
+            if (/[a-z]/.test(pass) && /[A-Z]/.test(pass)) score++;
+            if (/[0-9]/.test(pass)) score++;
+            if (/[^a-zA-Z0-9]/.test(pass)) score++;
+            return score;
+        }
+
+        function isValidUsername(u) {
+            return u.length >= 3 && u.length <= 32 && /^[a-zA-Z0-9._-]+$/.test(u);
+        }
+
+        function isStrong(pass) {
+            return pass.length >= 12
+                && /[a-z]/.test(pass)
+                && /[A-Z]/.test(pass)
+                && /[0-9]/.test(pass)
+                && /[^a-zA-Z0-9]/.test(pass);
+        }
+
+        const newPassEl = document.getElementById("newPass");
+        const fillEl = document.getElementById("strengthFill");
+        const labelEl = document.getElementById("strengthLabel");
+        newPassEl.addEventListener("input", () => {
+            const s = checkStrength(newPassEl.value);
+            const colors = ["#e55", "#e88", "#e9a", "#9c9", "#3a3"];
+            const labels = ["Very weak", "Weak", "Fair", "Good", "Strong"];
+            fillEl.style.width = (s * 20) + "%";
+            fillEl.style.background = colors[Math.min(s, 4)];
+            labelEl.textContent = newPassEl.value ? labels[Math.min(s, 4)] : "";
+        });
+
+        function showError(msg) {
+            const el = document.getElementById("errorMsg");
+            el.textContent = msg;
+            el.style.display = "block";
+        }
+        function clearError() {
+            document.getElementById("errorMsg").style.display = "none";
+        }
+
+        function doSetup() {
+            clearError();
+            const user = document.getElementById("newUser").value.trim();
+            const pass = newPassEl.value;
+            const confirm = document.getElementById("confirmPass").value;
+            if (!user) { showError("Username is required."); return; }
+            if (!isValidUsername(user)) { showError("Username must be 3–32 characters (letters, digits, _ . -)"); return; }
+            if (!pass) { showError("Password is required."); return; }
+            if (pass !== confirm) { showError("Passwords do not match."); return; }
+            if (!isStrong(pass)) {
+                showError("Password must be at least 12 characters and include upper, lower, digit, and symbol.");
+                return;
+            }
+            const btn = document.getElementById("saveBtn");
+            btn.disabled = true;
+            btn.textContent = "Saving...";
+            fetch("/api/auth/setup", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username: user, password: pass })
+            }).then(r => {
+                if (r.status === 409) {
+                    window.location.href = "/setup";
+                    return null;
+                }
+                if (!r.ok) { r.text().then(t => { showError("Error: " + t); btn.disabled = false; btn.textContent = "Save & Continue"; }); return null; }
+                return r.json();
+            }).then(data => {
+                if (!data) return;
+                sessionStorage.setItem("device_user", user);
+                sessionStorage.setItem("device_pass", pass);
+                window.location.href = "/setup";
+            }).catch(e => {
+                showError("Network error: " + e);
+                btn.disabled = false;
+                btn.textContent = "Save & Continue";
+            });
+        }
+
+        document.addEventListener("keydown", e => { if (e.key === "Enter") doSetup(); });
+    </script>
+</body>
+</html>

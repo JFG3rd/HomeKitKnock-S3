@@ -66,6 +66,8 @@ void audio_capture_set_sensitivity(uint8_t percent);
 
 bool audio_capture_is_enabled(void);
 bool audio_capture_is_muted(void);
+void audio_capture_set_enabled(bool enabled);
+void audio_capture_set_muted(bool muted);
 uint8_t audio_capture_get_sensitivity(void);
 
 #ifdef __cplusplus

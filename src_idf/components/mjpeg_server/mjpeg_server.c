@@ -8,6 +8,8 @@
 
 #include "mjpeg_server.h"
 #include "camera.h"
+#include "nvs_manager.h"
+#include "nvs.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -16,12 +18,13 @@
 #include "lwip/netdb.h"
 
 #include <string.h>
+#include <stdlib.h>
 #include <errno.h>
 
 static const char *TAG = "mjpeg";
 
 #define MJPEG_PORT          81
-#define MAX_CLIENTS         2
+#define MAX_CLIENTS         4       // Array bound (max settable via UI)
 #define STREAM_TASK_STACK   4096
 #define SERVER_TASK_STACK   4096
 #define STREAM_CORE         1
@@ -40,8 +43,12 @@ static const char *STREAM_PART_FMT = "Content-Type: image/jpeg\r\nContent-Length
 
 static volatile bool server_running = false;
 static volatile uint8_t active_clients = 0;
+static char s_mjpeg_client_ips[MAX_CLIENTS][16] = {{0}};
 static int server_sock = -1;
 static TaskHandle_t server_task_handle = NULL;
+static int s_max_clients = 2;  // Runtime limit (1-4), persisted in NVS
+
+typedef struct { int sock; int slot; } mjpeg_client_param_t;
 
 /**
  * Send all bytes, handling partial writes
@@ -86,7 +93,10 @@ static void drain_http_request(int sock) {
  * Per-client streaming task
  */
 static void stream_client_task(void *pvParameters) {
-    int client_sock = (int)(intptr_t)pvParameters;
+    mjpeg_client_param_t *p = (mjpeg_client_param_t *)pvParameters;
+    int client_sock = p->sock;
+    int slot = p->slot;
+    free(p);
     active_clients++;
 
     ESP_LOGI(TAG, "Client connected (active: %d)", active_clients);
@@ -144,6 +154,7 @@ static void stream_client_task(void *pvParameters) {
 
 cleanup:
     close(client_sock);
+    s_mjpeg_client_ips[slot][0] = '\0';
     active_clients--;
     ESP_LOGI(TAG, "Client disconnected (active: %d)", active_clients);
     vTaskDelete(NULL);
@@ -190,6 +201,7 @@ static void server_task(void *pvParameters) {
     }
 
     ESP_LOGI(TAG, "MJPEG server listening on port %d", MJPEG_PORT);
+    uint32_t last_fd_pressure_log_ms = 0;
 
     while (server_running) {
         struct sockaddr_in client_addr;
@@ -204,6 +216,16 @@ static void server_task(void *pvParameters) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 continue;  // Timeout, check server_running and loop
             }
+            if (errno == EMFILE || errno == ENFILE) {
+                uint32_t now = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+                if (now - last_fd_pressure_log_ms > 2000) {
+                    last_fd_pressure_log_ms = now;
+                    ESP_LOGW(TAG, "Accept fd pressure: errno %d, active clients: %d",
+                             errno, active_clients);
+                }
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
+            }
             if (server_running) {
                 ESP_LOGW(TAG, "Accept failed: errno %d", errno);
             }
@@ -211,7 +233,7 @@ static void server_task(void *pvParameters) {
         }
 
         // Check if we have room for another client
-        if (active_clients >= MAX_CLIENTS) {
+        if (active_clients >= s_max_clients) {
             ESP_LOGW(TAG, "Max clients reached, rejecting connection");
             const char *busy = "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n";
             send(client_sock, busy, strlen(busy), 0);
@@ -219,10 +241,26 @@ static void server_task(void *pvParameters) {
             continue;
         }
 
-        // Log client IP
+        // Log client IP and store in slot
         char ip_str[16];
         inet_ntoa_r(client_addr.sin_addr, ip_str, sizeof(ip_str));
         ESP_LOGI(TAG, "New client from %s", ip_str);
+
+        int slot = 0;
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (s_mjpeg_client_ips[i][0] == '\0') { slot = i; break; }
+        }
+        strlcpy(s_mjpeg_client_ips[slot], ip_str, sizeof(s_mjpeg_client_ips[slot]));
+
+        mjpeg_client_param_t *param = malloc(sizeof(mjpeg_client_param_t));
+        if (!param) {
+            ESP_LOGE(TAG, "OOM for client param");
+            s_mjpeg_client_ips[slot][0] = '\0';
+            close(client_sock);
+            continue;
+        }
+        param->sock = client_sock;
+        param->slot = slot;
 
         // Spawn per-client streaming task on core 1
         char task_name[24];
@@ -232,7 +270,7 @@ static void server_task(void *pvParameters) {
             stream_client_task,
             task_name,
             STREAM_TASK_STACK,
-            (void *)(intptr_t)client_sock,
+            param,
             1,  // Priority
             NULL,
             STREAM_CORE
@@ -240,6 +278,8 @@ static void server_task(void *pvParameters) {
 
         if (ret != pdPASS) {
             ESP_LOGE(TAG, "Failed to create client task");
+            s_mjpeg_client_ips[slot][0] = '\0';
+            free(param);
             close(client_sock);
         }
     }
@@ -309,4 +349,41 @@ uint8_t mjpeg_server_client_count(void) {
 
 bool mjpeg_server_is_running(void) {
     return server_running;
+}
+
+void mjpeg_server_get_client_ips(char out[][16], int max, int *count) {
+    *count = 0;
+    for (int i = 0; i < MAX_CLIENTS && *count < max; i++) {
+        if (s_mjpeg_client_ips[i][0] != '\0') {
+            strlcpy(out[*count], s_mjpeg_client_ips[i], 16);
+            (*count)++;
+        }
+    }
+}
+
+void mjpeg_server_set_max_clients(int val) {
+    if (val < 1) val = 1;
+    if (val > MAX_CLIENTS) val = MAX_CLIENTS;
+    s_max_clients = val;
+    nvs_handle_t h;
+    if (nvs_manager_open("camera", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, "http_max_cl", (uint8_t)val);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
+int mjpeg_server_get_max_clients(void) {
+    return s_max_clients;
+}
+
+void mjpeg_server_load_max_clients(void) {
+    nvs_handle_t h;
+    if (nvs_manager_open("camera", NVS_READONLY, &h) == ESP_OK) {
+        uint8_t val = 2;
+        if (nvs_get_u8(h, "http_max_cl", &val) == ESP_OK && val >= 1 && val <= MAX_CLIENTS) {
+            s_max_clients = val;
+        }
+        nvs_close(h);
+    }
 }

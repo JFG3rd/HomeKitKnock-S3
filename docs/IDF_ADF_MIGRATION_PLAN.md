@@ -101,7 +101,7 @@ Note: ESP-ADF is NOT used — audio is implemented with native ESP-IDF I2S drive
 
 **Architecture decision**: Audio is implemented with native ESP-IDF I2S drivers, not ESP-ADF.
 INMP441 (external I2S mic) is the active source. The onboard PDM mic (GPIO41/42) is physically integrated on the XIAO ESP32-S3 Sense PCB by Seeedstudio and is available as a software-selectable fallback.
-`aac_encoder_pipe` will use ESP-ADF for future RTSP AAC streaming (not yet wired into build).
+`aac_encoder_pipe` will use ESP-ADF for future RTSP AAC streaming 
 
 ### Shared I2S Bus
 GPIO7 (BCLK) and GPIO8 (WS) are physically shared between MAX98357A speaker and INMP441 mic.
@@ -139,12 +139,14 @@ output pin and the camera chip drives it electrically regardless of camera softw
 | Shared bus full-duplex | ✅ | GPIO7/8 shared, TX=BCLK master |
 | INMP441 capture (Record & Play) | ✅ | GPIO5 SD, de-interleaved, verified |
 | INMP441 independent of camera | ✅ | Camera-gate bug fixed |
-| SIP bidirectional audio | 🔧 | Unblocked — RTP TX path next |
-| RTSP audio (AAC) | 🔧 | Unblocked — wire aac_encoder_pipe next |
+| SIP bidirectional audio | ✅ | G.711 PCMU/PCMA RTP — verified March 2026 |
+| RTSP audio (AAC) | 🔧 | Components built — enable RTSP in setup UI to test |
 
-## Phase 6 — HomeKit doorbell
-- Integrate Espressif HAP SDK (IDF) or external bridge; expose doorbell + camera.
-- Success: doorbell event + live video/audio in Home app.
+## Phase 6 — HomeKit doorbell (via Scrypted + HSV)
+- RTSP AAC audio confirmed in VLC → add ESP32 as RTSP Camera in Scrypted.
+- Configure Scrypted Doorbell Group (RTSP camera + webhook sensor).
+- Enable HomeKit Secure Video (HSV) in Scrypted HomeKit plugin.
+- Success: button press → iPhone notification → live video+audio in Home.app → HSV recording.
 
 ## Phase 7 — OTA update system
 - Port the full OTA system from Arduino version to ESP-IDF.
@@ -229,8 +231,8 @@ src_idf/
 |------|----------|---------------|
 | GPIO4 | Doorbell Button | Active-low, internal pull-up, 50ms debounce |
 | GPIO2 | Status LED | PWM (LEDC), 8-bit, 5kHz |
-| GPIO1 | Door Opener Relay | Active-high (future) |
-| GPIO3 | Gong Relay | Active-high (future) |
+| GPIO1 | Door Opener Relay | Active-high — triggered by DTMF "123" from Fritz!fon |
+| GPIO3 | Gong Relay | Active-high — 150ms startup delay, 800ms pulse on button press |
 | GPIO7 | Shared I2S BCLK | MAX98357A BCLK + INMP441 SCK (shared via i2s_shared_bus) |
 | GPIO8 | Shared I2S WS | MAX98357A LRC + INMP441 WS (shared via i2s_shared_bus) |
 | GPIO9 | I2S_NUM_1 TX data | MAX98357A DIN (speaker data out) |
@@ -420,3 +422,51 @@ Per `docs/WIRING_DIAGRAM.md`: GPIO7/8 are PHYSICALLY shared between MAX98357A an
 - Wire `audio_output.c` and `audio_capture.c` to use shared bus
 - Move `audio_capture_init()` out of camera-gated block
 - Add `POST /api/mic/test` + "🎤 Record & Play" button
+
+---
+
+## Session Summary (March 1, 2026)
+
+### Full Doorbell Workflow Verified End-to-End
+
+All fixes committed and pushed to `aac-esp-adf` branch.
+
+#### 7 Bugs Fixed
+
+1. **Main loop 50ms→10ms** (`main.c`): G.711 RTP needs 20ms cadence; 50ms main loop caused ~60%
+   TX packet loss and bursty RX underruns → Fritz!fon perceived silent/garbled audio. At 10ms the
+   `now - last >= 20` gate fires correctly and DMA stays half-full.
+
+2. **SIP INFO DTMF handler** (`sip_client.c`): Fritz!Box delivers door opener via SIP INFO
+   `application/dtmf-relay` (RFC 2976) — NOT RTP telephone-event (PT=101). No INFO handler existed.
+   Added: ACK with 200 OK, Call-ID validation, parse `Signal=N` body → call `dtmf_callback(char)`.
+
+3. **Main task stack overflow** (`sip_client.c`): `send_sip_rtp_frame()` (~1.3KB stack) +
+   `handle_sip_rtp_packet()` (~960B VLA) + `sip_media_process()` RX buf (512B) exceeded main task
+   stack (~3.5KB). Made all large buffers `static` → moved from stack to BSS.
+
+4. **BYE/CANCEL Call-ID validation** (`sip_client.c`): Fritz!Box retransmits stale BYEs from old
+   sessions on every reboot. Without Call-ID match, these killed the new active call. Added
+   `extract_header(sip_rx_buf, "Call-ID", ...)` check before `reset_sip_call()`.
+
+5. **DMA circular-buffer replay** (`sip_client.c` → `audio_output.c`): After call ends, I2S DMA
+   kept playing last decoded RTP audio frame in a repeating loop (audible knock/click). Fixed by
+   calling `audio_output_flush_and_stop()` in `reset_sip_call()` — fills DMA with silence while
+   keeping TX (BCLK) alive for INMP441.
+
+6. **DTMF 3-digit sequence** (`main.c`): Fritz!Box door station sends "1", "2", "3" as separate
+   SIP INFO messages. `on_dtmf()` rewritten with a rolling 3-char buffer matching "123" with 500ms
+   idle-gap reset → `relay_controller_pulse_door()`.
+
+7. **SIP Stack Spec corrections** (`docs/SIP Stack Spec.md`): rtp_port 7078→40000,
+   direction sendonly→sendrecv, dtmf_open_sequence "#9"→"123".
+
+#### Verified Workflow
+- Button → ding-dong (1.5s PCM) + GPIO3 relay → Fritz!fon rings ✅
+- Fritz!fon "Talk" → bidirectional G.711 PCMU audio (INMP441 ↔ MAX98357A) ✅
+- Fritz!fon "Open" → SIP INFO "123" → GPIO1 door opener relay ✅
+- Fritz!fon "End" / auto-BYE → clean hangup, no post-call noise ✅
+
+#### Memory (after static buffer fixes)
+- RAM: ~29.3% (~96,000 / 327,680 bytes) — increased from 28.5% as stack buffers → BSS
+- Flash: 31.3% (unchanged)

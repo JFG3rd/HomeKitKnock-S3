@@ -15,6 +15,8 @@
 #include "embedded_guide.h"
 #include "embedded_ota.h"
 #include "embedded_logs.h"
+#include "embedded_first-setup.h"
+#include "embedded_favicon.h"
 
 // File registry entry
 struct EmbeddedFile {
@@ -33,10 +35,12 @@ const struct EmbeddedFile embedded_files[] = {
     {"live.html", live_data, live_size, live_mime},
     {"guide.html", guide_data, guide_size, guide_mime},
     {"ota.html", ota_data, ota_size, ota_mime},
-    {"logs.html", logs_data, logs_size, logs_mime}
+    {"logs.html", logs_data, logs_size, logs_mime},
+    {"first-setup.html", first_setup_data, first_setup_size, first_setup_mime},
+    {"favicon.ico", favicon_data, favicon_size, favicon_mime}
 };
 
-const size_t embedded_files_count = 8;
+const size_t embedded_files_count = 10;
 
 // Helper function to find file by name
 static inline const struct EmbeddedFile* find_embedded_file(const char* filename) {

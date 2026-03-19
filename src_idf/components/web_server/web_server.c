@@ -48,15 +48,23 @@ static const char *TAG = "web_server";
 #define NVS_RTSP_NAMESPACE   "rtsp"
 
 // ---------------------------------------------------------------------------
-// OTA authentication & window state
+// Device authentication & OTA window state
 // ---------------------------------------------------------------------------
-#define NVS_OTA_NAMESPACE    "ota"
+#define NVS_AUTH_NAMESPACE   "auth"
 #define OTA_WINDOW_US        (5LL * 60 * 1000000LL)   // 5 minutes in microseconds
 
 static bool    s_ota_enabled    = false;
 static int64_t s_ota_enable_us  = 0;
-static char    s_ota_user[64]   = {0};
-static char    s_ota_hash[65]   = {0};  // 64 hex chars of SHA-256 + NUL
+static char    s_auth_hash[65]      = {0};  // SHA-256 hex of device password; empty = unconfigured
+static char    s_auth_user_hash[65] = {0};  // SHA-256 hex of username; empty = unconfigured
+
+// Guard macro — sends 401 and returns if device password is set but auth header is wrong
+#define AUTH_GUARD(req) do { \
+    if (auth_is_configured() && !auth_check(req)) { \
+        httpd_resp_send_err((req), HTTPD_401_UNAUTHORIZED, "Unauthorized"); \
+        return ESP_OK; \
+    } \
+} while (0)
 
 /** Hash a C-string password to lowercase hex SHA-256 (64 chars + NUL in out). */
 static void sha256_hex(const char *input, char out[65]) {
@@ -72,15 +80,19 @@ static void sha256_hex(const char *input, char out[65]) {
     }
 }
 
-/** Load OTA credentials from NVS into module-level state. */
-static void ota_load_credentials(void) {
+/** Load device auth hashes from NVS into module-level state. */
+static void auth_load(void) {
     nvs_handle_t h;
-    if (nvs_open(NVS_OTA_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return;
-    size_t len = sizeof(s_ota_user);
-    nvs_get_str(h, "username", s_ota_user, &len);
-    len = sizeof(s_ota_hash);
-    nvs_get_str(h, "pass_hash", s_ota_hash, &len);
+    if (nvs_open(NVS_AUTH_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return;
+    size_t len = sizeof(s_auth_hash);
+    nvs_get_str(h, "pass_hash", s_auth_hash, &len);
+    len = sizeof(s_auth_user_hash);
+    nvs_get_str(h, "user_hash", s_auth_user_hash, &len);
     nvs_close(h);
+}
+
+static bool auth_is_configured(void) {
+    return s_auth_hash[0] != '\0' && s_auth_user_hash[0] != '\0';
 }
 
 /** Return true if the OTA upload window is currently open; expires window if timed out. */
@@ -102,162 +114,178 @@ static int32_t ota_remaining_ms(void) {
 }
 
 /**
- * Validate HTTP Basic auth against stored OTA credentials.
+ * Validate HTTP Basic auth against stored device username + password hashes.
+ * Both username and password must match.
  * Returns true if auth is present and correct.
  */
-static bool ota_check_basic_auth(httpd_req_t *req) {
+static bool auth_check(httpd_req_t *req) {
     char auth_hdr[256] = {0};
-    if (httpd_req_get_hdr_value_str(req, "Authorization", auth_hdr, sizeof(auth_hdr)) != ESP_OK) {
+    if (httpd_req_get_hdr_value_str(req, "Authorization", auth_hdr, sizeof(auth_hdr)) != ESP_OK)
         return false;
-    }
-    // Must start with "Basic "
     if (strncmp(auth_hdr, "Basic ", 6) != 0) return false;
-    const char *b64 = auth_hdr + 6;
 
-    // Decode base64
-    uint8_t decoded[128] = {0};
+    uint8_t decoded[160] = {0};
     size_t decoded_len = 0;
     if (mbedtls_base64_decode(decoded, sizeof(decoded) - 1, &decoded_len,
-                              (const uint8_t *)b64, strlen(b64)) != 0) {
+                              (const uint8_t *)(auth_hdr + 6), strlen(auth_hdr + 6)) != 0)
         return false;
-    }
     decoded[decoded_len] = '\0';
 
-    // Split at first ':'
+    // Split at ':' → username : password
     char *colon = strchr((char *)decoded, ':');
     if (!colon) return false;
     *colon = '\0';
-    const char *req_user = (const char *)decoded;
-    const char *req_pass = colon + 1;
-
-    // Compare username (case-sensitive)
-    if (strcmp(req_user, s_ota_user) != 0) return false;
-
-    // Compare SHA-256(password) with stored hash
-    char req_hash[65];
-    sha256_hex(req_pass, req_hash);
-    return strcmp(req_hash, s_ota_hash) == 0;
+    char req_user_hash[65], req_pass_hash[65];
+    sha256_hex((char *)decoded, req_user_hash);
+    sha256_hex(colon + 1, req_pass_hash);
+    return strcmp(req_user_hash, s_auth_user_hash) == 0
+        && strcmp(req_pass_hash, s_auth_hash) == 0;
 }
 
 // ---------------------------------------------------------------------------
 // OTA HTTP handlers
 // ---------------------------------------------------------------------------
 
-/** GET /ota/status — returns OTA configured/enabled state.
- *  Requires Basic auth if credentials are configured; returns 401 otherwise.
- *  If not configured, returns {"configured":false,...} without requiring auth.
- */
+/** GET /ota/status — returns OTA window state. Requires device auth if configured. */
 static esp_err_t ota_status_handler(httpd_req_t *req) {
-    bool configured = (s_ota_user[0] != '\0' && s_ota_hash[0] != '\0');
-    if (configured && !ota_check_basic_auth(req)) {
-        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Authentication required");
-        return ESP_OK;
-    }
+    AUTH_GUARD(req);
     bool enabled = ota_is_window_open();
     int32_t rem  = ota_remaining_ms();
-    char resp[256];
-    if (configured) {
-        snprintf(resp, sizeof(resp),
-                 "{\"configured\":true,\"enabled\":%s,\"remaining_ms\":%ld,\"username\":\"%s\"}",
-                 enabled ? "true" : "false", (long)rem, s_ota_user);
-    } else {
-        snprintf(resp, sizeof(resp),
-                 "{\"configured\":false,\"enabled\":false,\"remaining_ms\":0}");
-    }
+    char resp[64];
+    snprintf(resp, sizeof(resp), "{\"enabled\":%s,\"remaining_ms\":%ld}",
+             enabled ? "true" : "false", (long)rem);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, strlen(resp));
     return ESP_OK;
 }
 
-/** POST /ota/config — set/update OTA credentials.
- *  Body JSON: {"username":"...","password":"..."}
- *  If already configured: requires valid Basic auth.
- *  If not configured: accepts without auth (initial setup).
- */
-static esp_err_t ota_config_handler(httpd_req_t *req) {
-    bool configured = (s_ota_user[0] != '\0' && s_ota_hash[0] != '\0');
-    if (configured && !ota_check_basic_auth(req)) {
-        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Authentication required");
-        return ESP_OK;
-    }
-
-    // Read body
-    char body[512] = {0};
-    int total = 0, remaining = req->content_len;
-    while (remaining > 0) {
-        int ret = httpd_req_recv(req, body + total, MIN(remaining, (int)(sizeof(body) - 1 - total)));
-        if (ret <= 0) break;
-        total += ret;
-        remaining -= ret;
-    }
-    body[total] = '\0';
-
-    // Parse "username" and "password" from JSON (minimal)
-    char new_user[64] = {0}, new_pass[128] = {0};
-    // username
-    char *p = strstr(body, "\"username\"");
-    if (p) {
-        p = strchr(p + 10, '"'); if (p) p++;
-        if (p) { int i = 0; while (*p && *p != '"' && i < 63) new_user[i++] = *p++; new_user[i] = '\0'; }
-    }
-    // password
-    p = strstr(body, "\"password\"");
-    if (p) {
-        p = strchr(p + 10, '"'); if (p) p++;
-        if (p) { int i = 0; while (*p && *p != '"' && i < 127) new_pass[i++] = *p++; new_pass[i] = '\0'; }
-    }
-
-    if (new_user[0] == '\0' || new_pass[0] == '\0') {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "username and password required");
-        return ESP_OK;
-    }
-
-    // Compute SHA-256 of new password
-    char new_hash[65];
-    sha256_hex(new_pass, new_hash);
-
-    // Save to NVS
-    nvs_handle_t h;
-    esp_err_t err = nvs_open(NVS_OTA_NAMESPACE, NVS_READWRITE, &h);
-    if (err != ESP_OK) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "NVS open failed");
-        return ESP_OK;
-    }
-    nvs_set_str(h, "username", new_user);
-    nvs_set_str(h, "pass_hash", new_hash);
-    nvs_commit(h);
-    nvs_close(h);
-
-    // Update in-memory state
-    strncpy(s_ota_user, new_user, sizeof(s_ota_user) - 1);
-    strncpy(s_ota_hash, new_hash, sizeof(s_ota_hash) - 1);
-
-    ESP_LOGI(TAG, "OTA credentials updated for user: %s", new_user);
-    const char *resp = "{\"success\":true,\"message\":\"OTA credentials saved\"}";
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, resp, strlen(resp));
-    return ESP_OK;
-}
-
-/** POST /ota/enable — open the 5-minute OTA upload window.
- *  Requires valid Basic auth and credentials to be configured.
- */
+/** POST /ota/enable — open the 5-minute OTA upload window. Requires device auth. */
 static esp_err_t ota_enable_handler(httpd_req_t *req) {
-    bool configured = (s_ota_user[0] != '\0' && s_ota_hash[0] != '\0');
-    if (!configured) {
-        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "OTA credentials not configured");
+    if (!auth_is_configured()) {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "No device password — complete first-setup first");
         return ESP_OK;
     }
-    if (!ota_check_basic_auth(req)) {
-        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Authentication required");
-        return ESP_OK;
-    }
+    AUTH_GUARD(req);
     s_ota_enabled   = true;
     s_ota_enable_us = esp_timer_get_time();
     ESP_LOGI(TAG, "OTA upload window opened (5 min)");
     const char *resp = "{\"enabled\":true,\"remaining_ms\":300000}";
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, strlen(resp));
+    return ESP_OK;
+}
+
+// ---------------------------------------------------------------------------
+// Device auth HTTP handlers
+// ---------------------------------------------------------------------------
+
+/** GET /api/auth/status — always open; tells JS whether device password is set. */
+static esp_err_t auth_status_handler(httpd_req_t *req) {
+    char resp[32];
+    snprintf(resp, sizeof(resp), "{\"configured\":%s}", auth_is_configured() ? "true" : "false");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, resp, strlen(resp));
+    return ESP_OK;
+}
+
+/** Helper: extract a JSON string field by key name into out (max out_len-1 chars). */
+static void parse_json_str(const char *body, const char *key, char *out, size_t out_len) {
+    out[0] = '\0';
+    char search[64];
+    snprintf(search, sizeof(search), "\"%s\"", key);
+    char *p = strstr(body, search);
+    if (!p) return;
+    p = strchr(p + strlen(search), '"');
+    if (!p) return;
+    p++;
+    size_t i = 0;
+    while (*p && *p != '"' && i < out_len - 1) out[i++] = *p++;
+    out[i] = '\0';
+}
+
+/** Helper: save SHA-256 hashes of username + password to NVS and update globals. */
+static esp_err_t auth_save(const char *username, const char *password) {
+    char user_hash[65], pass_hash[65];
+    sha256_hex(username, user_hash);
+    sha256_hex(password, pass_hash);
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_AUTH_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    nvs_set_str(h, "user_hash", user_hash);
+    nvs_set_str(h, "pass_hash", pass_hash);
+    nvs_commit(h);
+    nvs_close(h);
+    strncpy(s_auth_user_hash, user_hash, sizeof(s_auth_user_hash) - 1);
+    strncpy(s_auth_hash,      pass_hash, sizeof(s_auth_hash) - 1);
+    return ESP_OK;
+}
+
+/** POST /api/auth/setup — set initial device username+password (only works when not yet configured). */
+static esp_err_t auth_setup_handler(httpd_req_t *req) {
+    if (auth_is_configured()) {
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_sendstr(req, "Already configured — use /api/auth/change");
+        return ESP_OK;
+    }
+    char body[512] = {0};
+    int total = 0, remaining = req->content_len;
+    while (remaining > 0) {
+        int ret = httpd_req_recv(req, body + total, MIN(remaining, (int)(sizeof(body) - 1 - total)));
+        if (ret <= 0) break;
+        total += ret; remaining -= ret;
+    }
+    body[total] = '\0';
+    char username[64] = {0}, password[128] = {0};
+    parse_json_str(body, "username", username, sizeof(username));
+    parse_json_str(body, "password", password, sizeof(password));
+    if (username[0] == '\0') {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "username required");
+        return ESP_OK;
+    }
+    if (password[0] == '\0') {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "password required");
+        return ESP_OK;
+    }
+    if (auth_save(username, password) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "NVS write failed");
+        return ESP_OK;
+    }
+    ESP_LOGI(TAG, "Device credentials set via first-setup");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"success\":true}", 16);
+    return ESP_OK;
+}
+
+/** POST /api/auth/change — change device username+password (requires current auth). */
+static esp_err_t auth_change_handler(httpd_req_t *req) {
+    AUTH_GUARD(req);
+    char body[512] = {0};
+    int total = 0, remaining = req->content_len;
+    while (remaining > 0) {
+        int ret = httpd_req_recv(req, body + total, MIN(remaining, (int)(sizeof(body) - 1 - total)));
+        if (ret <= 0) break;
+        total += ret; remaining -= ret;
+    }
+    body[total] = '\0';
+    char username[64] = {0}, password[128] = {0};
+    parse_json_str(body, "username", username, sizeof(username));
+    parse_json_str(body, "password", password, sizeof(password));
+    if (username[0] == '\0') {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "username required");
+        return ESP_OK;
+    }
+    if (password[0] == '\0') {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "password required");
+        return ESP_OK;
+    }
+    if (auth_save(username, password) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "NVS write failed");
+        return ESP_OK;
+    }
+    ESP_LOGI(TAG, "Device credentials changed");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"success\":true}", 16);
     return ESP_OK;
 }
 
@@ -482,7 +510,7 @@ static esp_err_t asset_handler(httpd_req_t *req) {
     // Set content type and encoding
     httpd_resp_set_type(req, file->mime_type);
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-    if (strcmp(file->mime_type, "text/html") == 0) {
+    if (strncmp(file->mime_type, "text/html", 9) == 0) {
         httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
         httpd_resp_set_hdr(req, "Pragma", "no-cache");
         httpd_resp_set_hdr(req, "Expires", "0");
@@ -591,6 +619,7 @@ static esp_err_t save_wifi_credentials(httpd_req_t *req) {
  * Body: {"ssid": "MyWiFi", "password": "mypassword"}
  */
 static esp_err_t api_wifi_handler(httpd_req_t *req) {
+    AUTH_GUARD(req);
     return save_wifi_credentials(req);
 }
 
@@ -600,6 +629,7 @@ static esp_err_t api_wifi_handler(httpd_req_t *req) {
  * Clears stored WiFi credentials and returns to AP mode
  */
 static esp_err_t api_wifi_delete_handler(httpd_req_t *req) {
+    AUTH_GUARD(req);
     ESP_LOGI(TAG, "Clearing WiFi credentials");
 
     esp_err_t err = wifi_manager_clear_credentials();
@@ -625,6 +655,7 @@ static esp_err_t api_wifi_delete_handler(httpd_req_t *req) {
  * Body: {"ssid": "MyWiFi", "password": "mypassword"}
  */
 static esp_err_t save_wifi_handler(httpd_req_t *req) {
+    AUTH_GUARD(req);
     return save_wifi_credentials(req);
 }
 
@@ -867,6 +898,7 @@ static esp_err_t api_time_handler(httpd_req_t *req) {
  * GET /api/audio/gong (for quick browser/manual testing)
  */
 static esp_err_t api_audio_gong_handler(httpd_req_t *req) {
+    AUTH_GUARD(req);
     if (!camera_is_audio_out_enabled()) {
         const char *resp = "{\"success\":false,\"message\":\"Audio output (gong) is disabled in Core Features\"}";
         httpd_resp_set_type(req, "application/json");
@@ -1013,6 +1045,7 @@ static esp_err_t api_logs_handler(httpd_req_t *req) {
  * DELETE /api/logs
  */
 static esp_err_t api_logs_clear_handler(httpd_req_t *req) {
+    AUTH_GUARD(req);
     log_buffer_clear();
 
     const char *resp = "{\"success\":true,\"message\":\"Logs cleared\"}";
@@ -1029,6 +1062,7 @@ static esp_err_t api_logs_clear_handler(httpd_req_t *req) {
 
 // GET /api/sip - Get SIP configuration (without password)
 static esp_err_t api_sip_get_handler(httpd_req_t *req) {
+    AUTH_GUARD(req);
     sip_config_t config;
     sip_status_t status;
 
@@ -1128,7 +1162,7 @@ static bool extract_json_int(const char *json, const char *key, int *out) {
 
 // GET /api/features - Get feature toggle states
 static esp_err_t api_features_get_handler(httpd_req_t *req) {
-    char response[900];
+    char response[1024];
     char timezone[MAX_TIMEZONE_LEN];
 
     bool sip_enabled = sip_is_enabled();
@@ -1144,12 +1178,18 @@ static esp_err_t api_features_get_handler(httpd_req_t *req) {
     uint32_t gong_ms = relay_controller_get_gong_ms();
     uint32_t door_ms = relay_controller_get_door_ms();
 
-    // RTSP auth username (password not returned for security)
+    // RTSP auth username + scrypted streaming settings
     char rtsp_user[32] = {0};
+    uint8_t scr_low_lat = 0, scr_low_buf = 0;
+    char scr_source[8] = "rtsp";
     nvs_handle_t rtsp_h;
     if (nvs_manager_open(NVS_RTSP_NAMESPACE, NVS_READONLY, &rtsp_h) == ESP_OK) {
         size_t len = sizeof(rtsp_user);
         nvs_get_str(rtsp_h, "user", rtsp_user, &len);
+        nvs_get_u8(rtsp_h, "scr_low_lat", &scr_low_lat);
+        nvs_get_u8(rtsp_h, "scr_low_buf", &scr_low_buf);
+        size_t slen = sizeof(scr_source);
+        nvs_get_str(rtsp_h, "scr_source", scr_source, &slen);
         nvs_close(rtsp_h);
     }
 
@@ -1159,7 +1199,10 @@ static esp_err_t api_features_get_handler(httpd_req_t *req) {
              "\"rtsp_udp_enabled\":%s,\"rtsp_user\":\"%s\","
              "\"audio_out_enabled\":%s,\"audio_out_muted\":%s,"
              "\"hardware_diag_mode\":%s,"
-             "\"gong_relay_ms\":%lu,\"door_opener_ms\":%lu}",
+             "\"gong_relay_ms\":%lu,\"door_opener_ms\":%lu,"
+             "\"scrypted_low_latency\":%s,\"scrypted_low_buffer\":%s,"
+             "\"scrypted_source\":\"%s\",\"scrypted_rtsp_udp\":%s,"
+             "\"http_cam_max_clients\":%d}",
              timezone,
              sip_enabled ? "true" : "false",
              http_cam_enabled ? "true" : "false",
@@ -1170,7 +1213,12 @@ static esp_err_t api_features_get_handler(httpd_req_t *req) {
              audio_out_muted ? "true" : "false",
              hardware_diag_mode ? "true" : "false",
              (unsigned long)gong_ms,
-             (unsigned long)door_ms);
+             (unsigned long)door_ms,
+             scr_low_lat ? "true" : "false",
+             scr_low_buf ? "true" : "false",
+             scr_source,
+             rtsp_udp_enabled ? "true" : "false",
+             mjpeg_server_get_max_clients());
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, response, strlen(response));
@@ -1178,6 +1226,7 @@ static esp_err_t api_features_get_handler(httpd_req_t *req) {
 
 // POST /saveFeatures - Save ALL feature and camera/audio settings
 static esp_err_t save_features_handler(httpd_req_t *req) {
+    AUTH_GUARD(req);
     char content[1024];
     int total = 0;
     int remaining = req->content_len < (sizeof(content) - 1) ? req->content_len : (sizeof(content) - 1);
@@ -1214,9 +1263,29 @@ static esp_err_t save_features_handler(httpd_req_t *req) {
     if (extract_json_bool(content, "rtsp_enabled", &bval)) {
         camera_set_rtsp_enabled(bval);
     }
-    if (extract_json_bool(content, "rtsp_udp_enabled", &bval)) {
+    if (extract_json_bool(content, "scrypted_rtsp_udp", &bval)) {
         camera_set_rtsp_udp_enabled(bval);
         rtsp_server_set_allow_udp(bval);
+    }
+    // Scrypted streaming settings — persist to NVS, apply live
+    {
+        nvs_handle_t sh;
+        if (nvs_manager_open(NVS_RTSP_NAMESPACE, NVS_READWRITE, &sh) == ESP_OK) {
+            bool bv;
+            char src[8];
+            if (extract_json_bool(content, "scrypted_low_latency", &bv)) {
+                nvs_set_u8(sh, "scr_low_lat", bv ? 1 : 0);
+                rtsp_server_set_low_latency(bv);
+            }
+            if (extract_json_bool(content, "scrypted_low_buffer", &bv)) {
+                nvs_set_u8(sh, "scr_low_buf", bv ? 1 : 0);
+            }
+            if (extract_json_string(content, "scrypted_source", src, sizeof(src))) {
+                nvs_set_str(sh, "scr_source", src);
+            }
+            nvs_commit(sh);
+            nvs_close(sh);
+        }
     }
     // RTSP credentials — save to NVS and apply live
     {
@@ -1292,6 +1361,11 @@ static esp_err_t save_features_handler(httpd_req_t *req) {
         camera_set_control("aud_volume", ival);
     }
 
+    // --- MJPEG max clients ---
+    if (extract_json_int(content, "http_cam_max_clients", &ival) && ival >= 1 && ival <= 4) {
+        mjpeg_server_set_max_clients(ival);
+    }
+
     // --- Relay pulse durations ---
     if (extract_json_int(content, "gong_relay_ms", &ival) && ival > 0) {
         relay_controller_set_gong_ms((uint32_t)ival);
@@ -1318,6 +1392,7 @@ static esp_err_t save_features_handler(httpd_req_t *req) {
 
 // POST /api/sip - Save SIP configuration
 static esp_err_t api_sip_post_handler(httpd_req_t *req) {
+    AUTH_GUARD(req);
     char content[512];
     int ret;
     sip_config_t config;
@@ -1380,6 +1455,7 @@ static esp_err_t api_sip_post_handler(httpd_req_t *req) {
 
 // POST /api/sip/ring - Trigger SIP ring (deferred to main loop)
 static esp_err_t api_sip_ring_handler(httpd_req_t *req) {
+    AUTH_GUARD(req);
     sip_config_t config;
     if (!sip_config_load(&config) || !sip_config_valid(&config)) {
         const char *resp = "{\"success\":false,\"message\":\"SIP not configured\"}";
@@ -1409,6 +1485,7 @@ static esp_err_t save_sip_handler(httpd_req_t *req) {
 
 // Legacy GET /ring/sip handler (deferred to main loop)
 static esp_err_t ring_sip_handler(httpd_req_t *req) {
+    AUTH_GUARD(req);
     sip_config_t config;
     if (!sip_config_load(&config) || !sip_config_valid(&config)) {
         httpd_resp_set_type(req, "text/plain");
@@ -1436,6 +1513,7 @@ static esp_err_t api_sip_verbose_get_handler(httpd_req_t *req) {
 
 // POST /api/sip/verbose - Set verbose logging state
 static esp_err_t api_sip_verbose_post_handler(httpd_req_t *req) {
+    AUTH_GUARD(req);
     char content[64];
     int ret = httpd_req_recv(req, content, sizeof(content) - 1);
     if (ret <= 0) {
@@ -1540,6 +1618,7 @@ static esp_err_t api_metrics_handler(httpd_req_t *req) {
  * POST /api/metrics/reset — Reset UDP fail counters
  */
 static esp_err_t api_metrics_reset_handler(httpd_req_t *req) {
+    AUTH_GUARD(req);
     rtsp_server_udp_fail_reset();
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, "{\"ok\":true}", 11);
@@ -1756,6 +1835,7 @@ static esp_err_t captive_redirect_handler(httpd_req_t *req) {
  * Serves a styled page that shows restart progress and auto-reconnects
  */
 static esp_err_t restart_handler(httpd_req_t *req) {
+    AUTH_GUARD(req);
     ESP_LOGI(TAG, "Restart requested via web interface");
 
     // Serve a styled restart page with auto-reconnect
@@ -1837,13 +1917,14 @@ static esp_err_t restart_handler(httpd_req_t *req) {
  */
 httpd_handle_t web_server_start(void) {
     ESP_LOGI(TAG, "Starting HTTP server");
-    ota_load_credentials();
+    auth_load();
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.lru_purge_enable = true;
+    config.max_open_sockets = 4;   // Default 7 is excessive; save FDs for RTSP/MJPEG
     config.stack_size = 8192;
-    config.max_uri_handlers = 44;  // Increased for all handlers including SIP API, verbose logging, and OTA
+    config.max_uri_handlers = 47;  // SIP API, verbose logging, OTA, and auth endpoints
 
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &config) != ESP_OK) {
@@ -1908,10 +1989,17 @@ httpd_handle_t web_server_start(void) {
     };
     httpd_register_uri_handler(server, &api_mic_test);
 
+    // Auth endpoints (always open — JS checks these to decide whether to show password gate)
+    httpd_uri_t auth_status_uri = { .uri = "/api/auth/status", .method = HTTP_GET,  .handler = auth_status_handler, .user_ctx = NULL };
+    httpd_register_uri_handler(server, &auth_status_uri);
+    httpd_uri_t auth_setup_uri  = { .uri = "/api/auth/setup",  .method = HTTP_POST, .handler = auth_setup_handler,  .user_ctx = NULL };
+    httpd_register_uri_handler(server, &auth_setup_uri);
+    httpd_uri_t auth_change_uri = { .uri = "/api/auth/change", .method = HTTP_POST, .handler = auth_change_handler, .user_ctx = NULL };
+    httpd_register_uri_handler(server, &auth_change_uri);
+
+    // OTA endpoints (require device auth + explicit enable window for upload)
     httpd_uri_t ota_status_uri = { .uri = "/ota/status", .method = HTTP_GET,  .handler = ota_status_handler, .user_ctx = NULL };
     httpd_register_uri_handler(server, &ota_status_uri);
-    httpd_uri_t ota_config_uri = { .uri = "/ota/config", .method = HTTP_POST, .handler = ota_config_handler, .user_ctx = NULL };
-    httpd_register_uri_handler(server, &ota_config_uri);
     httpd_uri_t ota_enable_uri = { .uri = "/ota/enable", .method = HTTP_POST, .handler = ota_enable_handler, .user_ctx = NULL };
     httpd_register_uri_handler(server, &ota_enable_uri);
     httpd_uri_t ota_update_uri = { .uri = "/ota/update", .method = HTTP_POST, .handler = ota_update_handler, .user_ctx = NULL };
@@ -2193,7 +2281,7 @@ httpd_handle_t web_server_start(void) {
 
     ESP_LOGI(TAG, "✓ HTTP server started on port %d with %zu embedded assets",
              config.server_port, embedded_files_count);
-    ESP_LOGI(TAG, "API endpoints: /api/wifi, /api/status, /ota/status, /ota/config, /ota/enable, /ota/update");
+    ESP_LOGI(TAG, "Auth: /api/auth/status|setup|change  OTA: /ota/status|enable|update");
     ESP_LOGI(TAG, "WiFi endpoints: /saveWiFi, /scanWifi, /wifiScanResults");
     ESP_LOGI(TAG, "Camera endpoints: /capture, /cameraStreamInfo, /control, /status");
     ESP_LOGI(TAG, "Other endpoints: /deviceStatus, /sipDebug, /status");

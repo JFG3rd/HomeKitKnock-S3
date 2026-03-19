@@ -17,6 +17,7 @@
     <div class="version-info">
         <div>Version <span id="fwVersionBadge">--</span></div>
         <div>Build <span id="fwBuildBadge">--</span></div>
+        <div><a href="#" id="signOutLink" onclick="signOut(); return false;" style="font-size:0.8em; color:#888; text-decoration:underline; display:none;">Sign Out</a></div>
     </div>
 
     <div class="header-container">
@@ -24,6 +25,7 @@
         <p>Enable or disable individual features for your doorbell.</p>
     </div>
 
+    <div id="pageContent" style="display:none">
     <div class="dashboard">
         <div class="container card setup-card">
             <h3 class="card-title">🔧 Core Features</h3>
@@ -263,21 +265,6 @@
             </div>
             <div id="micTestResult" style="font-size:0.85em;padding:4px 8px;margin-top:4px;display:none;border-radius:4px;border:1px solid rgba(128,128,128,0.35);"></div>
 
-            <details style="margin-top: 14px;">
-                <summary style="cursor: pointer; font-size: 0.9em; color: #888; padding: 4px 0;">🧪 Advanced / Diagnostic</summary>
-                <div class="info-grid" style="margin-top: 8px;">
-                    <div class="info-item">
-                        <span><strong>🧪 Hardware Diagnostic Mode</strong></span>
-                        <label class="switch">
-                            <input type="checkbox" id="hardware_diag_mode">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                </div>
-                <div style="padding: 0 8px 12px 8px; font-size: 0.9em; color: #666;">
-                    When enabled, Test Gong runs a 1 kHz diagnostic tone and logs detailed audio TX telemetry.
-                </div>
-            </details>
         </div>
 
         <div class="container card setup-card">
@@ -290,11 +277,11 @@
             <div class="info-grid">
                 <div class="info-item">
                     <span>HTTP MJPEG</span>
-                    <input type="radio" name="scrypted_source" id="scrypted_source_http" value="http" {{SCRYPTED_SOURCE_HTTP_CHECKED}}>
+                    <input type="radio" name="scrypted_source" id="scrypted_source_http" value="http">
                 </div>
                 <div class="info-item">
                     <span>RTSP MJPEG</span>
-                    <input type="radio" name="scrypted_source" id="scrypted_source_rtsp" value="rtsp" {{SCRYPTED_SOURCE_RTSP_CHECKED}}>
+                    <input type="radio" name="scrypted_source" id="scrypted_source_rtsp" value="rtsp" checked>
                 </div>
             </div>
 
@@ -323,6 +310,20 @@
                 </div>
             </div>
 
+            <label class="card-group-title" style="margin-top: 12px;"><strong>🧪 Diagnostics</strong></label>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span>Hardware Diagnostic Mode</span>
+                    <label class="switch">
+                        <input type="checkbox" id="hardware_diag_mode">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+            <div style="padding: 0 8px 8px 8px; font-size: 0.9em; color: #666;">
+                Enables verbose audio/video logging. Test Gong plays a diagnostic tone and logs TX telemetry.
+            </div>
+
             <label class="card-group-title" style="margin-top: 12px;"><strong>🔒 RTSP Authentication</strong></label>
             <label><strong>Username</strong></label>
             <input type="text" id="rtsp_user" placeholder="Leave empty for open access" autocomplete="off">
@@ -336,11 +337,17 @@
                 <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;" id="scrypted_source_url"></p>
             </div>
             <div class="flash-stats">
-                <strong>FFmpeg Input Args:</strong>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                    <strong>FFmpeg Input Args:</strong>
+                    <button title="Copy to clipboard" style="background:none;border:1px solid rgba(128,128,128,0.4);border-radius:4px;cursor:pointer;padding:1px 4px;font-size:0.8em;line-height:1;" onclick="copyScryptedField('scrypted_input_args',this)">&#x1F4CB;</button>
+                </div>
                 <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;" id="scrypted_input_args"></p>
             </div>
             <div class="flash-stats">
-                <strong>FFmpeg Output Prefix:</strong>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                    <strong>FFmpeg Output Prefix:</strong>
+                    <button title="Copy to clipboard" style="background:none;border:1px solid rgba(128,128,128,0.4);border-radius:4px;cursor:pointer;padding:1px 4px;font-size:0.8em;line-height:1;" onclick="copyScryptedField('scrypted_output_prefix',this)">&#x1F4CB;</button>
+                </div>
                 <p style="font-family: monospace; font-size: 0.9em; word-break: break-all;" id="scrypted_output_prefix"></p>
             </div>
         </div>
@@ -350,26 +357,29 @@
             <div class="flash-stats" id="otaStatus">
                 <strong>Status:</strong> loading...
             </div>
-
-            <label><strong>OTA Username</strong></label>
-            <input type="text" id="ota_user" placeholder="admin">
-
-            <label><strong>Current Password</strong></label>
-            <input type="password" id="ota_current_pass" placeholder="Required to update credentials">
-
-            <label><strong>New Password</strong></label>
-            <input type="password" id="ota_pass" placeholder="Strong password">
-
-            <label><strong>Confirm New Password</strong></label>
-            <input type="password" id="ota_pass_confirm" placeholder="Re-enter new password">
-
             <div class="button-row button-grid" style="margin-top: 12px;">
-                <button class="button btn-save" title="Save or update OTA credentials." onclick="saveOtaConfig()">Save OTA Credentials</button>
                 <button class="button btn-save" title="Enable OTA uploads for 5 minutes." onclick="enableOta()">Enable OTA (5 min)</button>
-                <a class="button btn-nav" href="/ota" target="_blank" title="Open the OTA upload page.">Open OTA Page</a>
+                <a class="button btn-nav" href="/ota" title="Open the OTA upload page.">Open OTA Page</a>
             </div>
             <div class="ota-note">
-                OTA uploads are local-network only and require the credentials above.
+                OTA uploads require your device password (already entered) plus clicking Enable above.
+            </div>
+        </div>
+
+        <div class="container card setup-card">
+            <h3 class="card-title">🔒 Security</h3>
+            <div class="ota-note" style="margin-bottom:12px;">
+                Change your device credentials. You will need to re-enter them on your next page load.
+                To factory reset (clears all settings), hold the doorbell button for 5 s, release it, then hold for 5 s again.
+            </div>
+            <label><strong>New Username</strong></label>
+            <input type="text" id="sec_new_user" placeholder="3–32 characters (a-z, 0-9, _.-)" autocomplete="username">
+            <label style="margin-top:8px;"><strong>New Password</strong></label>
+            <input type="password" id="sec_new_pass" placeholder="At least 12 characters" autocomplete="new-password">
+            <label style="margin-top:8px;"><strong>Confirm New Password</strong></label>
+            <input type="password" id="sec_confirm_pass" placeholder="Re-enter new password" autocomplete="new-password">
+            <div class="button-row button-grid" style="margin-top: 12px;">
+                <button class="button btn-save" onclick="changePassword()">🔑 Change Credentials</button>
             </div>
         </div>
     </div>
@@ -383,8 +393,115 @@
         <a class="button btn-info" href="/logs.html?filter=doorbell" target="_blank" title="Open filtered doorbell/SIP logs.">☎️ Doorbell Logs</a>
         <a class="button btn-nav" href="/" title="Return to the main dashboard.">Back</a>
     </div>
+    </div><!-- end pageContent -->
+
+    <!-- Password overlay for auth gate -->
+    <div id="authOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:9999; align-items:center; justify-content:center;">
+        <div style="background:var(--card-bg); border-radius:8px; padding:28px; max-width:360px; width:90%; box-shadow:0 4px 24px rgba(0,0,0,0.4);">
+            <h3 style="margin:0 0 12px 0;">🔒 Device Login</h3>
+            <input type="text" id="authUserInput" placeholder="Username" style="width:100%; box-sizing:border-box; margin-bottom:8px;" autocomplete="username">
+            <input type="password" id="authPassInput" placeholder="Password" style="width:100%; box-sizing:border-box;" autocomplete="current-password">
+            <div id="authError" style="color:#e55; margin-top:6px; font-size:0.9em; display:none;"></div>
+            <button id="authSubmitBtn" class="button btn-save" style="margin-top:12px; width:100%;" onclick="submitAuthOverlay()">Unlock</button>
+        </div>
+    </div>
 
     <script>
+        // ---------------------------------------------------------------------------
+        // Auth gate — device username + password stored in sessionStorage
+        // ---------------------------------------------------------------------------
+        const _PASS_KEY = "device_pass";
+        const _USER_KEY = "device_user";
+        let _pass = sessionStorage.getItem(_PASS_KEY);
+        let _user = sessionStorage.getItem(_USER_KEY) || "";
+
+        function authHeader() {
+            return _pass ? ("Basic " + btoa(_user + ":" + _pass)) : "";
+        }
+
+        let _overlayResolveQueue = [];
+        function showPasswordOverlay(onUnlocked) {
+            _overlayResolveQueue.push(onUnlocked);
+            document.getElementById("pageContent").style.display = "none";
+            document.getElementById("signOutLink").style.display = "none";
+            const overlay = document.getElementById("authOverlay");
+            overlay.style.display = "flex";
+            document.getElementById("authUserInput").value = _user || "";
+            document.getElementById("authPassInput").value = "";
+            document.getElementById("authError").style.display = "none";
+            (_user ? document.getElementById("authPassInput") : document.getElementById("authUserInput")).focus();
+        }
+        function hidePasswordOverlay() {
+            document.getElementById("authOverlay").style.display = "none";
+            document.getElementById("pageContent").style.display = "block";
+            document.getElementById("signOutLink").style.display = "";
+        }
+        function signOut() {
+            sessionStorage.removeItem(_PASS_KEY);
+            sessionStorage.removeItem(_USER_KEY);
+            _pass = null; _user = "";
+            showPasswordOverlay(function() { initPage(); });
+        }
+        function submitAuthOverlay() {
+            const user = document.getElementById("authUserInput").value.trim();
+            const pass = document.getElementById("authPassInput").value;
+            if (!user || !pass) return;
+            fetch("/ota/status", {
+                headers: { "Authorization": "Basic " + btoa(user + ":" + pass) }
+            }).then(r => {
+                if (r.status === 401) {
+                    document.getElementById("authError").textContent = "Wrong username or password.";
+                    document.getElementById("authError").style.display = "block";
+                    return;
+                }
+                _user = user; _pass = pass;
+                sessionStorage.setItem(_USER_KEY, user);
+                sessionStorage.setItem(_PASS_KEY, pass);
+                hidePasswordOverlay();
+                var fns = _overlayResolveQueue.splice(0);
+                fns.forEach(function(fn) { fn(); });
+            }).catch(() => {
+                document.getElementById("authError").textContent = "Network error.";
+                document.getElementById("authError").style.display = "block";
+            });
+        }
+        document.getElementById("authPassInput").addEventListener("keydown", e => {
+            if (e.key === "Enter") submitAuthOverlay();
+        });
+
+        function authedFetch(url, opts = {}) {
+            opts.headers = Object.assign({}, opts.headers);
+            if (_pass) opts.headers["Authorization"] = authHeader();
+            return fetch(url, opts).then(r => {
+                if (r.status === 401) {
+                    sessionStorage.removeItem(_PASS_KEY); sessionStorage.removeItem(_USER_KEY);
+                    _pass = null; _user = "";
+                    return new Promise(resolve => showPasswordOverlay(() => resolve(authedFetch(url, opts))));
+                }
+                return r;
+            });
+        }
+
+        // On load: check auth status; redirect to first-setup if not configured
+        fetch("/api/auth/status").then(r => r.json()).then(d => {
+            if (!d.configured) { window.location.href = "/first-setup"; return; }
+            if (!_pass) { showPasswordOverlay(initPage); return; }
+            hidePasswordOverlay();
+            initPage();
+        }).catch(() => {
+            if (!_pass) showPasswordOverlay(initPage);
+            else { hidePasswordOverlay(); initPage(); }
+        });
+
+        function initPage() {
+            fetchOtaStatus();
+            fetchCameraSetupStatus();
+            loadFeatures();
+        }
+
+        // ---------------------------------------------------------------------------
+        // Original page scripts (fetch replaced with authedFetch where needed)
+        // ---------------------------------------------------------------------------
         fetch('/api/status')
             .then(r => r.json())
             .then(data => {
@@ -456,21 +573,31 @@
             };
             const jsonHdr = { "Content-Type": "application/json" };
             Promise.all([
-                fetch("/saveFeatures", { method: "POST", headers: jsonHdr, body: JSON.stringify(features) }),
-                fetch("/api/sip",      { method: "POST", headers: jsonHdr, body: JSON.stringify(sipPayload) })
-            ]).then(() => { alert("Saved."); setTimeout(() => window.location.reload(), 800); })
-              .catch(e => alert("Save failed: " + e));
+                authedFetch("/saveFeatures", { method: "POST", headers: jsonHdr, body: JSON.stringify(features) }),
+                authedFetch("/api/sip",      { method: "POST", headers: jsonHdr, body: JSON.stringify(sipPayload) })
+            ]).then(function(responses) {
+                var errors = [];
+                responses.forEach(function(r, i) {
+                    if (!r.ok) errors.push((i === 0 ? "Features" : "SIP") + ": HTTP " + r.status);
+                });
+                if (errors.length) {
+                    alert("Save failed:\n" + errors.join("\n"));
+                    return;
+                }
+                console.log("Settings saved.");
+                setTimeout(function() { window.location.reload(); }, 300);
+            }).catch(function(e) { alert("Save failed: " + e); });
         }
 
         function testRingSip() {
-            fetch("/ring/sip")
+            authedFetch("/ring/sip")
                 .then(r => r.text())
                 .then(t => alert(t))
                 .catch(e => alert("SIP Ring failed: " + e));
         }
 
         function testHomekitGong() {
-            fetch("/ring/homekit")
+            authedFetch("/ring/homekit")
                 .then(r => r.text())
                 .then(t => alert(t))
                 .catch(e => alert("HomeKit test failed: " + e));
@@ -482,7 +609,7 @@
             btn.disabled = true;
             btn.textContent = "🎤 Recording...";
             result.style.display = "none";
-            fetch("/api/mic/test", { method: "POST" })
+            authedFetch("/api/mic/test", { method: "POST" })
                 .then(function(r) { return r.json(); })
                 .then(function(d) {
                     if (d.error) {
@@ -511,7 +638,7 @@
         }
 
         function testLocalGong() {
-            fetch("/api/audio/gong", { method: "POST" })
+            authedFetch("/api/audio/gong", { method: "POST" })
                 .then(async (r) => {
                     const text = await r.text();
                     if (!r.ok) {
@@ -596,12 +723,15 @@
                 } else {
                     var el = document.getElementById(id);
                     if (!el) return;
+                    var isPwd = el.type === "password";
                     cur = el.type === "checkbox" ? el.checked : el.value;
                 }
                 var orig = initialValues[id];
                 if (orig !== undefined && String(cur) !== String(orig)) {
                     var disp = function(v) { return v === true ? "Yes" : v === false ? "No" : escapeHtml(String(v)); };
-                    changes.push("<li><strong>" + _fieldLabels[id] + "</strong>: " + disp(orig) + " \u2192 " + disp(cur) + "</li>");
+                    var origVal = isPwd ? (orig ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" : "(none)") : disp(orig);
+                    var curVal  = isPwd ? (cur  ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" : "(unchanged)") : disp(cur);
+                    changes.push("<li><strong>" + _fieldLabels[id] + "</strong>: " + origVal + " \u2192 " + curVal + "</li>");
                 }
             });
             if (!changes.length) return "<p style='color:#888;font-style:italic;'>No changes since page loaded.</p>";
@@ -612,7 +742,10 @@
             var body = rebootRequired
                 ? "<p>\u26a0\ufe0f Reboot required for <strong>Mic Source</strong> change to take effect.</p><p>Restart the device now?</p>"
                 : "<p>Restart the device now?</p>";
-            showConfirm("\ud83d\udd04 Confirm Restart", body, function() { location.href = '/restart'; }, "danger-btn");
+            showConfirm("\ud83d\udd04 Confirm Restart", body, function() {
+                authedFetch("/restart").then(() => {}).catch(() => {});
+                setTimeout(() => { location.href = '/'; }, 1000);
+            }, "danger-btn");
         }
 
         function autoSaveAudioMic() {
@@ -629,7 +762,7 @@
                 aac_sample_rate:    parseInt(document.getElementById("aac_sample_rate").value || "16", 10),
                 aac_bitrate:        parseInt(document.getElementById("aac_bitrate").value || "32", 10)
             };
-            fetch("/saveFeatures", {
+            authedFetch("/saveFeatures", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(data)
@@ -672,11 +805,6 @@
         const aacBitrateValueEl = document.getElementById("aacBitrateValue");
         const audioOutVolumeValueEl = document.getElementById("audioOutVolumeValue");
         const otaStatusEl = document.getElementById("otaStatus");
-        const otaUserEl = document.getElementById("ota_user");
-        const otaCurrentPassEl = document.getElementById("ota_current_pass");
-        const otaPassEl = document.getElementById("ota_pass");
-        const otaPassConfirmEl = document.getElementById("ota_pass_confirm");
-        let otaKnownUser = "";
 
         function formatMs(ms) {
             if (!ms || ms <= 0) return "0s";
@@ -693,13 +821,6 @@
                    /[A-Z]/.test(password) &&
                    /[0-9]/.test(password) &&
                    /[^A-Za-z0-9]/.test(password);
-        }
-
-        function buildOtaAuthHeader() {
-            const user = otaKnownUser || otaUserEl.value.trim();
-            const pass = otaCurrentPassEl.value;
-            if (!user || !pass) return null;
-            return "Basic " + btoa(`${user}:${pass}`);
         }
 
         function updateRangeDisplay(input, label) {
@@ -743,97 +864,65 @@
         }
 
         function fetchOtaStatus() {
-            fetch("/ota/status", { credentials: "include" })
+            authedFetch("/ota/status")
+                .then(r => r.ok ? r.json() : null)
+                .then(data => {
+                    if (!data) { otaStatusEl.innerHTML = "<strong>Status:</strong> unavailable"; return; }
+                    const enabled = data.enabled
+                        ? `enabled (${formatMs(data.remaining_ms)})`
+                        : "disabled";
+                    otaStatusEl.innerHTML = `<strong>Status:</strong> ${enabled}`;
+                })
+                .catch(() => { otaStatusEl.innerHTML = "<strong>Status:</strong> unavailable"; });
+        }
+
+        function enableOta() {
+            authedFetch("/ota/enable", { method: "POST" })
                 .then(r => {
-                    if (r.status === 401) {
-                        otaStatusEl.innerHTML = "<strong>Status:</strong> enter OTA credentials to view status";
-                        return null;
-                    }
-                    if (!r.ok) {
-                        otaStatusEl.innerHTML = "<strong>Status:</strong> unavailable";
-                        return null;
-                    }
+                    if (!r.ok) { r.text().then(t => alert("❌ Enable failed: " + t)); return null; }
                     return r.json();
                 })
                 .then(data => {
                     if (!data) return;
-                    otaKnownUser = data.username || otaKnownUser;
-                    if (data.username) {
-                        otaUserEl.value = data.username;
-                    }
-                    const configured = data.configured ? "configured" : "not configured";
-                    const enabled = data.enabled
-                        ? `enabled (${formatMs(data.remaining_ms)})`
-                        : "disabled";
-                    otaStatusEl.innerHTML = `<strong>Status:</strong> ${configured} | ${enabled}`;
+                    alert("✅ OTA enabled for 5 minutes. Go to the OTA page to upload firmware.");
+                    fetchOtaStatus();
                 })
-                .catch(() => {
-                    otaStatusEl.innerHTML = "<strong>Status:</strong> unavailable";
-                });
+                .catch(e => alert("OTA enable failed: " + e));
         }
 
-        function saveOtaConfig() {
-            const username = otaUserEl.value.trim();
-            const password = otaPassEl.value;
-            const confirm = otaPassConfirmEl.value;
-
-            if (!username) { alert("OTA username is required."); return; }
-            if (password !== confirm) { alert("New passwords do not match."); return; }
-            if (!isStrongPassword(password)) {
+        function changePassword() {
+            const user    = document.getElementById("sec_new_user").value.trim();
+            const pass    = document.getElementById("sec_new_pass").value;
+            const confirm = document.getElementById("sec_confirm_pass").value;
+            if (!user) { alert("New username is required."); return; }
+            if (!/^[a-zA-Z0-9._-]{3,32}$/.test(user)) { alert("Username must be 3–32 characters (letters, digits, _ . -)"); return; }
+            if (!pass) { alert("New password is required."); return; }
+            if (pass !== confirm) { alert("Passwords do not match."); return; }
+            if (!isStrongPassword(pass)) {
                 alert("Password must be at least 12 characters and include upper, lower, digit, and symbol.");
                 return;
             }
             showConfirm(
-                "\ud83d\udd11 Confirm OTA Credentials",
-                "<p>Update OTA credentials?</p><ul style='margin:4px 0;padding-left:20px;'>" +
-                "<li>Username: <strong>" + escapeHtml(username) + "</strong></li>" +
-                "<li>Password: \u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022</li></ul>",
-                function() { doSaveOtaConfig(username, password); }
+                "🔑 Change Device Credentials",
+                "<p>Update the device username and password? You will need to re-enter them on your next page load.</p>",
+                function() {
+                    authedFetch("/api/auth/change", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ username: user, password: pass })
+                    }).then(r => r.ok ? r.json() : null)
+                    .then(data => {
+                        if (!data) { alert("❌ Credential change failed."); return; }
+                        alert("✅ Credentials changed. You will be asked to log in again.");
+                        sessionStorage.removeItem(_PASS_KEY); sessionStorage.removeItem(_USER_KEY);
+                        _pass = null; _user = "";
+                        document.getElementById("sec_new_user").value = "";
+                        document.getElementById("sec_new_pass").value = "";
+                        document.getElementById("sec_confirm_pass").value = "";
+                        showPasswordOverlay(fetchOtaStatus);
+                    }).catch(e => alert("Error: " + e));
+                }
             );
-        }
-
-        function doSaveOtaConfig(username, password) {
-            const headers = { "Content-Type": "application/json" };
-            const authHeader = buildOtaAuthHeader();
-            if (authHeader) headers["Authorization"] = authHeader;
-            fetch("/ota/config", {
-                method: "POST",
-                headers,
-                body: JSON.stringify({ username, password })
-            }).then(r => {
-                if (r.status === 401) { alert("❌ Current password is incorrect."); return null; }
-                if (!r.ok) { r.text().then(t => alert("❌ Save failed: " + t)); return null; }
-                return r.json();
-            }).then(data => {
-                if (!data) return;
-                alert("✅ OTA credentials saved.");
-                otaCurrentPassEl.value = "";
-                fetchOtaStatus();
-            }).catch(e => alert("OTA save failed: " + e));
-        }
-
-        function enableOta() {
-            const headers = {};
-            const authHeader = buildOtaAuthHeader();
-            if (authHeader) {
-                headers["Authorization"] = authHeader;
-            } else {
-                alert("Enter the current OTA password to enable OTA.");
-                return;
-            }
-
-            fetch("/ota/enable", {
-                method: "POST",
-                headers
-            }).then(r => {
-                if (r.status === 401) { alert("❌ OTA password is incorrect."); return null; }
-                if (!r.ok) { r.text().then(t => alert("❌ Enable failed: " + t)); return null; }
-                return r.json();
-            }).then(data => {
-                if (!data) return;
-                alert("✅ OTA enabled for 5 minutes. Go to the OTA page to upload firmware.");
-                fetchOtaStatus();
-            }).catch(e => alert("OTA enable failed: " + e));
         }
 
         function fetchCameraSetupStatus() {
@@ -931,7 +1020,7 @@
 
         function buildScryptedOutputPrefix() {
             const lowLatency = document.getElementById("scrypted_low_latency").checked;
-            const gop = lowLatency ? 30 : 60;
+            const gop = lowLatency ? 8 : 30;
             return `-c:v libx264 -pix_fmt yuvj420p -preset ultrafast -bf 0 -g ${gop} -r 15 -b:v 500000 -bufsize 1000000 -maxrate 500000`;
         }
 
@@ -944,7 +1033,7 @@
                 args.push(`-rtsp_transport ${preferUdp ? "udp" : "tcp"}`);
             }
             if (lowBuffer) {
-                args.push("-fflags nobuffer -flags low_delay -analyzeduration 0 -probesize 32");
+                args.push("-fflags nobuffer -flags low_delay -analyzeduration 500000 -probesize 100000");
             }
             return args.length ? args.join(" ") : "(none)";
         }
@@ -988,6 +1077,27 @@
             scryptedStatusEl.innerHTML = `<strong>Status:</strong> ${status}`;
         }
 
+        function copyScryptedField(id, btn) {
+            var text = document.getElementById(id).textContent.trim();
+            var origHTML = btn.innerHTML;
+            function flash(ok) {
+                btn.textContent = ok ? "\u2713" : "\u2717";
+                setTimeout(function() { btn.innerHTML = origHTML; }, 1200);
+            }
+            function execCopy() {
+                var ta = document.createElement("textarea");
+                ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+                document.body.appendChild(ta); ta.focus(); ta.select();
+                var ok = false; try { ok = document.execCommand("copy"); } catch(e) {}
+                document.body.removeChild(ta); flash(ok);
+            }
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(function() { flash(true); }).catch(execCopy);
+            } else {
+                execCopy();
+            }
+        }
+
         function validateScryptedOptions() {
             const source = getScryptedSource();
             const rtspEnabled = document.getElementById("rtsp_enabled").checked;
@@ -1014,7 +1124,7 @@
         document.getElementById("rtsp_user").addEventListener("input", updateScryptedUi);
         document.getElementById("verbose_logging").addEventListener("change", function() {
             const enabled = this.checked;
-            fetch("/api/sip/verbose", {
+            authedFetch("/api/sip/verbose", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ verbose: enabled })
@@ -1029,9 +1139,9 @@
         }
 
         function loadFeatures() {
-            fetch("/api/features", { cache: "no-store" })
-                .then(r => r.json())
-                .then(data => {
+            var featuresLoaded = authedFetch("/api/features", { cache: "no-store" })
+                .then(function(r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+                .then(function(data) {
                     if (data.timezone !== undefined) {
                         document.getElementById("timezone").value = data.timezone;
                     }
@@ -1055,17 +1165,32 @@
                     }
                     if (data.rtsp_user !== undefined) {
                         document.getElementById("rtsp_user").value = data.rtsp_user;
-                        updateScryptedUi();
+                    }
+                    if (data.scrypted_low_latency !== undefined) {
+                        document.getElementById("scrypted_low_latency").checked = data.scrypted_low_latency;
+                    }
+                    if (data.scrypted_low_buffer !== undefined) {
+                        document.getElementById("scrypted_low_buffer").checked = data.scrypted_low_buffer;
+                    }
+                    if (data.scrypted_rtsp_udp !== undefined) {
+                        document.getElementById("scrypted_rtsp_udp").checked = data.scrypted_rtsp_udp;
+                    }
+                    if (data.scrypted_source !== undefined) {
+                        const radio = document.getElementById("scrypted_source_" + data.scrypted_source);
+                        if (radio) radio.checked = true;
+                    }
+                    if (data.http_cam_max_clients !== undefined) {
+                        document.getElementById("http_cam_max_clients").value = data.http_cam_max_clients;
                     }
                     updateScryptedUi();
                     updateAudioUi();
                 })
-                .catch(e => console.error("Failed to load features:", e));
+                .catch(function(e) { console.error("Failed to load features:", e); });
 
             // Load SIP config and relay timing from /api/sip
-            fetch("/api/sip", { cache: "no-store" })
-                .then(r => r.json())
-                .then(data => {
+            var sipLoaded = authedFetch("/api/sip", { cache: "no-store" })
+                .then(function(r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+                .then(function(data) {
                     if (data.user)        document.getElementById("sip_user").value = data.user;
                     if (data.displayname) document.getElementById("sip_displayname").value = data.displayname;
                     if (data.target)      document.getElementById("sip_target").value = data.target;
@@ -1083,10 +1208,15 @@
                     document.getElementById("sipStatus").innerHTML =
                         `<strong>Status:</strong> ${reg}`;
                 })
-                .catch(() => {
+                .catch(function() {
                     document.getElementById("sipStatus").innerHTML =
                         "<strong>Status:</strong> unavailable";
                 });
+
+            // Snapshot initial values after all settings are loaded
+            Promise.all([featuresLoaded, sipLoaded]).then(function() {
+                snapshotInitialValues();
+            });
 
             // Load gateway IP
             fetch("/api/status", { cache: "no-store" })
@@ -1098,7 +1228,7 @@
                 .catch(() => {});
 
             // Load verbose logging state
-            fetch("/api/sip/verbose", { cache: "no-store" })
+            authedFetch("/api/sip/verbose", { cache: "no-store" })
                 .then(r => r.json())
                 .then(data => {
                     document.getElementById("verbose_logging").checked = data.verbose === true;
@@ -1132,13 +1262,7 @@
             }
         });
 
-        fetchCameraSetupStatus();
-        updateScryptedUi();
         updateAudioUi();
-        fetchOtaStatus();
-        loadFeatures();
-        // Snapshot field values after both async fetches complete (local network < 200ms each)
-        setTimeout(snapshotInitialValues, 800);
     </script>
 
 <style>

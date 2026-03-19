@@ -78,7 +78,8 @@ def embed_web_assets(data_dir, output_dir):
     # Files to embed
     embed_files = ['index.html', 'style.css', 'setup.html', 'wifi-setup.html',
                    'live.html', 'guide.html', 'ota.html', 'sip.html',
-                   'logs.html', 'logs-doorbell.html', 'logs-camera.html']
+                   'logs.html', 'logs-doorbell.html', 'logs-camera.html',
+                   'first-setup.html', 'favicon.ico']
 
     files_data = {}
 
@@ -130,7 +131,7 @@ def embed_web_assets(data_dir, output_dir):
 
 def generate_master_header(files_data):
     """Generate master header with registry of all embedded files."""
-    includes = '\n'.join([f'#include "embedded_{f.replace(".html", "").replace(".css", "")}.h"'
+    includes = '\n'.join([f'#include "embedded_{Path(f).stem}.h"'
                           for f in files_data.keys()])
 
     entries = []

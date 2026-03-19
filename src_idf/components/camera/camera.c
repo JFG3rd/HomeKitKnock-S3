@@ -30,6 +30,7 @@ static bool camera_ready = false;
 #define NVS_KEY_AAC_RATE     "aac_rate"
 #define NVS_KEY_AAC_BITRATE  "aac_bitr"
 #define NVS_KEY_RTSP_ENABLED "rtsp_en"
+#define NVS_KEY_RTSP_UDP     "rtsp_udp"
 #define NVS_KEY_MIC_SOURCE   "mic_source"
 #define NVS_KEY_AUD_VOLUME   "aud_volume"
 #define NVS_KEY_AUD_OUT_EN   "aud_out_en"
@@ -143,10 +144,10 @@ bool camera_is_ready(void) {
 bool camera_is_enabled(void) {
     nvs_handle_t handle;
     if (nvs_manager_open(NVS_CAMERA_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
-        return false;  // Default to disabled
+        return true;  // Default to enabled
     }
 
-    uint8_t enabled = 0;
+    uint8_t enabled = 1;  // Default: enabled
     nvs_get_u8(handle, NVS_KEY_ENABLED, &enabled);
     nvs_close(handle);
 
@@ -171,10 +172,10 @@ esp_err_t camera_set_enabled(bool enabled) {
 bool camera_is_rtsp_enabled(void) {
     nvs_handle_t handle;
     if (nvs_manager_open(NVS_CAMERA_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
-        return false;
+        return true;  // Default to enabled
     }
 
-    uint8_t enabled = 0;
+    uint8_t enabled = 1;  // Default: enabled
     nvs_get_u8(handle, NVS_KEY_RTSP_ENABLED, &enabled);
     nvs_close(handle);
 
@@ -193,6 +194,27 @@ esp_err_t camera_set_rtsp_enabled(bool enabled) {
     nvs_close(handle);
 
     ESP_LOGI(TAG, "RTSP camera streaming %s", enabled ? "enabled" : "disabled");
+    return err;
+}
+
+bool camera_is_rtsp_udp_enabled(void) {
+    nvs_handle_t handle;
+    if (nvs_manager_open(NVS_CAMERA_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
+        return false;  // Default: TCP only
+    }
+    uint8_t enabled = 0;
+    nvs_get_u8(handle, NVS_KEY_RTSP_UDP, &enabled);
+    nvs_close(handle);
+    return enabled != 0;
+}
+
+esp_err_t camera_set_rtsp_udp_enabled(bool enabled) {
+    nvs_handle_t handle;
+    esp_err_t err = nvs_manager_open(NVS_CAMERA_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(handle, NVS_KEY_RTSP_UDP, enabled ? 1 : 0);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
     return err;
 }
 
@@ -269,8 +291,10 @@ esp_err_t camera_set_control(const char *var, int val) {
     // --- Mic/audio settings ---
     if (strcmp(var, "mic_enabled") == 0) {
         nvs_key = NVS_KEY_MIC_ENABLED;
+        audio_capture_set_enabled(val != 0);
     } else if (strcmp(var, "mic_muted") == 0) {
         nvs_key = NVS_KEY_MIC_MUTED;
+        audio_capture_set_muted(val != 0);
     } else if (strcmp(var, "mic_sensitivity") == 0) {
         if (val >= 0 && val <= 100) {
             nvs_key = NVS_KEY_MIC_SENS;
@@ -386,7 +410,7 @@ esp_err_t camera_set_control(const char *var, int val) {
 
 void camera_get_status_json(char *buf, size_t buf_size) {
     // Load mic/audio settings from NVS (always available, even without camera)
-    uint8_t mic_en = 0, mic_mute = 0, mic_sens = 70, mic_src = 0;
+    uint8_t mic_en = 1, mic_mute = 0, mic_sens = 70, mic_src = 1;  // defaults match firmware
     uint8_t aud_vol = 70, aac_rate = 16, aac_bitr = 32, hw_diag = 0;
     nvs_handle_t nvs;
     if (nvs_manager_open(NVS_CAMERA_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK) {

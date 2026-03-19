@@ -80,6 +80,13 @@ bool camera_is_rtsp_enabled(void);
 esp_err_t camera_set_rtsp_enabled(bool enabled);
 
 /**
+ * Get/set RTSP UDP transport preference (persisted to NVS).
+ * When false (default), only TCP interleaved transport is offered.
+ */
+bool camera_is_rtsp_udp_enabled(void);
+esp_err_t camera_set_rtsp_udp_enabled(bool enabled);
+
+/**
  * Set a camera control variable at runtime (also persists to NVS)
  *
  * Supported vars: "framesize", "quality", "brightness", "contrast"

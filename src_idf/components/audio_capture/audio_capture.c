@@ -34,8 +34,8 @@ static i2s_chan_handle_t rx_channel = NULL;
 static SemaphoreHandle_t capture_mutex = NULL;
 static bool rx_from_shared_bus = false;
 
-static mic_source_t current_source = MIC_SOURCE_PDM;
-static bool mic_enabled = false;
+static mic_source_t current_source = MIC_SOURCE_INMP441;
+static bool mic_enabled = true;
 static bool mic_muted = false;
 static uint8_t mic_sensitivity = 70;
 static bool initialized = false;
@@ -317,12 +317,14 @@ void audio_capture_set_sensitivity(uint8_t percent) {
 
 bool audio_capture_is_enabled(void) {
     if (!initialized) {
-        // Read directly from NVS if not yet initialized
+        // Read directly from NVS if not yet initialized.
+        // Default val=1 matches the firmware default (mic enabled out of the box).
+        // An explicit NVS save of 0 overrides this.
         nvs_handle_t handle;
         if (nvs_manager_open(NVS_CAMERA_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
-            return false;
+            return true;  // default: enabled
         }
-        uint8_t val = 0;
+        uint8_t val = 1;  // default: enabled
         nvs_get_u8(handle, NVS_KEY_MIC_ENABLED, &val);
         nvs_close(handle);
         return val != 0;
@@ -332,6 +334,14 @@ bool audio_capture_is_enabled(void) {
 
 bool audio_capture_is_muted(void) {
     return mic_muted;
+}
+
+void audio_capture_set_enabled(bool enabled) {
+    mic_enabled = enabled;
+}
+
+void audio_capture_set_muted(bool muted) {
+    mic_muted = muted;
 }
 
 uint8_t audio_capture_get_sensitivity(void) {
