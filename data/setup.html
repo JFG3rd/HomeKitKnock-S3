@@ -1021,7 +1021,7 @@
         function buildScryptedOutputPrefix() {
             const lowLatency = document.getElementById("scrypted_low_latency").checked;
             const gop = lowLatency ? 8 : 30;
-            return `-c:v libx264 -pix_fmt yuvj420p -preset ultrafast -bf 0 -g ${gop} -r 15 -b:v 500000 -bufsize 1000000 -maxrate 500000`;
+            return `-c:v libx264 -pix_fmt yuvj420p -preset ultrafast -tune zerolatency -bf 0 -g ${gop} -r 15 -b:v 500000 -bufsize 250000 -maxrate 500000`;
         }
 
         function buildScryptedInputArgs() {
