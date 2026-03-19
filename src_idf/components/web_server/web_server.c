@@ -1180,16 +1180,22 @@ static esp_err_t api_features_get_handler(httpd_req_t *req) {
 
     // RTSP auth username + scrypted streaming settings
     char rtsp_user[32] = {0};
-    uint8_t scr_low_lat = 0, scr_low_buf = 0;
+    uint8_t scr_low_lat = 0, scr_low_buf = 0, scr_ff_verb = 0;
     char scr_source[8] = "rtsp";
+    char scr_enc_q[16] = "ultrafast";
+    uint16_t scr_bitrate = 500;
     nvs_handle_t rtsp_h;
     if (nvs_manager_open(NVS_RTSP_NAMESPACE, NVS_READONLY, &rtsp_h) == ESP_OK) {
         size_t len = sizeof(rtsp_user);
         nvs_get_str(rtsp_h, "user", rtsp_user, &len);
         nvs_get_u8(rtsp_h, "scr_low_lat", &scr_low_lat);
         nvs_get_u8(rtsp_h, "scr_low_buf", &scr_low_buf);
+        nvs_get_u8(rtsp_h, "scr_ff_verb", &scr_ff_verb);
         size_t slen = sizeof(scr_source);
         nvs_get_str(rtsp_h, "scr_source", scr_source, &slen);
+        size_t qlen = sizeof(scr_enc_q);
+        nvs_get_str(rtsp_h, "scr_enc_q", scr_enc_q, &qlen);
+        nvs_get_u16(rtsp_h, "scr_bitrate", &scr_bitrate);
         nvs_close(rtsp_h);
     }
 
@@ -1202,6 +1208,8 @@ static esp_err_t api_features_get_handler(httpd_req_t *req) {
              "\"gong_relay_ms\":%lu,\"door_opener_ms\":%lu,"
              "\"scrypted_low_latency\":%s,\"scrypted_low_buffer\":%s,"
              "\"scrypted_source\":\"%s\",\"scrypted_rtsp_udp\":%s,"
+             "\"scrypted_enc_quality\":\"%s\",\"scrypted_bitrate\":%u,"
+             "\"scrypted_ffmpeg_verbose\":%s,"
              "\"http_cam_max_clients\":%d}",
              timezone,
              sip_enabled ? "true" : "false",
@@ -1218,6 +1226,9 @@ static esp_err_t api_features_get_handler(httpd_req_t *req) {
              scr_low_buf ? "true" : "false",
              scr_source,
              rtsp_udp_enabled ? "true" : "false",
+             scr_enc_q,
+             (unsigned)scr_bitrate,
+             scr_ff_verb ? "true" : "false",
              mjpeg_server_get_max_clients());
 
     httpd_resp_set_type(req, "application/json");
@@ -1282,6 +1293,17 @@ static esp_err_t save_features_handler(httpd_req_t *req) {
             }
             if (extract_json_string(content, "scrypted_source", src, sizeof(src))) {
                 nvs_set_str(sh, "scr_source", src);
+            }
+            char enc_q[16];
+            if (extract_json_string(content, "scrypted_enc_quality", enc_q, sizeof(enc_q))) {
+                nvs_set_str(sh, "scr_enc_q", enc_q);
+            }
+            int ival;
+            if (extract_json_int(content, "scrypted_bitrate", &ival) && ival >= 100 && ival <= 5000) {
+                nvs_set_u16(sh, "scr_bitrate", (uint16_t)ival);
+            }
+            if (extract_json_bool(content, "scrypted_ffmpeg_verbose", &bv)) {
+                nvs_set_u8(sh, "scr_ff_verb", bv ? 1 : 0);
             }
             nvs_commit(sh);
             nvs_close(sh);

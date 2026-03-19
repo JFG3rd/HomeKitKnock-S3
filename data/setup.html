@@ -308,6 +308,30 @@
                         <span class="slider"></span>
                     </label>
                 </div>
+                <div class="info-item">
+                    <span>Encoding quality</span>
+                    <select id="scrypted_enc_quality" style="width: auto; min-width: 100px;">
+                        <option value="ultrafast">Fastest</option>
+                        <option value="superfast">Balanced</option>
+                        <option value="veryfast">Best quality</option>
+                    </select>
+                </div>
+                <div class="info-item">
+                    <span>Target bitrate</span>
+                    <select id="scrypted_bitrate" style="width: auto; min-width: 100px;">
+                        <option value="300">Low (300 Kb/s)</option>
+                        <option value="500" selected>Medium (500 Kb/s)</option>
+                        <option value="1000">High (1 Mb/s)</option>
+                        <option value="2000">Very High (2 Mb/s)</option>
+                    </select>
+                </div>
+                <div class="info-item">
+                    <span>FFmpeg verbose logging</span>
+                    <label class="switch">
+                        <input type="checkbox" id="scrypted_ffmpeg_verbose">
+                        <span class="slider"></span>
+                    </label>
+                </div>
             </div>
 
             <label class="card-group-title" style="margin-top: 12px;"><strong>🧪 Diagnostics</strong></label>
@@ -546,6 +570,9 @@
                 scrypted_low_latency: document.getElementById("scrypted_low_latency").checked,
                 scrypted_low_buffer: document.getElementById("scrypted_low_buffer").checked,
                 scrypted_rtsp_udp: document.getElementById("scrypted_rtsp_udp").checked,
+                scrypted_enc_quality: document.getElementById("scrypted_enc_quality").value,
+                scrypted_bitrate: parseInt(document.getElementById("scrypted_bitrate").value),
+                scrypted_ffmpeg_verbose: document.getElementById("scrypted_ffmpeg_verbose").checked,
                 rtsp_user: document.getElementById("rtsp_user").value.trim(),
                 rtsp_pass: document.getElementById("rtsp_pass").value,
                 framesize: parseInt(document.getElementById("framesize").value, 10),
@@ -700,6 +727,8 @@
             scrypted_source:"Scrypted Source",
             scrypted_low_latency:"Low Latency", scrypted_low_buffer:"Reduce Buffering",
             scrypted_rtsp_udp:"RTSP UDP",
+            scrypted_enc_quality:"Encoding Quality", scrypted_bitrate:"Target Bitrate",
+            scrypted_ffmpeg_verbose:"FFmpeg Verbose",
             rtsp_user:"RTSP Username", rtsp_pass:"RTSP Password"
         };
         function snapshotInitialValues() {
@@ -1021,14 +1050,21 @@
         function buildScryptedOutputPrefix() {
             const lowLatency = document.getElementById("scrypted_low_latency").checked;
             const gop = lowLatency ? 8 : 30;
-            return `-c:v libx264 -pix_fmt yuvj420p -preset ultrafast -tune zerolatency -bf 0 -g ${gop} -r 15 -b:v 500000 -bufsize 250000 -maxrate 500000`;
+            const preset = document.getElementById("scrypted_enc_quality").value;
+            const bitrateKbps = parseInt(document.getElementById("scrypted_bitrate").value);
+            const bufsize = Math.round(bitrateKbps * 1000 / 2);
+            return `-c:v libx264 -pix_fmt yuvj420p -preset ${preset} -bf 0 -g ${gop} -r 15 -b:v ${bitrateKbps * 1000} -bufsize ${bufsize} -maxrate ${bitrateKbps * 1000}`;
         }
 
         function buildScryptedInputArgs() {
             const source = getScryptedSource();
             const lowBuffer = document.getElementById("scrypted_low_buffer").checked;
             const preferUdp = document.getElementById("scrypted_rtsp_udp").checked;
+            const verbose = document.getElementById("scrypted_ffmpeg_verbose").checked;
             const args = [];
+            if (verbose) {
+                args.push("-v verbose");
+            }
             if (source === "rtsp") {
                 args.push(`-rtsp_transport ${preferUdp ? "udp" : "tcp"}`);
             }
@@ -1119,6 +1155,9 @@
         document.getElementById("scrypted_low_latency").addEventListener("change", updateScryptedUi);
         document.getElementById("scrypted_low_buffer").addEventListener("change", updateScryptedUi);
         document.getElementById("scrypted_rtsp_udp").addEventListener("change", updateScryptedUi);
+        document.getElementById("scrypted_enc_quality").addEventListener("change", updateScryptedUi);
+        document.getElementById("scrypted_bitrate").addEventListener("change", updateScryptedUi);
+        document.getElementById("scrypted_ffmpeg_verbose").addEventListener("change", updateScryptedUi);
         document.getElementById("rtsp_enabled").addEventListener("change", updateScryptedUi);
         document.getElementById("http_cam_enabled").addEventListener("change", updateScryptedUi);
         document.getElementById("rtsp_user").addEventListener("input", updateScryptedUi);
@@ -1181,6 +1220,15 @@
                     }
                     if (data.http_cam_max_clients !== undefined) {
                         document.getElementById("http_cam_max_clients").value = data.http_cam_max_clients;
+                    }
+                    if (data.scrypted_enc_quality !== undefined) {
+                        document.getElementById("scrypted_enc_quality").value = data.scrypted_enc_quality;
+                    }
+                    if (data.scrypted_bitrate !== undefined) {
+                        document.getElementById("scrypted_bitrate").value = String(data.scrypted_bitrate);
+                    }
+                    if (data.scrypted_ffmpeg_verbose !== undefined) {
+                        document.getElementById("scrypted_ffmpeg_verbose").checked = data.scrypted_ffmpeg_verbose;
                     }
                     updateScryptedUi();
                     updateAudioUi();
