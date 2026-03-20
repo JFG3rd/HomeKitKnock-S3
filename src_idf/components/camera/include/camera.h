@@ -8,12 +8,28 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include "esp_err.h"
 #include "esp_camera.h"
+#include "timestamp_overlay.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * Unified frame type returned by camera_capture_frame().
+ * Consumers use .buf and .len; call camera_release_frame() when done.
+ */
+typedef struct {
+    const uint8_t *buf;
+    size_t len;
+    uint16_t width;
+    uint16_t height;
+    // Private — do not access directly:
+    camera_fb_t *_fb;           // non-NULL = raw path (no overlay)
+    overlay_frame_t _overlay;   // valid when _fb == NULL (overlay path)
+} captured_frame_t;
 
 /**
  * Initialize the camera
@@ -41,6 +57,23 @@ camera_fb_t *camera_capture(void);
  * @param fb Frame buffer to return
  */
 void camera_return_fb(camera_fb_t *fb);
+
+/**
+ * Capture a frame with optional timestamp overlay.
+ * If overlay is enabled, decodes/draws/re-encodes the JPEG.
+ * If overlay is disabled or fails, returns the raw camera frame.
+ * Caller MUST call camera_release_frame() when done.
+ *
+ * @param out Pointer to captured_frame_t to populate
+ * @return true on success, false if capture failed
+ */
+bool camera_capture_frame(captured_frame_t *out);
+
+/**
+ * Release a frame obtained via camera_capture_frame().
+ * Handles both raw and overlay paths.
+ */
+void camera_release_frame(captured_frame_t *frame);
 
 /**
  * Check if camera is initialized and ready
@@ -108,6 +141,11 @@ esp_err_t camera_set_audio_out_muted(bool muted);
 
 bool camera_is_hardware_diag_enabled(void);
 esp_err_t camera_set_hardware_diag_enabled(bool enabled);
+
+/**
+ * Set camera name for overlay (max 24 chars, persisted to NVS)
+ */
+esp_err_t camera_set_name(const char *name);
 
 /**
  * Get current camera settings as JSON

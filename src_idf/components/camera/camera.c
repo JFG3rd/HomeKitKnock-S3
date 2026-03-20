@@ -36,6 +36,13 @@ static bool camera_ready = false;
 #define NVS_KEY_AUD_OUT_EN   "aud_out_en"
 #define NVS_KEY_AUD_OUT_MUTE "aud_out_mt"
 #define NVS_KEY_HW_DIAG      "hw_diag"
+#define NVS_KEY_SATURATION   "saturation"
+#define NVS_KEY_AWB          "awb"
+#define NVS_KEY_HMIRROR      "hmirror"
+#define NVS_KEY_VFLIP        "vflip"
+#define NVS_KEY_TS_OVERLAY   "ts_ovl"
+#define NVS_KEY_CAM_NAME_OVL "cam_name_ovl"
+#define NVS_KEY_CAM_NAME     "cam_name"
 
 esp_err_t camera_init(void) {
     if (camera_ready) {
@@ -116,9 +123,45 @@ esp_err_t camera_init(void) {
                 s->set_contrast(s, val8s);
                 ESP_LOGI(TAG, "Restored contrast: %d", val8s);
             }
+            if (nvs_get_i8(handle, NVS_KEY_SATURATION, &val8s) == ESP_OK) {
+                s->set_saturation(s, val8s);
+                ESP_LOGI(TAG, "Restored saturation: %d", val8s);
+            }
+            if (nvs_get_u8(handle, NVS_KEY_AWB, &val8) == ESP_OK) {
+                s->set_whitebal(s, val8);
+                ESP_LOGI(TAG, "Restored awb: %d", val8);
+            }
+            if (nvs_get_u8(handle, NVS_KEY_HMIRROR, &val8) == ESP_OK) {
+                s->set_hmirror(s, val8);
+                ESP_LOGI(TAG, "Restored hmirror: %d", val8);
+            }
+            if (nvs_get_u8(handle, NVS_KEY_VFLIP, &val8) == ESP_OK) {
+                s->set_vflip(s, val8);
+                ESP_LOGI(TAG, "Restored vflip: %d", val8);
+            }
         }
+        // Timestamp overlay setting
+        if (nvs_get_u8(handle, NVS_KEY_TS_OVERLAY, &val8) == ESP_OK) {
+            timestamp_overlay_set_enabled(val8 != 0);
+            ESP_LOGI(TAG, "Restored timestamp overlay: %d", val8);
+        }
+        // Camera name overlay setting
+        if (nvs_get_u8(handle, NVS_KEY_CAM_NAME_OVL, &val8) == ESP_OK) {
+            camera_name_overlay_set_enabled(val8 != 0);
+            ESP_LOGI(TAG, "Restored camera name overlay: %d", val8);
+        }
+        char cam_name_buf[25] = {0};
+        size_t name_len = sizeof(cam_name_buf);
+        if (nvs_get_str(handle, NVS_KEY_CAM_NAME, cam_name_buf, &name_len) == ESP_OK) {
+            camera_name_overlay_set_name(cam_name_buf);
+            ESP_LOGI(TAG, "Restored camera name: %s", cam_name_buf);
+        }
+
         nvs_close(handle);
     }
+
+    // Initialize timestamp overlay subsystem (VGA max)
+    timestamp_overlay_init(640, 480);
 
     ESP_LOGI(TAG, "Camera initialized successfully");
     return ESP_OK;
@@ -135,6 +178,58 @@ void camera_return_fb(camera_fb_t *fb) {
     if (fb) {
         esp_camera_fb_return(fb);
     }
+}
+
+bool camera_capture_frame(captured_frame_t *out) {
+    memset(out, 0, sizeof(*out));
+    camera_fb_t *fb = camera_capture();
+    if (!fb) return false;
+
+    if (timestamp_overlay_is_enabled() || camera_name_overlay_is_enabled()) {
+        overlay_frame_t ov;
+        if (timestamp_overlay_apply(fb->buf, fb->len, fb->width, fb->height, 80, &ov)) {
+            // Overlay succeeded — release original fb, return overlay buffer
+            camera_return_fb(fb);
+            out->_fb = NULL;
+            out->_overlay = ov;
+            out->buf = ov.buf;
+            out->len = ov.len;
+            out->width = ov.width;
+            out->height = ov.height;
+            return true;
+        }
+        // Overlay failed — fall through to raw path
+    }
+
+    out->_fb = fb;
+    out->buf = fb->buf;
+    out->len = fb->len;
+    out->width = fb->width;
+    out->height = fb->height;
+    return true;
+}
+
+void camera_release_frame(captured_frame_t *frame) {
+    if (!frame) return;
+    if (frame->_fb) {
+        camera_return_fb(frame->_fb);
+    } else {
+        timestamp_overlay_release(&frame->_overlay);
+    }
+    memset(frame, 0, sizeof(*frame));
+}
+
+esp_err_t camera_set_name(const char *name) {
+    if (!name) return ESP_ERR_INVALID_ARG;
+    if (strlen(name) > 24) return ESP_ERR_INVALID_ARG;
+    camera_name_overlay_set_name(name);
+    nvs_handle_t handle;
+    if (nvs_manager_open(NVS_CAMERA_NAMESPACE, NVS_READWRITE, &handle) == ESP_OK) {
+        nvs_set_str(handle, NVS_KEY_CAM_NAME, name);
+        nvs_commit(handle);
+        nvs_close(handle);
+    }
+    return ESP_OK;
 }
 
 bool camera_is_ready(void) {
@@ -322,67 +417,85 @@ esp_err_t camera_set_control(const char *var, int val) {
         if (val >= 16 && val <= 48) {
             nvs_key = NVS_KEY_AAC_BITRATE;
         }
+    } else if (strcmp(var, "timestamp_overlay") == 0) {
+        if (val == 0 || val == 1) {
+            nvs_key = NVS_KEY_TS_OVERLAY;
+            timestamp_overlay_set_enabled(val == 1);
+        }
+    } else if (strcmp(var, "camera_name_overlay") == 0) {
+        if (val == 0 || val == 1) {
+            nvs_key = NVS_KEY_CAM_NAME_OVL;
+            camera_name_overlay_set_enabled(val == 1);
+        }
     } else {
-        // --- Camera sensor settings (require camera hardware) ---
-        if (!camera_ready) return ESP_ERR_INVALID_STATE;
-
-        sensor_t *s = esp_camera_sensor_get();
-        if (!s) return ESP_ERR_INVALID_STATE;
-
-        // OV2640 set_brightness/set_contrast use WRITE_REG_OR_RETURN which
-        // may return non-zero even when the setting was applied.
-        // We always persist to NVS if in range.
-        int res = -1;
+        // --- Camera sensor settings ---
+        // Always persist to NVS; only apply to sensor hardware when available.
+        sensor_t *s = (camera_ready) ? esp_camera_sensor_get() : NULL;
 
         if (strcmp(var, "framesize") == 0) {
             if (val >= 0 && val <= 13) {
-                // Skip redundant framesize change (PLL reconfigure can crash)
-                if ((int)s->status.framesize == val) {
-                    nvs_key = NVS_KEY_FRAMESIZE;
-                    res = 0;
-                } else if (s->set_framesize) {
-                    res = s->set_framesize(s, (framesize_t)val);
-                    nvs_key = NVS_KEY_FRAMESIZE;
-                } else {
-                    ESP_LOGE(TAG, "set_framesize function pointer is NULL");
-                    return ESP_ERR_NOT_SUPPORTED;
+                nvs_key = NVS_KEY_FRAMESIZE;
+                if (s) {
+                    if ((int)s->status.framesize != val && s->set_framesize) {
+                        s->set_framesize(s, (framesize_t)val);
+                    }
                 }
             }
         } else if (strcmp(var, "quality") == 0) {
             if (val >= 4 && val <= 63) {
-                if (s->set_quality) {
-                    res = s->set_quality(s, val);
-                } else {
-                    ESP_LOGE(TAG, "set_quality function pointer is NULL");
-                    return ESP_ERR_NOT_SUPPORTED;
-                }
                 nvs_key = NVS_KEY_QUALITY;
+                if (s && s->set_quality) {
+                    s->set_quality(s, val);
+                }
             }
         } else if (strcmp(var, "brightness") == 0) {
             if (val >= -2 && val <= 2) {
-                if (s->set_brightness) {
-                    s->set_brightness(s, val);
-                }
                 nvs_key = NVS_KEY_BRIGHTNESS;
                 is_signed = true;
-                res = 0;
+                if (s && s->set_brightness) {
+                    s->set_brightness(s, val);
+                }
             }
         } else if (strcmp(var, "contrast") == 0) {
             if (val >= -2 && val <= 2) {
-                if (s->set_contrast) {
-                    s->set_contrast(s, val);
-                }
                 nvs_key = NVS_KEY_CONTRAST;
                 is_signed = true;
-                res = 0;
+                if (s && s->set_contrast) {
+                    s->set_contrast(s, val);
+                }
+            }
+        } else if (strcmp(var, "saturation") == 0) {
+            if (val >= -2 && val <= 2) {
+                nvs_key = NVS_KEY_SATURATION;
+                is_signed = true;
+                if (s && s->set_saturation) {
+                    s->set_saturation(s, val);
+                }
+            }
+        } else if (strcmp(var, "awb") == 0) {
+            if (val == 0 || val == 1) {
+                nvs_key = NVS_KEY_AWB;
+                if (s && s->set_whitebal) {
+                    s->set_whitebal(s, val);
+                }
+            }
+        } else if (strcmp(var, "hmirror") == 0) {
+            if (val == 0 || val == 1) {
+                nvs_key = NVS_KEY_HMIRROR;
+                if (s && s->set_hmirror) {
+                    s->set_hmirror(s, val);
+                }
+            }
+        } else if (strcmp(var, "vflip") == 0) {
+            if (val == 0 || val == 1) {
+                nvs_key = NVS_KEY_VFLIP;
+                if (s && s->set_vflip) {
+                    s->set_vflip(s, val);
+                }
             }
         } else {
             ESP_LOGW(TAG, "Unknown control var: %s", var);
             return ESP_ERR_NOT_FOUND;
-        }
-
-        if (res != 0 && nvs_key) {
-            ESP_LOGW(TAG, "Sensor returned error for %s=%d (res=%d)", var, val, res);
         }
     }
 
@@ -409,9 +522,11 @@ esp_err_t camera_set_control(const char *var, int val) {
 }
 
 void camera_get_status_json(char *buf, size_t buf_size) {
-    // Load mic/audio settings from NVS (always available, even without camera)
+    // Load settings from NVS (always available, even without camera hardware)
     uint8_t mic_en = 1, mic_mute = 0, mic_sens = 70, mic_src = 1;  // defaults match firmware
     uint8_t aud_vol = 70, aac_rate = 16, aac_bitr = 32, hw_diag = 0;
+    uint8_t framesize = 8, quality = 10, awb = 1, hmirror = 0, vflip = 0;
+    int8_t brightness = 0, contrast = 0, saturation = 0;
     nvs_handle_t nvs;
     if (nvs_manager_open(NVS_CAMERA_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK) {
         nvs_get_u8(nvs, NVS_KEY_MIC_ENABLED, &mic_en);
@@ -422,24 +537,48 @@ void camera_get_status_json(char *buf, size_t buf_size) {
         nvs_get_u8(nvs, NVS_KEY_AAC_RATE, &aac_rate);
         nvs_get_u8(nvs, NVS_KEY_AAC_BITRATE, &aac_bitr);
         nvs_get_u8(nvs, NVS_KEY_HW_DIAG, &hw_diag);
+        nvs_get_u8(nvs, NVS_KEY_FRAMESIZE, &framesize);
+        nvs_get_u8(nvs, NVS_KEY_QUALITY, &quality);
+        nvs_get_i8(nvs, NVS_KEY_BRIGHTNESS, &brightness);
+        nvs_get_i8(nvs, NVS_KEY_CONTRAST, &contrast);
+        nvs_get_i8(nvs, NVS_KEY_SATURATION, &saturation);
+        nvs_get_u8(nvs, NVS_KEY_AWB, &awb);
+        nvs_get_u8(nvs, NVS_KEY_HMIRROR, &hmirror);
+        nvs_get_u8(nvs, NVS_KEY_VFLIP, &vflip);
         nvs_close(nvs);
     }
 
     bool spk_available = audio_output_is_available();
+    bool ts_overlay = timestamp_overlay_is_enabled();
+    bool cn_overlay = camera_name_overlay_is_enabled();
+    const char *cam_name = camera_name_overlay_get_name();
 
     if (!camera_ready) {
         snprintf(buf, buf_size,
                  "{\"camera_ready\":false,"
+                 "\"framesize\":%d,\"quality\":%d,"
+                 "\"brightness\":%d,\"contrast\":%d,"
+                 "\"saturation\":%d,\"awb\":%d,"
+                 "\"hmirror\":%d,\"vflip\":%d,"
                  "\"mic_enabled\":%s,\"mic_muted\":%s,"
                  "\"mic_sensitivity\":%d,\"mic_source\":%d,"
                  "\"aud_volume\":%d,\"speaker_available\":%s,"
                  "\"aac_sample_rate\":%d,\"aac_bitrate\":%d,"
-                 "\"hardware_diag_mode\":%s}",
+                 "\"hardware_diag_mode\":%s,"
+                 "\"timestamp_overlay\":%s,"
+                 "\"camera_name_overlay\":%s,\"camera_name\":\"%s\"}",
+                 framesize, quality,
+                 brightness, contrast,
+                 saturation, awb,
+                 hmirror, vflip,
                  mic_en ? "true" : "false", mic_mute ? "true" : "false",
                  mic_sens, mic_src,
                  aud_vol, spk_available ? "true" : "false",
                  aac_rate, aac_bitr,
-                 hw_diag ? "true" : "false");
+                 hw_diag ? "true" : "false",
+                 ts_overlay ? "true" : "false",
+                 cn_overlay ? "true" : "false",
+                 cam_name ? cam_name : "");
         return;
     }
 
@@ -453,19 +592,30 @@ void camera_get_status_json(char *buf, size_t buf_size) {
              "{\"camera_ready\":true,\"PID\":\"0x%04x\","
              "\"framesize\":%d,\"quality\":%d,"
              "\"brightness\":%d,\"contrast\":%d,"
+             "\"saturation\":%d,\"awb\":%d,"
+             "\"hmirror\":%d,\"vflip\":%d,"
              "\"mic_enabled\":%s,\"mic_muted\":%s,"
              "\"mic_sensitivity\":%d,\"mic_source\":%d,"
              "\"aud_volume\":%d,\"speaker_available\":%s,"
              "\"aac_sample_rate\":%d,\"aac_bitrate\":%d,"
-             "\"hardware_diag_mode\":%s}",
+             "\"hardware_diag_mode\":%s,"
+             "\"timestamp_overlay\":%s,"
+             "\"camera_name_overlay\":%s,\"camera_name\":\"%s\"}",
              s->id.PID,
              s->status.framesize,
              s->status.quality,
              s->status.brightness,
              s->status.contrast,
+             s->status.saturation,
+             s->status.awb,
+             s->status.hmirror,
+             s->status.vflip,
              mic_en ? "true" : "false", mic_mute ? "true" : "false",
              mic_sens, mic_src,
              aud_vol, spk_available ? "true" : "false",
              aac_rate, aac_bitr,
-             hw_diag ? "true" : "false");
+             hw_diag ? "true" : "false",
+             ts_overlay ? "true" : "false",
+             cn_overlay ? "true" : "false",
+             cam_name ? cam_name : "");
 }

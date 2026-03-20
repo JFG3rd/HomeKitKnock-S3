@@ -537,8 +537,10 @@ static esp_err_t save_wifi_credentials(httpd_req_t *req) {
     if (ret <= 0) {
         if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
             httpd_resp_send_408(req);
+        } else {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to receive request body");
         }
-        return ESP_FAIL;
+        return ESP_OK;
     }
     content[ret] = '\0';
 
@@ -1162,7 +1164,7 @@ static bool extract_json_int(const char *json, const char *key, int *out) {
 
 // GET /api/features - Get feature toggle states
 static esp_err_t api_features_get_handler(httpd_req_t *req) {
-    char response[1024];
+    char response[1536];
     char timezone[MAX_TIMEZONE_LEN];
 
     bool sip_enabled = sip_is_enabled();
@@ -1238,7 +1240,7 @@ static esp_err_t api_features_get_handler(httpd_req_t *req) {
 // POST /saveFeatures - Save ALL feature and camera/audio settings
 static esp_err_t save_features_handler(httpd_req_t *req) {
     AUTH_GUARD(req);
-    char content[1024];
+    char content[2048];
     int total = 0;
     int remaining = req->content_len < (sizeof(content) - 1) ? req->content_len : (sizeof(content) - 1);
     while (remaining > 0) {
@@ -1246,8 +1248,10 @@ static esp_err_t save_features_handler(httpd_req_t *req) {
         if (ret <= 0) {
             if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
                 httpd_resp_send_408(req);
+            } else {
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to receive request body");
             }
-            return ESP_FAIL;
+            return ESP_OK;
         }
         total += ret;
         remaining -= ret;
@@ -1359,6 +1363,30 @@ static esp_err_t save_features_handler(httpd_req_t *req) {
     if (extract_json_int(content, "contrast", &ival)) {
         camera_set_control("contrast", ival);
     }
+    if (extract_json_int(content, "saturation", &ival)) {
+        camera_set_control("saturation", ival);
+    }
+    if (extract_json_bool(content, "awb", &bval)) {
+        camera_set_control("awb", bval ? 1 : 0);
+    }
+    if (extract_json_bool(content, "hmirror", &bval)) {
+        camera_set_control("hmirror", bval ? 1 : 0);
+    }
+    if (extract_json_bool(content, "vflip", &bval)) {
+        camera_set_control("vflip", bval ? 1 : 0);
+    }
+    if (extract_json_bool(content, "timestamp_overlay", &bval)) {
+        camera_set_control("timestamp_overlay", bval ? 1 : 0);
+    }
+    if (extract_json_bool(content, "camera_name_overlay", &bval)) {
+        camera_set_control("camera_name_overlay", bval ? 1 : 0);
+    }
+    {
+        char cam_name[25];
+        if (extract_json_string(content, "camera_name", cam_name, sizeof(cam_name))) {
+            camera_set_name(cam_name);
+        }
+    }
 
     // --- Mic/audio settings (via camera_set_control, persists to NVS + applies live) ---
     if (extract_json_bool(content, "mic_enabled", &bval)) {
@@ -1423,8 +1451,10 @@ static esp_err_t api_sip_post_handler(httpd_req_t *req) {
     if (ret <= 0) {
         if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
             httpd_resp_send_408(req);
+        } else {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to receive request body");
         }
-        return ESP_FAIL;
+        return ESP_OK;
     }
     content[ret] = '\0';
 
@@ -1541,8 +1571,10 @@ static esp_err_t api_sip_verbose_post_handler(httpd_req_t *req) {
     if (ret <= 0) {
         if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
             httpd_resp_send_408(req);
+        } else {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to receive request body");
         }
-        return ESP_FAIL;
+        return ESP_OK;
     }
     content[ret] = '\0';
 
@@ -1575,8 +1607,8 @@ static esp_err_t capture_handler(httpd_req_t *req) {
         return httpd_resp_send(req, "Camera not available", HTTPD_RESP_USE_STRLEN);
     }
 
-    camera_fb_t *fb = camera_capture();
-    if (!fb) {
+    captured_frame_t frame;
+    if (!camera_capture_frame(&frame)) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Capture failed");
         return ESP_OK;
     }
@@ -1584,8 +1616,8 @@ static esp_err_t capture_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "image/jpeg");
     httpd_resp_set_hdr(req, "Content-Disposition", "inline; filename=capture.jpg");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    esp_err_t err = httpd_resp_send(req, (const char *)fb->buf, fb->len);
-    camera_return_fb(fb);
+    esp_err_t err = httpd_resp_send(req, (const char *)frame.buf, frame.len);
+    camera_release_frame(&frame);
 
     return err;
 }
@@ -1758,7 +1790,7 @@ static esp_err_t stub_sip_debug_handler(httpd_req_t *req) {
  * The setup.html fetchCameraSetupStatus() calls this
  */
 static esp_err_t combined_status_handler(httpd_req_t *req) {
-    char response[768];
+    char response[1024];
     char ip[16] = "Not connected";
     if (wifi_manager_is_connected()) {
         wifi_manager_get_ip(ip, sizeof(ip));
@@ -1768,7 +1800,7 @@ static esp_err_t combined_status_handler(httpd_req_t *req) {
     uint32_t uptime_sec = esp_log_timestamp() / 1000;
 
     // Get camera + mic/audio status fields
-    char cam_json[384] = {0};
+    char cam_json[512] = {0};
     camera_get_status_json(cam_json, sizeof(cam_json));
 
     // Merge system + camera fields
@@ -1945,7 +1977,7 @@ httpd_handle_t web_server_start(void) {
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.lru_purge_enable = true;
     config.max_open_sockets = 4;   // Default 7 is excessive; save FDs for RTSP/MJPEG
-    config.stack_size = 8192;
+    config.stack_size = 12288;
     config.max_uri_handlers = 47;  // SIP API, verbose logging, OTA, and auth endpoints
 
     httpd_handle_t server = NULL;

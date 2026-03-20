@@ -120,29 +120,29 @@ static void stream_client_task(void *pvParameters) {
 
     // Streaming loop
     while (server_running) {
-        camera_fb_t *fb = camera_capture();
-        if (!fb) {
+        captured_frame_t frame;
+        if (!camera_capture_frame(&frame)) {
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
 
         // Send boundary
         if (send_all(client_sock, STREAM_BOUNDARY, strlen(STREAM_BOUNDARY)) < 0) {
-            camera_return_fb(fb);
+            camera_release_frame(&frame);
             break;
         }
 
         // Send part header with content length
         char part_header[64];
-        int hlen = snprintf(part_header, sizeof(part_header), STREAM_PART_FMT, fb->len);
+        int hlen = snprintf(part_header, sizeof(part_header), STREAM_PART_FMT, frame.len);
         if (send_all(client_sock, part_header, hlen) < 0) {
-            camera_return_fb(fb);
+            camera_release_frame(&frame);
             break;
         }
 
         // Send JPEG frame data
-        int ret = send_all(client_sock, fb->buf, fb->len);
-        camera_return_fb(fb);
+        int ret = send_all(client_sock, frame.buf, frame.len);
+        camera_release_frame(&frame);
 
         if (ret < 0) {
             break;

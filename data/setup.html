@@ -192,6 +192,63 @@
                 <input type="range" id="contrast" class="range-input" min="-2" max="2" step="1" value="0">
                 <span class="range-value" id="contrastValue">0</span>
             </div>
+
+            <label><strong>Saturation</strong></label>
+            <div class="range-wrap">
+                <input type="range" id="saturation" class="range-input" min="-2" max="2" step="1" value="2">
+                <span class="range-value" id="saturationValue">2</span>
+            </div>
+
+            <div class="info-grid" style="margin-top: 8px;">
+                <div class="info-item">
+                    <span><strong>Auto White Balance</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="awb" checked>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="info-item">
+                    <span><strong>Horizontal Mirror</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="hmirror">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="info-item">
+                    <span><strong>Vertical Flip</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="vflip">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="info-item">
+                    <span><strong>Timestamp Overlay</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="timestamp_overlay">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+            <div style="padding: 0 8px 8px 8px; font-size: 0.85em; color: var(--text-muted, #888);">
+                Burns date/time into every frame. Adds ~50-70ms processing overhead per frame.
+            </div>
+            <div class="info-group" style="margin-top: 8px;">
+                <div class="info-item">
+                    <span><strong>Camera Name Overlay</strong></span>
+                    <label class="switch">
+                        <input type="checkbox" id="camera_name_overlay">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="info-item">
+                    <span><strong>Camera Name</strong></span>
+                    <input type="text" id="camera_name" maxlength="24" placeholder="e.g. Front Door"
+                           style="width:160px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text);">
+                </div>
+            </div>
+            <div style="padding: 0 8px 8px 8px; font-size: 0.85em; color: var(--text-muted, #888);">
+                Burns camera name into bottom-left of every frame.
+            </div>
         </div>
 
         <div class="container card setup-card">
@@ -347,8 +404,12 @@
             <div style="padding: 0 8px 8px 8px; font-size: 0.9em; color: #666;">
                 Enables verbose audio/video logging. Test Gong plays a diagnostic tone and logs TX telemetry.
             </div>
+        </div>
 
-            <label class="card-group-title" style="margin-top: 12px;"><strong>🔒 RTSP Authentication</strong></label>
+        <div class="container card setup-card">
+            <h3 class="card-title">🔗 RTSP & FFmpeg</h3>
+
+            <label class="card-group-title"><strong>🔒 RTSP Authentication</strong></label>
             <label><strong>Username</strong></label>
             <input type="text" id="rtsp_user" placeholder="Leave empty for open access" autocomplete="off">
             <label><strong>Password</strong></label>
@@ -579,6 +640,13 @@
                 quality: parseInt(document.getElementById("quality").value, 10),
                 brightness: parseInt(document.getElementById("brightness").value, 10),
                 contrast: parseInt(document.getElementById("contrast").value, 10),
+                saturation: parseInt(document.getElementById("saturation").value, 10),
+                awb: document.getElementById("awb").checked,
+                hmirror: document.getElementById("hmirror").checked,
+                vflip: document.getElementById("vflip").checked,
+                timestamp_overlay: document.getElementById("timestamp_overlay").checked,
+                camera_name_overlay: document.getElementById("camera_name_overlay").checked,
+                camera_name: document.getElementById("camera_name").value.trim(),
                 mic_enabled: document.getElementById("mic_enabled").checked,
                 mic_muted: document.getElementById("mic_muted").checked,
                 mic_sensitivity: parseInt(document.getElementById("mic_sensitivity").value || "70", 10),
@@ -715,7 +783,8 @@
             http_cam_enabled:"HTTP Camera", rtsp_enabled:"RTSP",
             http_cam_max_clients:"Max MJPEG Clients",
             framesize:"Frame Size", quality:"JPEG Quality",
-            brightness:"Brightness", contrast:"Contrast",
+            brightness:"Brightness", contrast:"Contrast", timestamp_overlay:"Timestamp Overlay",
+            camera_name_overlay:"Camera Name Overlay", camera_name:"Camera Name",
             audio_out_enabled:"Audio Output", audio_out_muted:"Speaker Muted",
             audio_out_volume:"Speaker Volume", hardware_diag_mode:"HW Diagnostic Mode",
             mic_enabled:"Mic Enabled", mic_muted:"Mic Muted",
@@ -824,6 +893,7 @@
         const qualityValueEl = document.getElementById("qualityValue");
         const brightnessValueEl = document.getElementById("brightnessValue");
         const contrastValueEl = document.getElementById("contrastValue");
+        const saturationValueEl = document.getElementById("saturationValue");
         const scryptedStatusEl = document.getElementById("scryptedStatus");
         const scryptedSourceUrlEl = document.getElementById("scrypted_source_url");
         const scryptedInputArgsEl = document.getElementById("scrypted_input_args");
@@ -974,6 +1044,28 @@
                         document.getElementById("contrast").value = data.contrast;
                         updateRangeDisplay(document.getElementById("contrast"), contrastValueEl);
                     }
+                    if (data.saturation !== undefined) {
+                        document.getElementById("saturation").value = data.saturation;
+                        updateRangeDisplay(document.getElementById("saturation"), saturationValueEl);
+                    }
+                    if (data.awb !== undefined) {
+                        document.getElementById("awb").checked = !!data.awb;
+                    }
+                    if (data.hmirror !== undefined) {
+                        document.getElementById("hmirror").checked = !!data.hmirror;
+                    }
+                    if (data.vflip !== undefined) {
+                        document.getElementById("vflip").checked = !!data.vflip;
+                    }
+                    if (data.timestamp_overlay !== undefined) {
+                        document.getElementById("timestamp_overlay").checked = !!data.timestamp_overlay;
+                    }
+                    if (data.camera_name_overlay !== undefined) {
+                        document.getElementById("camera_name_overlay").checked = !!data.camera_name_overlay;
+                    }
+                    if (data.camera_name !== undefined) {
+                        document.getElementById("camera_name").value = data.camera_name;
+                    }
                     if (data.mic_enabled !== undefined) {
                         document.getElementById("mic_enabled").checked = data.mic_enabled;
                     }
@@ -1018,6 +1110,7 @@
         bindRange("quality", "qualityValue");
         bindRange("brightness", "brightnessValue");
         bindRange("contrast", "contrastValue");
+        bindRange("saturation", "saturationValue");
         bindRange("mic_sensitivity", "micSensitivityValue");
         bindRange("aac_bitrate", "aacBitrateValue");
         bindRange("audio_out_volume", "audioOutVolumeValue");
@@ -1090,7 +1183,7 @@
             }
 
             const source = getScryptedSource();
-            const ip = "{{LOCAL_IP}}";
+            const ip = window.location.hostname;
             const rtspUserVal = (document.getElementById("rtsp_user") || {value:""}).value.trim();
             const sourceUrl = source === "rtsp"
                 ? (rtspUserVal ? `rtsp://${rtspUserVal}:***@${ip}:8554/mjpeg/1` : `rtsp://${ip}:8554/mjpeg/1`)

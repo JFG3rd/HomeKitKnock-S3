@@ -1286,6 +1286,9 @@ static void send_rtp_jpeg_udp(rtsp_session_t *s, camera_fb_t *fb) {
             ESP_LOGE(TAG, "Failed to create UDP socket");
             return;
         }
+        // Allow brief wait for LWIP pbufs instead of instant ENOMEM
+        struct timeval tv = { .tv_sec = 0, .tv_usec = 10000 }; // 10ms
+        setsockopt(s->udp_rtp_sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     }
 
     uint8_t jpeg_type, jpeg_q;
@@ -1421,6 +1424,18 @@ static void send_rtp_jpeg_udp(rtsp_session_t *s, camera_fb_t *fb) {
         int sent = sendto(s->udp_rtp_sock, pkt, pkt_len, 0,
                           (struct sockaddr *)&dest, sizeof(dest));
         if (sent < 0 || (size_t)sent != pkt_len) {
+            int err = errno;
+            g_udp_fail_total++;
+            if (err == ENOMEM || err == EAGAIN || err == EWOULDBLOCK) {
+                // Transient LWIP pbuf exhaustion: skip this fragment, continue
+                // sending remaining fragments (decoder tolerates partial frames
+                // better than multi-frame blackouts from backoff).
+                s->seq_num++;
+                offset += chunk;
+                frag_offset += chunk;
+                continue;
+            }
+            // Persistent error (EHOSTUNREACH, ECONNREFUSED, etc): back off
             apply_udp_backoff(s);
             char dest_ip[16] = {0};
             inet_ntop(AF_INET, &dest.sin_addr, dest_ip, sizeof(dest_ip));
@@ -1429,7 +1444,7 @@ static void send_rtp_jpeg_udp(rtsp_session_t *s, camera_fb_t *fb) {
                      (unsigned int)ntohs(dest.sin_port),
                      sent,
                      (unsigned int)pkt_len,
-                     errno);
+                     err);
             return;
         }
 
@@ -1509,6 +1524,8 @@ static void send_rtp_aac_udp(rtsp_session_t *s, const uint8_t *aac, size_t aac_l
             ESP_LOGE(TAG, "Failed to create audio UDP socket");
             return;
         }
+        struct timeval tv = { .tv_sec = 0, .tv_usec = 10000 }; // 10ms
+        setsockopt(s->udp_audio_rtp_sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     }
 
     uint8_t pkt[12 + 4 + 2048];
@@ -1545,15 +1562,21 @@ static void send_rtp_aac_udp(rtsp_session_t *s, const uint8_t *aac, size_t aac_l
     int sent = sendto(s->udp_audio_rtp_sock, pkt, pkt_len, 0,
                       (struct sockaddr *)&dest, sizeof(dest));
     if (sent < 0 || (size_t)sent != pkt_len) {
-        apply_udp_backoff(s);
-        char dest_ip[16] = {0};
-        inet_ntop(AF_INET, &dest.sin_addr, dest_ip, sizeof(dest_ip));
-        ESP_LOGW(TAG, "UDP audio send failed: dest=%s:%u sent=%d expected=%u errno=%d",
-                 dest_ip,
-                 (unsigned int)ntohs(dest.sin_port),
-                 sent,
-                 (unsigned int)pkt_len,
-                 errno);
+        int err = errno;
+        g_udp_fail_total++;
+        if (err != ENOMEM && err != EAGAIN && err != EWOULDBLOCK) {
+            // Persistent error: apply backoff
+            apply_udp_backoff(s);
+            char dest_ip[16] = {0};
+            inet_ntop(AF_INET, &dest.sin_addr, dest_ip, sizeof(dest_ip));
+            ESP_LOGW(TAG, "UDP audio send failed: dest=%s:%u sent=%d expected=%u errno=%d",
+                     dest_ip,
+                     (unsigned int)ntohs(dest.sin_port),
+                     sent,
+                     (unsigned int)pkt_len,
+                     err);
+        }
+        // Transient (ENOMEM/EAGAIN): silently drop this audio packet, no backoff
     }
 }
 
@@ -1818,12 +1841,21 @@ static void rtsp_server_task(void *pvParameters) {
         }
 
         if (any_needs_frame) {
-            camera_fb_t *fb = camera_capture();
-            if (!fb) {
+            captured_frame_t frame;
+            if (!camera_capture_frame(&frame)) {
                 ESP_LOGW(TAG, "camera_capture returned NULL - no frame");
             } else {
-                last_frame_width = fb->width;
-                last_frame_height = fb->height;
+                last_frame_width = frame.width;
+                last_frame_height = frame.height;
+
+                // Create a local camera_fb_t shim for send_rtp_jpeg compatibility
+                camera_fb_t fb_shim = {
+                    .buf = (uint8_t *)frame.buf,
+                    .len = frame.len,
+                    .width = frame.width,
+                    .height = frame.height,
+                    .format = PIXFORMAT_JPEG,
+                };
 
                 for (int i = 0; i < MAX_SESSIONS; i++) {
                     rtsp_session_t *s = sessions[i];
@@ -1840,7 +1872,7 @@ static void rtsp_server_task(void *pvParameters) {
                     }
 
                     uint16_t seq_before = s->seq_num;
-                    send_rtp_jpeg(s, fb);
+                    send_rtp_jpeg(s, &fb_shim);
                     if (seq_before == s->seq_num) {
                         ESP_LOGW(TAG,
                                  "No video RTP emitted sid=%08lx (seq unchanged=%u)",
@@ -1857,7 +1889,7 @@ static void rtsp_server_task(void *pvParameters) {
                     s->last_frame_ms = cur;
                     s->last_activity_ms = cur;
                 }
-                camera_return_fb(fb);
+                camera_release_frame(&frame);
             }
         }
 

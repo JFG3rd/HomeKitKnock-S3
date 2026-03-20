@@ -300,18 +300,34 @@ Fix:
 
 ### High Latency or Lag
 
-**Reduce JPEG Quality:**
+**CRITICAL: Check FFmpeg Output Prefix first!**
+
+The most common cause of 10+ second latency is incorrect Scrypted FFmpeg Output Prefix settings. Use this exact command:
+```
+-c:v libx264 -pix_fmt yuvj420p -preset ultrafast -bf 0 -g 60 -r 15 -b:v 500000 -bufsize 1000000 -maxrate 500000
+```
+
+**Known broken settings (cause 10+ second latency):**
+```
+-c:v libx264 ... -g 8 ... -bufsize 250000 ...
+```
+
+Why: `-bufsize 250000` (250KB) is too small for 500kbps bitrate — the H.264 VBV buffer underruns, causing the encoder to stall and batch frames. `-g 8` (keyframe every 8 frames) overwhelms the MJPEG-to-H.264 transcode pipeline. Both must be restored to `-bufsize 1000000` and `-g 60`.
+
+**If latency is still high after fixing FFmpeg settings:**
+
+Reduce JPEG Quality:
 1. Open ESP32 web UI
-2. Camera Settings → JPEG Quality
+2. Camera Settings -> JPEG Quality
 3. Increase value (lower quality = smaller files)
 4. Try values between 10-20 for best balance
 
-**Reduce Frame Size:**
-1. Camera Settings → Frame Size
+Reduce Frame Size:
+1. Camera Settings -> Frame Size
 2. Try **HVGA (480x320)** or **CIF (400x296)**
 3. Smaller resolution = faster streaming
 
-**Network Optimization:**
+Network Optimization:
 - Use 5GHz WiFi if available (less congestion)
 - Place ESP32 closer to WiFi router
 - Check WiFi signal strength in web UI
